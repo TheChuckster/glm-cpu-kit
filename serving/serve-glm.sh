@@ -6,13 +6,15 @@
 #   MODEL_DIR   dir with the .gguf shards        (default /models/GLM-5.2-Q4_K_XL/UD-Q4_K_XL)
 #   IK_LLAMA    path to ik llama-server binary   (default ~/ik_llama.cpp/build/bin/llama-server)
 #   THREADS     = physical core count            (default nproc; sweep DOWN for TG, see §7)
-#   CTX         context size                     (default 1048576 = model max; DSA keeps KV tiny)
+#   CTX         context ceiling (default 65536=64K). Fits to 1M on RAM, but PP is O(n^2):
+#               a 128K-context first-token is ~2-3 HOURS. Do NOT raise blindly — see runbook
+#               "Context window: the trap". The harness limit MUST be set below this.
 set -e
 
 MODEL_DIR="${MODEL_DIR:-/models/GLM-5.2-Q4_K_XL/UD-Q4_K_XL}"
 IK="${IK_LLAMA:-$HOME/ik_llama.cpp/build/bin/llama-server}"
 THREADS="${THREADS:-$(nproc)}"
-CTX="${CTX:-1048576}"
+CTX="${CTX:-65536}"
 
 MODEL=$(ls "$MODEL_DIR"/GLM-5.2-UD-Q4_K_XL-00001-of-*.gguf 2>/dev/null | head -1)
 [ -n "$MODEL" ] || { echo "model not found in $MODEL_DIR"; exit 1; }

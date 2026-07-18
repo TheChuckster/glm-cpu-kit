@@ -1,15 +1,24 @@
 {
+  "//": "opencode config for GLM-5.2 direct to the ik_llama.cpp server (no litellm needed).",
+  "//edit": "Replace SERVER_IP and export GLM_API_KEY (the contents of ~/.glm-api-key on the server).",
+  "//critical": "limit.context MUST be set BELOW the server's --ctx-size (serve-glm.sh CTX). It makes",
+  "//critical2": "opencode auto-COMPACT before it hits the server ceiling. Without it, opencode assumes a",
+  "//critical3": "huge window, balloons the context to 100k+ tokens, and the server grinds for HOURS (O(n^2)",
+  "//critical4": "prompt-processing). Server CTX 64k -> set context 60000. If you raise one, raise both.",
   "$schema": "https://opencode.ai/config.json",
   "provider": {
     "local": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "Local GLM via litellm",
+      "name": "Local GLM-5.2 (ik_llama.cpp)",
       "options": {
-        "baseURL": "http://127.0.0.1:4000/v1",
-        "apiKey": "{env:LITELLM_API_KEY}"
+        "baseURL": "http://SERVER_IP:8080/v1",
+        "apiKey": "{env:GLM_API_KEY}"
       },
       "models": {
-        "glm-5.2": { "name": "GLM 5.2 (Q8 753B)" }
+        "glm-5.2": {
+          "name": "GLM-5.2 (Q4, CPU)",
+          "limit": { "context": 60000, "output": 8000 }
+        }
       }
     }
   }

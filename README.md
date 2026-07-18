@@ -64,6 +64,7 @@ Or do it by hand:
 - `harness/litellm-config.yaml`: `SERVER_IP`, `PASTE_YOUR_GLM_API_KEY_HERE`.
 - `monitoring/prometheus-scrape.yml`: `PASTE_YOUR_GLM_API_KEY_HERE`.
 - `monitoring/loki-pusher.service` and `bmc-exporter.service`: `REPLACE_WITH_YOUR_USER`.
+- `harness/opencode.json`: `SERVER_IP`, export `GLM_API_KEY`, and keep `limit.context` **below** the server `--ctx-size`.
 
 ## GCP-specific swaps
 - Delete `bmc-exporter.py` / `.service` and the `bmc` scrape job; a cloud VM has no BMC. Use
@@ -77,3 +78,6 @@ Or do it by hand:
 3. Turn thinking off and add a repeat penalty, or harnesses break (400s) and loop.
 4. opencode direct beats Claude Code plus litellm: no fragile Anthropic translation.
 5. TG is memory-bandwidth-bound: NUMA interleaving is your only real TG lever on CPU.
+6. Pair the context limits: harness `limit.context` < server `--ctx-size` (kit: 60K < 64K). Otherwise a
+   big context grinds for HOURS (O(n^2) prompt-processing) or errors instead of compacting. Never set 1M.
+   See "Context window: the trap" in the runbook.

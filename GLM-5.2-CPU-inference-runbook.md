@@ -185,7 +185,8 @@ exec ~/ik_llama.cpp/build/bin/llama-server \
     --alias glm-5.2 \                         # lowercase; must match how the client requests it
     --host 0.0.0.0 --port 8080 \
     --numa distribute \                        # the dual-socket lever
-    --ctx-size 1048576 \                       # GLM-5.2 trains to 1M; DSA keeps KV tiny (~48 GB @ 1M)
+    --ctx-size 65536 \                         # 64K. Fits to 1M on RAM, but PP is O(n^2): a 128K
+                                               # first-token is ~2-3 HOURS. See "Context window: the trap".
     --defrag-thold 0.1 \
     --parallel 1 \                             # single user: one slot = full context, best latency
     --threads 192 --threads-batch 192 \        # = PHYSICAL cores. never use SMT threads (see 11)
@@ -289,11 +290,44 @@ Server-side settings that prevent harness breakage:
 - Long, generous client timeouts (30-60 min). A big agentic prompt legitimately takes many
   minutes of silent PP; short timeouts turn "slow" into "error."
 
-Context discipline matters. Agentic harnesses accumulate context (100k+ tokens), and PP time
-scales with prompt size. Symptoms of too much context: silent multi-minute stalls, then timeouts.
-Keep working context lean, `/clear` between tasks, and use subagents to partition work into small
-focused contexts. DSA sparse attention means big context won't crash (KV stays tiny), but it will
-be slow; that's a usability choice, not a bug.
+### Context window: the trap (read this)
+
+The single biggest usability failure mode. Prompt-processing is **O(n^2)** in attention, so the PP
+*rate* collapses as context grows. DSA keeps the KV cache tiny in **memory**, but does nothing for the
+**compute** — so a big context does not crash, it silently grinds for *hours*. Approximate first-token
+latency vs. context on a single 9575F:
+
+| Context | KV mem | First-token PP | Usable? |
+|--------:|-------:|---------------:|:--------|
+| 16K | ~2 GB | ~4 min | yes |
+| 32K | ~4 GB | ~10-12 min | borderline |
+| 64K | ~8 GB | ~40 min | slow |
+| 128K | ~12 GB | **~2-3 HOURS** | no (the overnight-grind trap) |
+| 1M | ~48 GB | most of a day | never |
+
+**Two coordinated limits stop this, and they MUST be paired:**
+
+1. **Server `--ctx-size` = the hard ceiling** (kit default 64K). Nothing can exceed it.
+2. **Harness context limit set BELOW that ceiling**, so the harness auto-**compacts** before it hits
+   the server. In opencode: `"glm-5.2": { "limit": { "context": 60000, "output": 8000 } }` for a 64K server.
+
+The failure we actually hit: opencode had *no declared limit*, assumed a huge window, ballooned to 142K
+tokens, and the (mistaken) 1M server ctx let it grind overnight for a client that had already timed out.
+The *opposite* mistake — harness limit **above** the server ctx — makes the server reject the oversized
+prompt so the harness **errors** instead of compacting. So: **`harness_limit < server_ctx`, always.** If
+you raise one, raise both — and remember 128K = hour(s)-long first tokens.
+
+Even within the limits, keep working context lean: `/clear` between tasks, small focused turns, subagents.
+The only thing that makes big context *fast* is the **GPU hybrid** (attention offload) — it removes the
+O(n^2) CPU wall entirely.
+
+**Large-context / audit mode.** A few tasks genuinely need whole-codebase context — deep **security
+auditing** (cross-file taint / data-flow) is the classic one. For those, run the server at
+`CTX=131072` (128K) with opencode `limit.context: 120000`, and treat it as a **batch job**: kick off
+"audit X, report findings," accept the ~2-3 h first token, then ask follow-ups against the *warm cache*
+(fast). Use `opencode --continue` to resume if interrupted — but **do not bounce glm-server mid-audit**,
+or resume re-pays the full multi-hour prompt-processing. Do the *drill-downs* in a separate **lean**
+session (small context, minutes/turn); the 128K sweep is for mapping the attack surface, not iterating.
 
 Claude Code specifics if you go that route: launch with `--permission-mode acceptEdits` (not
 `auto`, which fires an extra safety-classifier model call per action, multiplying the load), and
