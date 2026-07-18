@@ -1,0 +1,19 @@
+# Runtime secrets / state - these live in $HOME and must never be committed
+.glm-api-key
+.bmc-pw
+*.pw
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Model weights (kept on fast storage outside the repo)
+*.gguf
+
+# Editor / OS cruft
+*.swp
+*.swo
+*~
+.DS_Store

@@ -1,0 +1,14 @@
+# BARE-METAL ONLY. On GCP there is no BMC - skip this file entirely and use
+# Cloud Monitoring for power/temperature. Kept as a reference for on-prem boxes.
+# Reads BMC creds from ~/.bmc-pw; edit the BMC IP at the top of bmc-exporter.py.
+[Unit]
+Description=BMC Redfish Prometheus exporter (power/thermal)
+After=network-online.target
+[Service]
+Type=simple
+User=REPLACE_WITH_YOUR_USER
+ExecStart=/usr/bin/python3 /home/REPLACE_WITH_YOUR_USER/bmc-exporter.py
+Restart=on-failure
+RestartSec=10
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+# Install to /etc/systemd/system/loki.service
+[Unit]
+Description=Loki log aggregation
+After=network-online.target
+[Service]
+ExecStart=/usr/local/bin/loki -config.file=/etc/loki/loki-config.yaml
+Restart=on-failure
+RestartSec=5
+User=root
+[Install]
+WantedBy=multi-user.target

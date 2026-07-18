@@ -1,0 +1,26 @@
+# Scrape jobs to ADD under `scrape_configs:` in /etc/prometheus/prometheus.yml
+# (indent to match the existing jobs), then: sudo systemctl reload prometheus
+#
+# NOTE: the llama-glm job needs the SAME api key that's in ~/.glm-api-key
+#       (paste the raw key into `credentials:`).
+
+  - job_name: node          # system metrics - needs node_exporter on :9100
+    static_configs:
+      - targets: ['127.0.0.1:9100']
+
+  - job_name: llama-glm      # the inference server's /metrics (API-key protected)
+    scrape_interval: 15s
+    scrape_timeout: 12s
+    metrics_path: /metrics
+    authorization:
+      credentials: 'PASTE_YOUR_GLM_API_KEY_HERE'
+    static_configs:
+      - targets: ['127.0.0.1:8080']
+
+  # bare-metal only - Redfish BMC power/thermal exporter (see bmc-exporter.py).
+  # On GCP there is no BMC: DELETE this job and use Cloud Monitoring for power/temp.
+  - job_name: bmc
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - 127.0.0.1:9101

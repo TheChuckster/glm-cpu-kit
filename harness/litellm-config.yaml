@@ -1,0 +1,28 @@
+# litellm proxy config - ONLY needed for Claude Code (it speaks Anthropic /v1/messages,
+# which litellm translates to the server's OpenAI /v1/chat/completions).
+# For opencode/aider you DON'T need this - point them straight at http://SERVER_IP:8080/v1.
+# See runbook §9 for why this translation layer is fragile (run exactly ONE instance).
+#
+# Start with:  litellm --config litellm-config.yaml --host 0.0.0.0 --port 4000 --num_workers 1
+# EDIT: SERVER_IP and PASTE_YOUR_GLM_API_KEY_HERE (from ~/.glm-api-key on the server).
+
+model_list:
+  - model_name: glm-5.2
+    litellm_params:
+      model: openai/glm-5.2
+      api_base: http://SERVER_IP:8080/v1
+      api_key: PASTE_YOUR_GLM_API_KEY_HERE
+      # 753B MoE on CPU: a big agentic prompt can take many minutes. Wait, don't error.
+      timeout: 21600
+      stream_timeout: 21600
+      # Anti-repetition (quantized + greedy tool-calling loops). Fills in what the client omits.
+      temperature: 0.5
+      top_p: 0.95
+      frequency_penalty: 0.4
+      presence_penalty: 0.2
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  request_timeout: 21600
+  num_retries: 0        # one request, wait it out - no retry storms

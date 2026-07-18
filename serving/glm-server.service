@@ -1,0 +1,18 @@
+# GLM-5.2 inference server - install to /etc/systemd/system/glm-server.service
+# EDIT the two marked lines, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now glm-server
+[Unit]
+Description=GLM-5.2 ik_llama.cpp server
+After=network-online.target
+
+[Service]
+Type=simple
+User=REPLACE_WITH_YOUR_USER
+ExecStart=/home/REPLACE_WITH_YOUR_USER/Projects_new/ai/glm-cpu-kit/serving/serve-glm.sh
+Restart=on-failure
+RestartSec=5
+LimitMEMLOCK=infinity
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

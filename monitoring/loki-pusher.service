@@ -1,0 +1,14 @@
+# Ships the glm-server journal into Loki (powers the "engine activity" logs panel).
+# Install loki-pusher.py to /home/USER/loki-pusher.py, then this to
+# /etc/systemd/system/loki-pusher.service.  Add more sources by appending args, e.g.
+#   ... journal=glm-server file=/tmp/litellm.log
+[Unit]
+Description=Loki log pusher (glm-server journal -> Loki)
+After=loki.service
+[Service]
+ExecStart=/usr/bin/python3 /home/REPLACE_WITH_YOUR_USER/loki-pusher.py http://localhost:3100/loki/api/v1/push journal=glm-server
+Restart=on-failure
+RestartSec=5
+User=root
+[Install]
+WantedBy=multi-user.target
