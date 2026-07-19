@@ -23,11 +23,17 @@ interleaved across both sockets.
 | `serve-glm.sh` | the server launcher (NUMA-aware, thinking-off, anti-repetition) | 6 |
 | `glm-server.service` | systemd unit (survives reboot, `LimitMEMLOCK=infinity`) | 7 |
 
-### `harness/` (how you talk to it, pick one)
-| File | Purpose |
-|---|---|
-| `opencode.json` + `glm-opencode.sh` | recommended: opencode direct to `SERVER:8080/v1`, no translation layer |
-| `litellm-config.yaml` + `proxy.sh` + `glm.sh` | Claude Code path (Anthropic to OpenAI via litellm, fragile, run one instance) |
+### `harness/` (how you talk to it — three paths, pick by privacy vs speed)
+| Script | Backend | Speed | Use for |
+|---|---|---|---|
+| `glm-opencode.sh` + `opencode.json` | LOCAL CPU server (direct) | ~10 tok/s | **private** / sensitive / audit |
+| `glm-opencode-together.sh` | Together AI cloud | ~200-350 tok/s | fast everyday coding |
+| `glm-opencode-cloud.sh` | any OpenAI-compatible provider (env) | varies | OpenRouter / DeepInfra / Z.ai / Surplus / etc. |
+| `litellm-config.yaml` + `proxy.sh` + `glm.sh` | Claude Code via litellm | - | only if you must use Claude Code (fragile) |
+
+**Local vs cloud = privacy vs speed.** Local is private but ~10 tok/s; cloud is 20-35x faster and cheap,
+but your prompts/code go to the provider. Keep sensitive or audit work on the local box; use cloud for
+everyday speed. **All cloud scripts read the API key from env or a key file - never hardcoded, never in this repo.**
 
 ### `monitoring/` (optional but worth it)
 | File | Purpose |
