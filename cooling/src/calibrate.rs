@@ -29,22 +29,40 @@ pub struct Zone {
 }
 
 /// Probe zone ids and see which ones the BMC accepts and which fans move.
+///
+/// Two details matter for this to give the same answer twice.
+///
+/// The baseline is re-measured immediately before *every* probe rather than
+/// once at the start. Fans take tens of seconds to spin down, so against a
+/// single stale baseline a fan still coasting from the previous probe reads as
+/// responding to the next one - which made discovery depend on whatever the
+/// fans happened to be doing when the sweep began.
+///
+/// And each fan is assigned to the zone that moved it *most*, not to every zone
+/// that moved it at all. Chassis airflow couples the fans slightly, so a strong
+/// zone can drag a neighbour's tach up a little; without argmax that shows up
+/// as one fan belonging to three zones, including ids that do not exist.
 pub fn discover_zones(cfg: &Config) -> Result<Vec<Zone>> {
     log("discovering fan zones...");
     let low = 30u8;
-    let high = 80u8;
-    let mut zones = Vec::new();
+    let high = 90u8;
+    let settle = cfg.discover_settle;
 
-    // Baseline: everything low.
-    for z in 0..cfg.max_zone_probe {
-        let _ = set_duty(cfg, z, low);
-    }
-    sleep(Duration::from_secs(20));
-    let base = read_fans(cfg)?;
+    // (zone, fan) -> relative RPM rise over that probe's own baseline.
+    let mut responses: HashMap<(u8, String), f64> = HashMap::new();
+    let mut accepted: Vec<u8> = Vec::new();
 
     for z in 0..cfg.max_zone_probe {
-        // A zone that does not exist typically errors or reads back nothing
-        // sensible. Treat any failure as "absent" rather than guessing.
+        // Quiesce everything and take a fresh baseline for this probe alone.
+        for other in 0..cfg.max_zone_probe {
+            let _ = set_duty(cfg, other, low);
+        }
+        sleep(settle);
+        let base = read_fans(cfg)?;
+
+        // A zone that does not exist usually errors or refuses the value.
+        // Note the BMC also happily accepts writes to ids that drive nothing,
+        // so acceptance alone proves nothing - the fan response is the test.
         if set_duty(cfg, z, high).is_err() {
             continue;
         }
@@ -56,30 +74,57 @@ pub fn discover_zones(cfg: &Config) -> Result<Vec<Zone>> {
             let _ = set_duty(cfg, z, low);
             continue;
         }
+        accepted.push(z);
 
-        sleep(Duration::from_secs(20));
+        sleep(settle);
         let raised = read_fans(cfg)?;
+        let _ = set_duty(cfg, z, low);
 
-        let mut fans: Vec<String> = raised
+        for (name, rpm) in &raised {
+            let Some(b) = base.get(name) else { continue };
+            if *b <= 0.0 {
+                continue;
+            }
+            let rise = (rpm - b) / b;
+            // 15% is well outside the BMC's ~140 RPM quantisation.
+            if rise > 0.15 {
+                responses.insert((z, name.clone()), rise);
+            }
+        }
+    }
+
+    // Winner-takes-all: each fan belongs to whichever zone moved it hardest.
+    let mut owner: HashMap<String, (u8, f64)> = HashMap::new();
+    for ((z, fan), rise) in &responses {
+        let e = owner.entry(fan.clone()).or_insert((*z, *rise));
+        if *rise > e.1 {
+            *e = (*z, *rise);
+        }
+    }
+
+    let mut zones: Vec<Zone> = Vec::new();
+    for z in accepted {
+        let mut fans: Vec<String> = owner
             .iter()
-            .filter(|(name, rpm)| {
-                base.get(*name)
-                    // 15% is well outside the BMC's ~140 RPM quantisation.
-                    .map(|b| **rpm > b * 1.15)
-                    .unwrap_or(false)
-            })
-            .map(|(name, _)| name.clone())
+            .filter(|(_, (owner_zone, _))| *owner_zone == z)
+            .map(|(fan, _)| fan.clone())
             .collect();
         fans.sort();
 
-        let _ = set_duty(cfg, z, low);
-        sleep(Duration::from_secs(10));
-
         if fans.is_empty() {
-            log(&format!("  zone {z}: accepted duty but no fan responded - ignoring"));
+            log(&format!(
+                "  zone {z}: accepted duty but owns no fan - ignoring"
+            ));
             continue;
         }
-        log(&format!("  zone {z}: {}", fans.join(", ")));
+        let detail: Vec<String> = fans
+            .iter()
+            .map(|f| {
+                let rise = responses.get(&(z, f.clone())).copied().unwrap_or(0.0);
+                format!("{f} (+{:.0}%)", rise * 100.0)
+            })
+            .collect();
+        log(&format!("  zone {z}: {}", detail.join(", ")));
         zones.push(Zone { id: z, fans });
     }
 

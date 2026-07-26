@@ -68,6 +68,9 @@ pub struct Config {
     pub calibrate_abort_margin: f64,
     pub calibrate_lock_path: PathBuf,
     pub max_zone_probe: u8,
+    /// Settle time around each discovery probe. Fans take tens of seconds to
+    /// spin down; too short and a coasting fan is attributed to the wrong zone.
+    pub discover_settle: Duration,
 
     // Drift detection.
     pub drift_enable: bool,
@@ -247,6 +250,7 @@ impl Config {
                 "/run/smc-fand/calibrating",
             )),
             max_zone_probe: env_u32("SMC_MAX_ZONE_PROBE", 4)?.clamp(1, 8) as u8,
+            discover_settle: Duration::from_secs(env_u32("SMC_DISCOVER_SETTLE", 45)?.max(10) as u64),
 
             drift_enable: env_u32("SMC_DRIFT_ENABLE", 1)? != 0,
             drift_tolerance: env_f64("SMC_DRIFT_TOLERANCE", 0.35)?,
