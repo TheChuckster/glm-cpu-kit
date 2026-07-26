@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the smc-fand watchdog every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=5s
+# No randomised delay: a safety check should run on a predictable cadence.
+
+[Install]
+WantedBy=timers.target

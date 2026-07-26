@@ -45,6 +45,18 @@ everyday speed. **All cloud scripts read the API key from env or a key file - ne
 | `grafana-dashboard.json` | the exported dashboard, import directly in Grafana (may need a datasource remap) |
 | `bmc-exporter.py` + `.service` | bare-metal only: Redfish power/thermal (delete on GCP) |
 
+### `cooling/` (bare-metal only — see [`cooling/README.md`](cooling/README.md))
+| File | Purpose |
+|---|---|
+| `src/main.rs` + `Cargo.toml` | `smc-fand`: PI fan control per BMC zone, static musl binary, no deps |
+| `smc-fand.service` + `.env` | systemd unit and tuning; `ExecStopPost` hands fans back to the BMC on any exit |
+| `smc-fand-watchdog.*` | independent timer that forces BMC control if the daemon stalls |
+| `smc-fand-alerts.yml` | Prometheus alerts — saturation is the leading indicator, not emergency |
+
+Two things the stock BMC curve gets wrong on this workload: quiet low-RPM fans
+trip its fan-failure threshold and cause a full-speed rev every ~20s, and it
+cools the CPU while ~1 TB of DDR5 is what actually limits sustained inference.
+
 ---
 
 ## Setup order

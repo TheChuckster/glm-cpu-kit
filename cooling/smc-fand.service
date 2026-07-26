@@ -1,0 +1,45 @@
+[Unit]
+Description=Supermicro temperature-driven fan control (PI)
+Documentation=file:/usr/local/sbin/smc-fand
+After=multi-user.target
+# Not a hard dependency of anything: if this never starts, the BMC's own
+# automatic curve keeps cooling the box. Degraded, not dangerous.
+
+[Service]
+Type=exec
+EnvironmentFile=-/etc/default/smc-fand
+ExecStart=/usr/local/sbin/smc-fand
+Restart=on-failure
+RestartSec=10s
+
+# The safety net. Runs on EVERY exit path - clean stop, crash, panic, kill -9,
+# shutdown - and hands the fans back to the BMC's Standard curve. The leading
+# '-' means a failure here does not itself fail the unit. This is why the
+# daemon installs no signal handlers: this covers strictly more cases.
+ExecStopPost=-/usr/bin/ipmitool -I open raw 0x30 0x45 0x01 0x00
+
+# /run/smc-fand for the heartbeat the independent watchdog reads.
+RuntimeDirectory=smc-fand
+RuntimeDirectoryMode=0755
+
+# Runs as root because raw IPMI needs /dev/ipmi0, but gives up everything else.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+# No network of any kind: this talks to a device node, nothing else.
+PrivateNetwork=true
+RestrictAddressFamilies=none
+# Only the textfile-collector directory is writable.
+ReadWritePaths=/var/lib/prometheus/node-exporter
+DevicePolicy=closed
+DeviceAllow=/dev/ipmi0 rw
+
+[Install]
+WantedBy=multi-user.target

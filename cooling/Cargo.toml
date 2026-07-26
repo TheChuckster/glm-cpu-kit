@@ -1,0 +1,21 @@
+[package]
+name = "smc-fand"
+version = "0.1.0"
+edition = "2021"
+description = "Temperature-driven fan control for Supermicro H13/X13 BMCs"
+
+# No dependencies, deliberately. This runs as root, drives cooling on an
+# unattended box, and should keep working across OS upgrades. Everything it
+# needs is in std; configuration arrives via environment variables from
+# systemd, so there is no config parser to get wrong either.
+[dependencies]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+# A bug should kill the process outright rather than unwind into some
+# half-controlled state. Dying triggers the unit's ExecStopPost, which hands
+# the fans back to the BMC - that is the failure mode we want.
+panic = "abort"

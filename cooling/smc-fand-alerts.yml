@@ -1,0 +1,105 @@
+# Prometheus alerting rules for smc-fand.
+#
+# The ordering here reflects what we actually learned running this box: the
+# dangerous state is not "a fan failed", it is "the fans are already at maximum
+# and the temperature is still climbing". Saturation is the leading indicator;
+# by the time an emergency fires you are already out of options.
+
+groups:
+  - name: smc-fand
+    rules:
+      # --- cooling capacity -------------------------------------------------
+
+      - alert: SmcFandZoneSaturated
+        expr: smc_fand_saturated == 1
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Fan zone {{ $labels.zone }} has been at 100% for 3 minutes"
+          description: >-
+            No cooling headroom left in this zone. If the driving temperature is
+            still rising, the box cannot hold this workload. Check
+            smc_fand_temperature_celsius for the trend.
+
+      - alert: SmcFandSaturatedAndRising
+        # Saturated AND still heating: the genuinely bad case.
+        expr: smc_fand_saturated == 1 and deriv(smc_fand_temperature_celsius[10m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Zone {{ $labels.zone }} maxed out and still heating"
+          description: >-
+            Fans are at 100% and temperature is trending upward over 10 minutes.
+            Thermal throttling is the next step. Reduce load or improve airflow.
+
+      - alert: SmcFandEmergency
+        expr: smc_fand_emergency == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Zone {{ $labels.zone }} above emergency threshold"
+          description: >-
+            {{ $labels.zone }} exceeded its emergency limit; fans forced to 100%
+            regardless of the control loop.
+
+      # --- loss of control --------------------------------------------------
+
+      - alert: SmcFandControlLost
+        expr: smc_fand_control_lost == 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "smc-fand cannot command zone {{ $labels.zone }}"
+          description: >-
+            Duty readback disagrees with the commanded value. Something in the
+            BMC is overriding us - chassis intrusion ramps do this. Check
+            `ipmitool -I open sensor get "Chassis Intru"`.
+
+      # --- daemon liveness --------------------------------------------------
+
+      - alert: SmcFandStale
+        # The metrics file keeps being scraped after the daemon dies, so a stale
+        # heartbeat - not a missing metric - is what indicates trouble.
+        expr: time() - smc_fand_heartbeat_timestamp_seconds > 120
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "smc-fand heartbeat is stale"
+          description: >-
+            No control tick in over 2 minutes. The independent watchdog timer
+            should already have handed the fans back to the BMC; if this is
+            still firing, verify smc-fand-watchdog.timer is running.
+
+      - alert: SmcFandAbsent
+        expr: absent(smc_fand_heartbeat_timestamp_seconds)
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "smc-fand metrics have disappeared entirely"
+          description: >-
+            The textfile collector is no longer producing smc_fand metrics.
+            Either the daemon is stopped (BMC has the fans, which is safe) or
+            node-exporter's textfile directory has changed.
+
+      # --- the original bug, in case it ever returns ------------------------
+
+      - alert: SmcFandLowRpmFanTrip
+        # The 140 RPM thresholds are re-asserted at daemon startup, but a BMC
+        # firmware update between restarts could revert them unnoticed.
+        expr: bmc_fan_rpm < 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Fan {{ $labels.fan }} below 300 RPM"
+          description: >-
+            Low enough to be near the factory 420 RPM fan-fail threshold. If the
+            BMC starts periodically ramping every ~20s, the thresholds have
+            reverted - re-run the daemon or set them manually with
+            `ipmitool -I open sensor thresh <FAN> lcr 140`.

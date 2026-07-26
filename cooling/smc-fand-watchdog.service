@@ -1,0 +1,11 @@
+[Unit]
+Description=Independent watchdog for smc-fand
+Documentation=file:/usr/local/sbin/smc-fand-watchdog.sh
+# Deliberately NOT Requires=smc-fand.service. This must keep running even when
+# the daemon is gone - checking that the BMC has control is precisely its job
+# in that case.
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/smc-fand
+ExecStart=/usr/local/sbin/smc-fand-watchdog.sh
