@@ -1,12 +1,17 @@
 # Prometheus alerting rules for smc-fand.
 #
-# The ordering here reflects what we actually learned running this box: the
-# dangerous state is not "a fan failed", it is "the fans are already at maximum
-# and the temperature is still climbing". Saturation is the leading indicator;
-# by the time an emergency fires you are already out of options.
+# The ordering reflects what running this box actually taught us: the dangerous
+# state is not "a fan failed", it is "the fans are already at maximum and the
+# temperature is still climbing". Saturation is the leading indicator; by the
+# time an emergency fires you are already out of options.
 #
-# smc_fand_up is the liveness anchor. The daemon deletes its textfile on a
-# clean exit, so `absent(smc_fand_up)` means stopped and a stale heartbeat with
+# Note the metric shape: thermal state is labelled by DOMAIN (a set of sensors
+# sharing a limit), while control state is labelled by ZONE (a set of fans).
+# That split is the point of the design - domains say what must stay cool, the
+# authority matrix says which zones achieve it.
+#
+# smc_fand_up is the liveness anchor. The daemon deletes its textfile on a clean
+# exit, so `absent(smc_fand_up)` means stopped, while a stale heartbeat with
 # smc_fand_up present means wedged. Without that distinction a stopped daemon
 # looks identical to a hung one, because the textfile collector keeps serving
 # the last written sample forever.
@@ -16,50 +21,50 @@ groups:
     rules:
       # --- cooling capacity -------------------------------------------------
 
-      - alert: SmcFandZoneSaturated
-        expr: smc_fand_saturated == 1
+      - alert: SmcFandDomainSaturated
+        expr: smc_fand_domain_saturated == 1
         for: 3m
         labels:
           severity: warning
         annotations:
-          summary: "Fan zone {{ $labels.zone }} has been at 100% for 3 minutes"
+          summary: "Thermal domain {{ $labels.domain }} has demanded 100% for 3 minutes"
           description: >-
-            No cooling headroom left in this zone. If the driving temperature is
-            still rising, the box cannot hold this workload. Check
-            smc_fand_error_celsius for how far above setpoint it is.
+            This domain wants more cooling than any zone can give it. Check
+            smc_fand_domain_error_celsius for how far above setpoint it is, and
+            smc_fand_zone_coupled to confirm every zone has been pulled in to
+            help.
 
       - alert: SmcFandSaturatedAndRising
         # Saturated AND still heating: the genuinely bad case.
         #
-        # Uses smc_fand_error_celsius rather than the raw temperature: the
-        # driving sensor can swap between groups (CPU vs DIMM), which
-        # step-changes the temperature series and would make deriv() report a
-        # slope that is really just a change of subject. Error is normalised
-        # against whichever setpoint currently applies, so comparing it against
-        # its own recent minimum is stable across a swap.
+        # Uses error rather than raw temperature: the sensor driving a domain
+        # can change (DIMMA~F vs DIMMG~L), which step-changes the temperature
+        # series. Error is normalised against the setpoint, so comparing it
+        # against its own recent minimum stays meaningful across a swap.
         expr: >-
-          smc_fand_saturated == 1
-          and (smc_fand_error_celsius - min_over_time(smc_fand_error_celsius[10m])) > 2
+          smc_fand_domain_saturated == 1
+          and (smc_fand_domain_error_celsius - min_over_time(smc_fand_domain_error_celsius[10m])) > 2
         for: 5m
         labels:
           severity: critical
         annotations:
-          summary: "Zone {{ $labels.zone }} maxed out and still heating"
+          summary: "Domain {{ $labels.domain }} maxed out and still heating"
           description: >-
-            Fans are at 100% and the zone has moved further above setpoint over
-            the last 10 minutes. Thermal throttling is the next step. Reduce
-            load, improve airflow, or check for a missing air shroud.
+            Every zone that can help is already at maximum and this domain has
+            moved further above setpoint over 10 minutes. Thermal throttling is
+            next. Reduce load, or improve airflow - a missing air shroud is the
+            usual cause on this class of chassis.
 
       - alert: SmcFandEmergency
-        expr: smc_fand_emergency == 1
+        expr: smc_fand_domain_emergency == 1
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: "Zone {{ $labels.zone }} above emergency threshold"
+          summary: "Domain {{ $labels.domain }} above its emergency threshold"
           description: >-
-            A sensor group in {{ $labels.zone }} exceeded its emergency limit;
-            fans forced to 100% regardless of the control loop.
+            All zones forced to 100%, bypassing the control loop and the
+            authority matrix entirely.
 
       # --- loss of control --------------------------------------------------
 
@@ -72,9 +77,9 @@ groups:
           summary: "smc-fand cannot command zone {{ $labels.zone }}"
           description: >-
             Duty readback disagrees with the commanded value, and the write
-            itself succeeded (see SmcFandWriteFailing for the other case). Some
-            part of the BMC is overriding us - chassis intrusion ramps do this.
-            Check `ipmitool -I open sensor get "Chassis Intru"`.
+            itself succeeded (see SmcFandWriteFailing for the other case).
+            Something in the BMC is overriding us - chassis intrusion ramps do
+            this. Check `ipmitool -I open sensor get "Chassis Intru"`.
 
       - alert: SmcFandWriteFailing
         expr: smc_fand_write_failed == 1
@@ -88,11 +93,43 @@ groups:
             frozen at their last accepted value. Often /dev/ipmi0 contention
             with the node-exporter ipmitool collector.
 
+      # --- authority matrix -------------------------------------------------
+
+      - alert: SmcFandAuthorityDrift
+        # Advisory by construction: the daemon flags drift but never retunes
+        # control from passive observation, because duty correlates with load
+        # and the naive signal says "more fans => hotter".
+        expr: smc_fand_authority_drift == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Zone {{ $labels.zone }} response to {{ $labels.domain }} has changed"
+          description: >-
+            The measured cooling response no longer matches the calibrated
+            matrix - a fan swapped, a shroud moved, a filter clogged, or thermal
+            paste degraded. Control is unaffected and still safe. Re-run
+            `systemctl start smc-fand-calibrate` when convenient.
+
+      - alert: SmcFandUncalibrated
+        # Uniform authority is safe but runs every zone at the worst domain's
+        # demand, which is louder than necessary. Worth knowing, not urgent.
+        expr: smc_fand_authority_timestamp_seconds == 0 and min(smc_fand_authority) == 1
+        for: 24h
+        labels:
+          severity: info
+        annotations:
+          summary: "smc-fand has never been calibrated"
+          description: >-
+            Every zone is fully coupled to every domain. Correct and safe, but
+            the fans are working harder than the chassis requires. Run
+            `smc-fand --calibrate` with the service stopped.
+
       # --- daemon liveness --------------------------------------------------
 
       - alert: SmcFandStale
-        # Wedged, not stopped: metrics are still being published but no control
-        # tick has completed. The independent watchdog should beat this alert.
+        # Wedged, not stopped: metrics still published but no control tick has
+        # completed. The independent watchdog should beat this alert.
         expr: smc_fand_up == 1 and (time() - smc_fand_heartbeat_timestamp_seconds) > 180
         for: 1m
         labels:
@@ -109,8 +146,11 @@ groups:
         # Fires for a genuinely stopped daemon, because --restore removes the
         # textfile on the way out. The BMC has the fans, which is safe, but
         # nothing is optimising them.
+        #
+        # Expect this during a calibration sweep, which stops the service for
+        # 15-20 minutes by design.
         expr: absent(smc_fand_up)
-        for: 10m
+        for: 30m
         labels:
           severity: warning
         annotations:
@@ -126,8 +166,7 @@ groups:
         # Threshold sits just ABOVE the factory 420 RPM fan-fail limit, not
         # below it. The fans idle at ~420 RPM at SMC_MIN_DUTY by design, so a
         # rule that waits for <300 RPM can never fire - and during a fan-fail
-        # ramp the RPM goes up, not down. What we want to catch is the fans
-        # sitting near the factory limit at all.
+        # ramp the RPM goes up, not down.
         #
         # Requires monitoring/bmc-exporter.py. On a host without it this rule is
         # silently absent rather than failing, so confirm bmc_fan_rpm exists

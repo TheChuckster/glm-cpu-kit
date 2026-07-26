@@ -54,6 +54,33 @@ force_bmc_control() {
     fi
 }
 
+# A calibration sweep deliberately drives the fans with the service stopped.
+# Without this we would see "daemon inactive, BMC not in Standard" and fight it,
+# corrupting the very measurement it is taking.
+#
+# Bounded by age: a calibration that crashed or was killed must not be able to
+# disable the last safety layer indefinitely.
+CALIBRATE_LOCK="${SMC_CALIBRATE_LOCK:-/run/smc-fand/calibrating}"
+LOCK_MAX_AGE="${SMC_CALIBRATE_LOCK_MAX_AGE:-3600}"
+is_number "$LOCK_MAX_AGE" || LOCK_MAX_AGE=3600
+
+if [ -f "$CALIBRATE_LOCK" ]; then
+    lock_stamp=$(tr -d ' \n' < "$CALIBRATE_LOCK" 2>/dev/null)
+    lock_age=""
+    if is_number "${lock_stamp:-}"; then
+        lock_age=$(( $(date +%s) - lock_stamp ))
+    fi
+    if is_number "${lock_age:-}" && [ "$lock_age" -ge 0 ] && [ "$lock_age" -le "$LOCK_MAX_AGE" ]; then
+        log "calibration in progress (${lock_age}s); standing down"
+        exit 0
+    fi
+    log "ERROR: calibration lock is stale or unreadable (age=${lock_age:-?}s, limit ${LOCK_MAX_AGE}s)"
+    log "assuming the calibration died; removing the lock and taking the fans back"
+    rm -f "$CALIBRATE_LOCK"
+    force_bmc_control
+    exit 1
+fi
+
 recover() {
     # Order matters: make the box safe first, then try to recover the daemon.
     force_bmc_control

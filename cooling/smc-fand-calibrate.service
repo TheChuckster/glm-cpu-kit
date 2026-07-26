@@ -1,0 +1,36 @@
+[Unit]
+Description=Measure the smc-fand authority matrix (fan zone -> thermal domain)
+Documentation=file:/usr/local/sbin/smc-fand
+# Must not run alongside the daemon: two writers would produce nonsense gains.
+Conflicts=smc-fand.service
+After=smc-fand.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/smc-fand
+ExecStart=/usr/local/sbin/smc-fand --calibrate
+# Whatever happens, hand the fans back rather than leaving the chassis latched
+# in manual mode at whatever duty the sweep stopped at.
+ExecStopPost=-/usr/local/sbin/smc-fand --restore
+# The sweep is settle-time bound: steps x SMC_CALIBRATE_SETTLE, plus discovery.
+TimeoutStartSec=45min
+
+# Same hardening as the daemon; it drives the same device.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=none
+RuntimeDirectory=smc-fand
+RuntimeDirectoryPreserve=yes
+# Where the matrix is written.
+StateDirectory=smc-fand
+ReadWritePaths=-/var/lib/smc-fand
+DevicePolicy=closed
+DeviceAllow=/dev/ipmi0 rw
