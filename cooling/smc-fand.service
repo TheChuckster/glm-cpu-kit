@@ -16,7 +16,18 @@ RestartSec=10s
 # shutdown - and hands the fans back to the BMC's Standard curve. The leading
 # '-' means a failure here does not itself fail the unit. This is why the
 # daemon installs no signal handlers: this covers strictly more cases.
-ExecStopPost=-/usr/bin/ipmitool -I open raw 0x30 0x45 0x01 0x00
+#
+# Invoking the daemon's own --restore rather than a literal ipmitool line
+# matters: it honours $SMC_IPMITOOL from the EnvironmentFile above (a hardcoded
+# path would silently no-op for anyone who retargets it) and it inherits the
+# timeout(1) wrapper every other IPMI call uses, so a contended /dev/ipmi0
+# cannot block shutdown until TimeoutStopSec fires and SIGKILLs it with the
+# fans still latched in manual mode.
+ExecStopPost=-/usr/local/sbin/smc-fand --restore
+
+# Bound the stop path. The restore above is itself timeout-wrapped, so this is
+# only a backstop against something else hanging.
+TimeoutStopSec=30s
 
 # /run/smc-fand for the heartbeat the independent watchdog reads.
 RuntimeDirectory=smc-fand
@@ -36,8 +47,11 @@ MemoryDenyWriteExecute=true
 # No network of any kind: this talks to a device node, nothing else.
 PrivateNetwork=true
 RestrictAddressFamilies=none
-# Only the textfile-collector directory is writable.
-ReadWritePaths=/var/lib/prometheus/node-exporter
+# Metrics are optional, so the path is prefixed '-': without it a host that has
+# no textfile-collector directory fails namespace setup with 226/NAMESPACE and
+# the fan daemon never starts at all. An absent metrics sink must not be a hard
+# prerequisite for cooling.
+ReadWritePaths=-/var/lib/prometheus/node-exporter
 DevicePolicy=closed
 DeviceAllow=/dev/ipmi0 rw
 

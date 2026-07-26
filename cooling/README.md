@@ -87,13 +87,20 @@ The governing rule: **if the daemon is not running, the BMC controls the fans.**
 | Layer | Mechanism |
 |---|---|
 | Silicon | CPU/DIMM thermal throttling, independent of all software |
-| BMC curve | `ExecStopPost` restores Standard mode on *every* exit — clean, panic, `kill -9`, reboot |
-| Thresholds | Re-asserted at startup, so falling back to the BMC curve does not re-trigger problem 1 |
-| Emergency | Any group above its limit forces 100%, bypassing PI and slew |
-| Read failures | Retried; after `SMC_MAX_FAILURES` we ramp high, hand back to the BMC, exit non-zero |
+| Config validation | Bad values abort *before* manual mode is engaged — a misconfigured daemon never takes the fans |
+| BMC curve | `ExecStopPost` runs `smc-fand --restore` on *every* exit — clean, panic, `kill -9`, reboot |
+| Thresholds | Re-asserted *and read back* at startup, so falling back to the BMC curve does not re-trigger problem 1 |
+| Emergency | Any group above its limit forces 100%, bypassing PI and slew — evaluated across all groups, not just the driving one |
+| IPMI failures | *Any* consecutive failure — read, write, readback, mode check — counts toward `SMC_MAX_FAILURES`, then hands back to the BMC |
 | Readback | Every write verified; mismatch logged and exported as `smc_fand_control_lost` |
-| Watchdog | Separate timer unit checks heartbeat freshness — catches hangs systemd cannot see |
+| Heartbeat | Written only when every zone was actually commanded, so it cannot tick while control is silently lost |
+| Watchdog | Separate timer unit, fails closed on missing/unreadable/future timestamps — catches hangs systemd cannot see |
 | Alerting | `smc-fand-alerts.yml`; saturation is the leading indicator, not emergency |
+
+`smc_fand_up` is the liveness anchor: the daemon deletes its textfile on a clean
+exit, so `absent(smc_fand_up)` means *stopped* while a stale heartbeat with
+`smc_fand_up` present means *wedged*. Without that distinction the textfile
+collector keeps serving the last sample forever and the two look identical.
 
 The daemon installs **no signal handlers** on purpose. Letting SIGTERM take its
 default action and relying on `ExecStopPost` covers strictly more cases than a
@@ -113,28 +120,58 @@ sudo install -m 0755 smc-fand-watchdog.sh /usr/local/sbin/
 sudo install -m 0644 smc-fand.env /etc/default/smc-fand
 sudo install -m 0644 smc-fand.service smc-fand-watchdog.service smc-fand-watchdog.timer \
     /etc/systemd/system/
-sudo install -m 0644 smc-fand-alerts.yml /etc/prometheus/rules/
 sudo systemctl daemon-reload
-sudo systemctl enable --now smc-fand.service smc-fand-watchdog.timer
 ```
 
-Add to `prometheus.yml` if not already present:
+Metrics are optional, but if you want them create the textfile-collector
+directory first — `ProtectSystem=strict` makes the daemon unable to create it:
+
+```sh
+sudo mkdir -p /var/lib/prometheus/node-exporter
+sudo mkdir -p /etc/prometheus/rules
+sudo install -m 0644 smc-fand-alerts.yml /etc/prometheus/rules/
+```
+
+Add to `prometheus.yml` if not already present, then reload Prometheus:
 
 ```yaml
 rule_files:
   - /etc/prometheus/rules/*.yml
 ```
 
-**Retune `smc-fand.env` before deploying elsewhere.** Zone-to-fan mapping,
-sensor names and setpoints are specific to the board. Verify the mapping by
-raising one zone at a time and watching which fans respond:
+Finally, **map the zones before enabling** (next section), then:
 
 ```sh
-ipmitool -I open raw 0x30 0x45 0x01 0x01        # manual mode
-ipmitool -I open raw 0x30 0x70 0x66 0x01 0x00 0x45   # zone 0 -> 69%
-ipmitool -I open raw 0x30 0x70 0x66 0x01 0x01 0x1f   # zone 1 -> 31%
-ipmitool -I open sdr type Fan
+sudo systemctl enable --now smc-fand.service smc-fand-watchdog.timer
 ```
+
+## Retune before deploying elsewhere
+
+Zone-to-fan mapping, sensor names and setpoints are specific to the board. The
+daemon resolves every configured sensor name at startup and refuses to run if a
+group resolves zero sensors, so a typo fails loudly rather than leaving a group
+silently inert — but the zone-to-fan mapping it cannot check for you.
+
+Verify it by raising one zone at a time and watching which fans respond. **Stop
+the daemon first**, or it will overwrite your duty within one tick and you will
+be reading its numbers instead of yours:
+
+```sh
+sudo systemctl stop smc-fand                          # daemon must not be running
+sudo ipmitool -I open raw 0x30 0x45 0x01 0x01         # manual mode
+sudo ipmitool -I open raw 0x30 0x70 0x66 0x01 0x00 0x45   # zone 0 -> 69%
+sudo ipmitool -I open raw 0x30 0x70 0x66 0x01 0x01 0x1f   # zone 1 -> 31%
+sleep 25 && sudo ipmitool -I open sdr type Fan         # which fans went up?
+```
+
+Then swap the two duties and repeat to confirm. **Always restore afterwards** —
+leaving the BMC in manual mode at a fixed duty means no thermal response at all:
+
+```sh
+sudo /usr/local/sbin/smc-fand --restore    # hands the fans back to the BMC
+```
+
+Put the result in `SMC_ZONE0_*` / `SMC_ZONE1_*`, then start the daemon.
 
 ## Verify
 
@@ -144,7 +181,24 @@ the BMC back in Standard mode (`raw 0x30 0x45 0x00` returning `00`):
 ```sh
 sudo systemctl stop smc-fand                     # -> 00
 sudo kill -9 $(systemctl show -p MainPID --value smc-fand)   # -> 00, then restarts
-sudo kill -STOP $(systemctl show -p MainPID --value smc-fand)  # watchdog fires within ~60s
+```
+
+For the hang case, the watchdog fires once the heartbeat exceeds
+`SMC_HEARTBEAT_MAX_AGE` (default 120s), so allow more than two minutes:
+
+```sh
+sudo kill -STOP $(systemctl show -p MainPID --value smc-fand)
+sleep 130 && sudo /usr/local/sbin/smc-fand-watchdog.sh    # or wait for the timer
+```
+
+Configuration validation should also be exercised — each of these must exit
+before touching the BMC, leaving mode at `00`:
+
+```sh
+sudo SMC_SLEW_UP=-5 /usr/local/sbin/smc-fand      # negative slew
+sudo SMC_MAX_DUTY=20 /usr/local/sbin/smc-fand     # min > max
+sudo SMC_ZONE0_KP=nan /usr/local/sbin/smc-fand    # NaN
+sudo SMC_VERIFY_EVERY=0 /usr/local/sbin/smc-fand  # zero divisor
 ```
 
 Confirm the metrics reach Prometheus:

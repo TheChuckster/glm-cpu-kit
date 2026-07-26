@@ -83,6 +83,7 @@ Or do it by hand:
 - `monitoring/prometheus-scrape.yml`: `PASTE_YOUR_GLM_API_KEY_HERE`.
 - `monitoring/loki-pusher.service` and `bmc-exporter.service`: `REPLACE_WITH_YOUR_USER`.
 - `harness/opencode.json`: `SERVER_IP`, export `GLM_API_KEY`, and keep `limit.context` **below** the server `--ctx-size`.
+- `cooling/smc-fand.env`: zone-to-fan mapping, sensor names and setpoints are board-specific. `install.sh` does **not** install this — follow [`cooling/README.md`](cooling/README.md), and map the zones before enabling the service.
 
 ## GCP-specific swaps
 - Delete `bmc-exporter.py` / `.service` and the `bmc` scrape job; a cloud VM has no BMC. Use
