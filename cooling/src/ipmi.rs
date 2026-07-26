@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::process::Command;
 
 use crate::config::Config;
-use crate::util::{err, log, warn, Error, Result};
+use crate::util::{err, log, Error, Result};
 
 // Supermicro OEM raw commands.
 const MODE_GET: &[&str] = &["raw", "0x30", "0x45", "0x00"];
@@ -153,12 +153,23 @@ fn read_lower_critical(cfg: &Config, fan: &str) -> Result<f64> {
 /// the rear fans idling at 420 look like failures and the BMC starts the
 /// full-speed ramp cycle again. The write is read back because these BMCs
 /// quantise to fixed RPM steps and will silently round or ignore a value.
-pub fn assert_fan_thresholds(cfg: &Config) {
+///
+/// Returns false if any threshold could not be confirmed. The caller MUST act
+/// on that: idling the fans at `min_duty` under an unlowered threshold recreates
+/// exactly the bug this daemon exists to prevent, so a failure here has to
+/// change behaviour rather than just appear in the log.
+#[must_use]
+pub fn assert_fan_thresholds(cfg: &Config) -> bool {
+    let mut all_ok = true;
+
     for (fan, want) in &cfg.fan_thresholds {
         let current = match read_lower_critical(cfg, fan) {
             Ok(c) => c,
             Err(e) => {
-                warn(&format!("could not read {fan} threshold: {e}"));
+                // Cannot read means cannot confirm. On a board whose `sensor
+                // get` output differs this would otherwise silently no-op.
+                err(&format!("could not read {fan} threshold: {e}"));
+                all_ok = false;
                 continue;
             }
         };
@@ -172,19 +183,27 @@ pub fn assert_fan_thresholds(cfg: &Config) {
         let w = want.to_string();
         if let Err(e) = ipmi(cfg, &["sensor", "thresh", fan, "lcr", &w]) {
             err(&format!("could not set {fan} threshold: {e}"));
+            all_ok = false;
             continue;
         }
         match read_lower_critical(cfg, fan) {
             Ok(after) if (after - *want as f64).abs() < 1.0 => {
                 log(&format!("{fan} lower-critical now {after}"))
             }
-            Ok(after) => err(&format!(
-                "{fan} threshold did not take: wrote {want}, reads {after} \
-                 - the BMC quantised or rejected it"
-            )),
-            Err(e) => warn(&format!("could not verify {fan} threshold: {e}")),
+            Ok(after) => {
+                err(&format!(
+                    "{fan} threshold did not take: wrote {want}, reads {after} \
+                     - the BMC quantised or rejected it"
+                ));
+                all_ok = false;
+            }
+            Err(e) => {
+                err(&format!("could not verify {fan} threshold: {e}"));
+                all_ok = false;
+            }
         }
     }
+    all_ok
 }
 
 /// Give the fans back to the BMC's own curve.

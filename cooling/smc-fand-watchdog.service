@@ -9,3 +9,13 @@ Documentation=file:/usr/local/sbin/smc-fand-watchdog.sh
 Type=oneshot
 EnvironmentFile=-/etc/default/smc-fand
 ExecStart=/usr/local/sbin/smc-fand-watchdog.sh
+
+# systemd disables the start timeout by default for Type=oneshot. Without an
+# explicit bound, a check that blocks - on a wedged /dev/ipmi0, which is the
+# very failure this watchdog exists to catch - would never exit, and
+# OnUnitActiveSec cannot re-trigger a unit that is still active. The last
+# safety layer would be gone with no failure, no alert and no log.
+#
+# Kept under the 60s timer cadence so a hung run is reaped before the next.
+TimeoutStartSec=45s
+KillMode=mixed

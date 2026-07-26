@@ -22,26 +22,29 @@
 //! default action and relying on `ExecStopPost` covers strictly more cases than
 //! a handler could, including SIGKILL, and keeps this binary free of `unsafe`.
 //!
+//! `--restore` is dispatched before any configuration is parsed. It is the
+//! thing that recovers from a broken configuration, so it must not depend on
+//! the configuration parsing cleanly.
+//!
 //! Further layers:
 //!
 //!   * Configuration is validated *before* manual mode is engaged. A bad value
 //!     means we exit having never taken the fans away from the BMC.
+//!   * Fan-failure thresholds are re-asserted and verified at startup. If they
+//!     cannot be confirmed, the duty floor is raised rather than idling the
+//!     fans under a threshold that would trip the BMC's ramp cycle.
 //!   * Any domain at or above its emergency limit forces every zone to 100%,
 //!     bypassing the PI output, the slew limiter and the authority matrix.
 //!   * A saturated domain couples to every zone regardless of learned
 //!     authority - being out of headroom is not the time to optimise.
-//!   * *Any* consecutive IPMI failure - sensor read, duty write, readback or
-//!     mode check - counts toward `MAX_FAILURES`, after which we hand back to
-//!     the BMC and exit non-zero so systemd restarts us.
+//!   * IPMI failures are counted *per operation*, so one permanently failing
+//!     zone escalates to `MAX_FAILURES` even while its neighbours succeed.
 //!   * Duty writes are read back. A mismatch means something overrode us
 //!     (chassis intrusion ramps do this), logged and exported as
 //!     `smc_fand_control_lost` rather than passing silently.
-//!   * Fan-failure thresholds are re-asserted and verified at startup, because
-//!     a BMC firmware update silently reverts them and resurrects the low-RPM
-//!     fan-fail ramp this daemon exists to avoid.
-//!   * The heartbeat is written only when every zone was actually commanded.
-//!     An independent systemd timer watches its age and forces BMC control if
-//!     we wedge in a way systemd cannot see.
+//!   * The heartbeat is written only when every zone was actually commanded,
+//!     and the exported heartbeat *metric* carries that same timestamp so
+//!     alerting sees what the watchdog sees.
 
 mod authority;
 mod calibrate;
@@ -64,7 +67,7 @@ use ipmi::{
     assert_fan_thresholds, get_duty, get_mode, parse_temperatures, read_temperatures, restore_bmc,
     set_duty, set_mode, MODE_FULL,
 };
-use util::{err, log, now_secs, out, warn, write_atomic, Result};
+use util::{err, log, now_secs, out, warn, write_atomic, Failures, Result};
 
 /// The BMC quantises duty, so a readback rarely equals what we wrote exactly
 /// (writing 0x20 reads back 0x1f). Anything within this margin is a match;
@@ -80,18 +83,21 @@ fn clear_metrics(cfg: &Config) {
 }
 
 fn control_loop(cfg: &Config, ctrl: &mut Controller, authority: &Authority) -> i32 {
-    let mut failures: u32 = 0;
+    let mut failures = Failures::new();
     let mut tick: u32 = 0;
     let mut written: HashMap<u8, u8> = HashMap::new();
     let mut drift = DriftMonitor::new();
     let mut last_instant = Instant::now();
+    // The timestamp of the last tick in which every zone was actually
+    // commanded. Exported as the heartbeat metric so alerting and the external
+    // watchdog agree on what "alive" means.
+    let mut last_good_tick = now_secs();
 
     macro_rules! bail_if_exhausted {
-        ($what:expr) => {
-            if failures >= cfg.max_failures {
+        () => {
+            if let Some((what, n)) = failures.exhausted(cfg.max_failures) {
                 err(&format!(
-                    "{failures} consecutive IPMI failures ({}); handing control back to the BMC",
-                    $what
+                    "{n} consecutive failures of {what}; handing control back to the BMC"
                 ));
                 restore_bmc(cfg, "IPMI failures exhausted");
                 return 1;
@@ -110,20 +116,17 @@ fn control_loop(cfg: &Config, ctrl: &mut Controller, authority: &Authority) -> i
         last_instant = now;
 
         let temps = match read_temperatures(cfg) {
-            Ok(t) => t,
+            Ok(t) => {
+                failures.ok("sensor read");
+                t
+            }
             Err(e) => {
-                failures += 1;
+                let n = failures.fail("sensor read");
                 err(&format!(
-                    "sensor read failed ({failures}/{}): {e}",
+                    "sensor read failed ({n}/{}): {e}",
                     cfg.max_failures
                 ));
-                if failures >= cfg.max_failures {
-                    // Hand straight back to the BMC. Writing a "safe" duty here
-                    // would be pointless - restoring Standard mode makes the BMC
-                    // recompute duty from its own curve within milliseconds.
-                    restore_bmc(cfg, "sensor reads failing");
-                    return 1;
-                }
+                bail_if_exhausted!();
                 sleep(cfg.tick);
                 continue;
             }
@@ -134,43 +137,42 @@ fn control_loop(cfg: &Config, ctrl: &mut Controller, authority: &Authority) -> i
         // and the failure mode is slow-moving.
         if tick.is_multiple_of(cfg.mode_check_every) {
             match get_mode(cfg) {
-                Ok(0x01) => failures = 0,
+                Ok(0x01) => failures.ok("mode check"),
                 Ok(m) => {
-                    failures = 0;
+                    failures.ok("mode check");
                     warn(&format!("BMC left manual mode (now 0x{m:02x}); re-engaging"));
-                    if let Err(e) = set_mode(cfg, MODE_FULL) {
-                        failures += 1;
-                        err(&format!("could not re-engage manual mode: {e}"));
-                    }
-                    written.clear();
+                    re_engage(cfg, &mut failures, &mut written);
                 }
                 Err(e) => {
-                    failures += 1;
+                    let n = failures.fail("mode check");
                     err(&format!(
-                        "mode check failed ({failures}/{}): {e}",
+                        "mode check failed ({n}/{}): {e}",
                         cfg.max_failures
                     ));
                     // A BMC whose mode-get is failing may also have silently
-                    // dropped to Standard, so re-assert rather than assume.
-                    if let Err(e) = set_mode(cfg, MODE_FULL) {
-                        err(&format!("could not re-assert manual mode: {e}"));
-                    }
+                    // dropped to Standard. Re-assert AND forget what we think
+                    // the zones hold, or a BMC that reset keeps its own
+                    // power-on duty while we skip writes as "unchanged".
+                    re_engage(cfg, &mut failures, &mut written);
                 }
             }
-            bail_if_exhausted!("mode check");
+            bail_if_exhausted!();
         }
 
         let outcome = ctrl.step(&temps, cfg, authority, dt, true);
 
         for name in &outcome.unreadable {
-            failures += 1;
+            let n = failures.fail(&format!("domain {name} readable"));
             err(&format!(
-                "domain {name:?} has no readable sensors ({failures}/{}) - check that the \
+                "domain {name:?} has no readable sensors ({n}/{}) - check that the \
                  configured names still match the BMC",
                 cfg.max_failures
             ));
         }
-        bail_if_exhausted!("unreadable domain");
+        for d in &outcome.demands {
+            failures.ok(&format!("domain {} readable", d.domain));
+        }
+        bail_if_exhausted!();
 
         let verify = tick.is_multiple_of(cfg.verify_every);
         let mut readback: HashMap<u8, Option<u8>> = HashMap::new();
@@ -181,21 +183,22 @@ fn control_loop(cfg: &Config, ctrl: &mut Controller, authority: &Authority) -> i
         for z in &outcome.zones {
             let changed = written.get(&z.zone) != Some(&z.duty);
             let mut failed = false;
+            let write_key = format!("duty write zone {}", z.zone);
 
             if changed {
                 match set_duty(cfg, z.zone, z.duty) {
                     Ok(()) => {
                         written.insert(z.zone, z.duty);
-                        failures = 0;
+                        failures.ok(&write_key);
                         // Only now may the slew limiter anchor here.
                         ctrl.applied.insert(z.zone, z.duty);
                     }
                     Err(e) => {
                         failed = true;
                         all_commanded = false;
-                        failures += 1;
+                        let n = failures.fail(&write_key);
                         err(&format!(
-                            "duty write failed for zone {} ({failures}/{}): {e}",
+                            "duty write failed for zone {} ({n}/{}): {e}",
                             z.zone, cfg.max_failures
                         ));
                     }
@@ -203,16 +206,20 @@ fn control_loop(cfg: &Config, ctrl: &mut Controller, authority: &Authority) -> i
             }
             write_failed.insert(z.zone, failed);
 
-            // Do not read back after a failed write: the BMC still holds the old
-            // duty, which would look like an override rather than our own error.
+            // Never read back after a failed write. The BMC still holds the old
+            // duty, so the mismatch would be reported as an external override,
+            // masking the write failure and anchoring the slew limiter to a
+            // value we never set.
             let mut lost = false;
-            if (changed && !failed) || verify {
+            if (changed || verify) && !failed {
+                let read_key = format!("duty readback zone {}", z.zone);
                 match get_duty(cfg, z.zone) {
                     Ok(rb) => {
-                        failures = 0;
+                        failures.ok(&read_key);
                         lost = (rb as i32 - z.duty as i32).abs() > READBACK_TOLERANCE;
                         readback.insert(z.zone, Some(rb));
                         if lost {
+                            all_commanded = false;
                             err(&format!(
                                 "CONTROL LOST on zone {}: commanded {}%, BMC reports {rb}% \
                                  - something is overriding us",
@@ -225,9 +232,9 @@ fn control_loop(cfg: &Config, ctrl: &mut Controller, authority: &Authority) -> i
                         }
                     }
                     Err(e) => {
-                        failures += 1;
+                        let n = failures.fail(&read_key);
                         warn(&format!(
-                            "duty readback failed for zone {} ({failures}/{}): {e}",
+                            "duty readback failed for zone {} ({n}/{}): {e}",
                             z.zone, cfg.max_failures
                         ));
                         readback.insert(z.zone, None);
@@ -238,7 +245,7 @@ fn control_loop(cfg: &Config, ctrl: &mut Controller, authority: &Authority) -> i
             }
             control_lost.insert(z.zone, lost);
         }
-        bail_if_exhausted!("duty commands");
+        bail_if_exhausted!();
 
         for d in &outcome.demands {
             if d.emergency {
@@ -276,6 +283,17 @@ fn control_loop(cfg: &Config, ctrl: &mut Controller, authority: &Authority) -> i
             }
         }
 
+        // Written only when every zone was actually commanded. A heartbeat that
+        // ticks while control is silently lost would defeat the whole point of
+        // the independent watchdog - and the exported metric must carry the
+        // same timestamp, or the staleness alert can never fire.
+        if all_commanded {
+            last_good_tick = now_secs();
+            if let Err(e) = write_atomic(&cfg.heartbeat_path, &format!("{last_good_tick}\n")) {
+                warn(&format!("heartbeat write failed: {e}"));
+            }
+        }
+
         let metrics = render_metrics(
             &MetricInputs {
                 outcome: &outcome,
@@ -284,7 +302,8 @@ fn control_loop(cfg: &Config, ctrl: &mut Controller, authority: &Authority) -> i
                 control_lost: &control_lost,
                 write_failed: &write_failed,
                 drift: &drift.flagged,
-                heartbeat: now_secs(),
+                heartbeat: last_good_tick,
+                thresholds_ok: ctrl.thresholds_ok,
             },
             cfg,
         );
@@ -293,32 +312,42 @@ fn control_loop(cfg: &Config, ctrl: &mut Controller, authority: &Authority) -> i
             warn(&format!("metrics write failed: {e}"));
         }
 
-        // Written only when every zone was actually commanded. A heartbeat that
-        // ticks while control is silently lost would defeat the whole point of
-        // the independent watchdog.
-        if all_commanded {
-            if let Err(e) = write_atomic(&cfg.heartbeat_path, &format!("{}\n", now_secs())) {
-                warn(&format!("heartbeat write failed: {e}"));
-            }
-        }
-
         sleep(cfg.tick);
     }
 }
 
-/// Print the matrix, each domain's demand, and the resulting duty for a set of
-/// sensor readings fed on stdin in `ipmitool sdr type Temperature` format.
+/// Re-assert manual mode and forget the believed duty state.
 ///
-/// This makes the controller testable without hardware, which is how static
-/// mode was checked against the previous implementation.
-fn run_explain(cfg: &Config, authority: &Authority) -> Result<()> {
-    let mut input = String::new();
-    std::io::stdin().read_to_string(&mut input)?;
+/// `written` must be cleared: if the BMC reset, it holds its own power-on duty
+/// while our map still says otherwise, so every zone would be skipped as
+/// "unchanged" and the fans would run the BMC's numbers while we report ours.
+fn re_engage(cfg: &Config, failures: &mut Failures, written: &mut HashMap<u8, u8>) {
+    written.clear();
+    match set_mode(cfg, MODE_FULL) {
+        Ok(()) => failures.ok("mode set"),
+        Err(e) => {
+            let n = failures.fail("mode set");
+            err(&format!(
+                "could not re-engage manual mode ({n}/{}): {e}",
+                cfg.max_failures
+            ));
+        }
+    }
+}
 
-    let temps = if input.trim().is_empty() {
-        read_temperatures(cfg)?
-    } else {
+/// Print the matrix, each domain's demand, and the resulting duty.
+///
+/// Reads live sensors by default. `--explain -` reads `ipmitool sdr type
+/// Temperature` output from stdin instead, which is how the controller is
+/// tested without hardware. (Reading stdin unconditionally would hang on a
+/// terminal, making the live path unreachable without Ctrl-D.)
+fn run_explain(cfg: &Config, authority: &Authority, from_stdin: bool) -> Result<()> {
+    let temps = if from_stdin {
+        let mut input = String::new();
+        std::io::stdin().read_to_string(&mut input)?;
         parse_temperatures(&input)?
+    } else {
+        read_temperatures(cfg)?
     };
 
     let mut ctrl = Controller::new(cfg);
@@ -364,7 +393,7 @@ fn startup_checks(cfg: &Config, ctrl: &Controller) -> Result<()> {
     }
 
     if fatal {
-        util::Result::<()>::Err(util::Error(
+        Err(util::Error(
             "refusing to start with an inert domain; BMC keeps control".into(),
         ))
     } else {
@@ -373,20 +402,13 @@ fn startup_checks(cfg: &Config, ctrl: &Controller) -> Result<()> {
 }
 
 fn main() {
-    let cfg = match Config::from_env() {
-        Ok(c) => c,
-        Err(e) => {
-            // Nothing has been touched: the BMC still owns the fans.
-            err(&format!("configuration error: {e}"));
-            std::process::exit(2);
-        }
-    };
-
     let args: Vec<String> = env::args().skip(1).collect();
 
-    // Used by the unit's ExecStopPost, and by hand when testing in the
-    // foreground where there is no unit to put things back.
+    // FIRST, before any configuration is parsed or validated. This is the
+    // safety net that ExecStopPost invokes, and it has to work when the
+    // configuration is exactly what is broken.
     if args.iter().any(|a| a == "--restore") {
+        let cfg = Config::minimal();
         clear_metrics(&cfg);
         std::process::exit(if restore_bmc(&cfg, "--restore requested") {
             0
@@ -394,6 +416,15 @@ fn main() {
             1
         });
     }
+
+    let mut cfg = match Config::from_env() {
+        Ok(c) => c,
+        Err(e) => {
+            // Nothing has been touched: the BMC still owns the fans.
+            err(&format!("configuration error: {e}"));
+            std::process::exit(2);
+        }
+    };
 
     if args.iter().any(|a| a == "--calibrate") {
         if let Err(e) = calibrate::ensure_daemon_stopped() {
@@ -412,7 +443,8 @@ fn main() {
     let authority = Authority::load(&cfg);
 
     if args.iter().any(|a| a == "--explain") {
-        if let Err(e) = run_explain(&cfg, &authority) {
+        let from_stdin = args.iter().any(|a| a == "-");
+        if let Err(e) = run_explain(&cfg, &authority, from_stdin) {
             err(&format!("{e}"));
             std::process::exit(1);
         }
@@ -436,13 +468,32 @@ fn main() {
         log(line);
     }
 
-    let mut ctrl = Controller::new(&cfg);
-    if let Err(e) = startup_checks(&cfg, &ctrl) {
+    if let Err(e) = startup_checks(&cfg, &Controller::new(&cfg)) {
         err(&format!("{e}"));
         std::process::exit(2);
     }
 
-    assert_fan_thresholds(&cfg);
+    // If the fan-fail thresholds could not be confirmed, running at min_duty
+    // would idle the fans under a threshold the BMC still enforces, which
+    // restarts the exact ramp cycle this daemon exists to prevent. Raise the
+    // floor instead of exiting: handing back to the BMC would idle them lower.
+    let thresholds_ok = assert_fan_thresholds(&cfg);
+    if !thresholds_ok {
+        let raised = cfg.unverified_min_duty.max(cfg.min_duty).min(cfg.max_duty);
+        err(&format!(
+            "fan-fail thresholds could NOT be confirmed - raising the duty floor from {}% to {}% \
+             so the fans stay clear of whatever threshold the BMC is enforcing. \
+             Fix the thresholds and restart to get the quiet floor back.",
+            cfg.min_duty, raised
+        ));
+        cfg.min_duty = raised;
+        if cfg.idle_duty < cfg.min_duty {
+            cfg.idle_duty = cfg.min_duty;
+        }
+    }
+
+    let mut ctrl = Controller::new(&cfg);
+    ctrl.thresholds_ok = thresholds_ok;
 
     if let Err(e) = set_mode(&cfg, MODE_FULL) {
         err(&format!("could not engage manual fan mode: {e}"));
@@ -452,6 +503,8 @@ fn main() {
 
     let code = control_loop(&cfg, &mut ctrl, &authority);
     clear_metrics(&cfg);
+    // control_loop already restored on every path it returns from; this is the
+    // belt to its braces, and restoring twice is harmless.
     restore_bmc(&cfg, "control loop exited");
     std::process::exit(code);
 }

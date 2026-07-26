@@ -19,7 +19,7 @@ use crate::config::Config;
 use crate::ipmi::{
     get_duty, read_fans, read_temperatures, restore_bmc, set_duty, set_mode, MODE_FULL,
 };
-use crate::util::{err, linear_fit, log, now_secs, out, warn, write_atomic, Error, Result};
+use crate::util::{err, linear_fit, log, now_secs, out, write_atomic, Error, Result};
 
 pub struct Zone {
     pub id: u8,
@@ -44,20 +44,28 @@ pub struct Zone {
 /// as one fan belonging to three zones, including ids that do not exist.
 pub fn discover_zones(cfg: &Config) -> Result<Vec<Zone>> {
     log("discovering fan zones...");
-    let low = 30u8;
-    let high = 90u8;
+    // Never drive below the operator's floor: min_duty is load-bearing (it is
+    // what keeps the fans clear of the BMC's fan-fail threshold), and a
+    // hardcoded value here would quietly ignore it.
+    let low = cfg.min_duty.max(25.0).round() as u8;
+    let high = cfg.max_duty.min(90.0).round() as u8;
     let settle = cfg.discover_settle;
 
     // (zone, fan) -> relative RPM rise over that probe's own baseline.
     let mut responses: HashMap<(u8, String), f64> = HashMap::new();
     let mut accepted: Vec<u8> = Vec::new();
 
-    for z in 0..cfg.max_zone_probe {
+    for z in 0..=cfg.max_zone_probe {
         // Quiesce everything and take a fresh baseline for this probe alone.
-        for other in 0..cfg.max_zone_probe {
+        for other in 0..=cfg.max_zone_probe {
             let _ = set_duty(cfg, other, low);
         }
         sleep(settle);
+        // Discovery parks every fan low for several minutes. Without this the
+        // sweep would run blind through its longest phase - on a loaded box the
+        // DIMMs can cross their emergency limit and nothing would notice,
+        // because the control loop is stopped and only the sweep is watching.
+        check_safe(cfg, &read_temperatures(cfg)?)?;
         let base = read_fans(cfg)?;
 
         // A zone that does not exist usually errors or refuses the value.
@@ -77,6 +85,7 @@ pub fn discover_zones(cfg: &Config) -> Result<Vec<Zone>> {
         accepted.push(z);
 
         sleep(settle);
+        check_safe(cfg, &read_temperatures(cfg)?)?;
         let raised = read_fans(cfg)?;
         let _ = set_duty(cfg, z, low);
 
@@ -172,9 +181,16 @@ fn sample_temps(cfg: &Config) -> Result<HashMap<String, f64>> {
 /// Run the sweep and write the authority matrix.
 pub fn calibrate(cfg: &Config) -> Result<Authority> {
     // Stand the watchdog down for the duration - it would otherwise see the
-    // service inactive, force BMC Standard mode, and fight the sweep. Bounded
-    // by age on the watchdog side so a crash here cannot disable it forever.
-    write_atomic(&cfg.calibrate_lock_path, &format!("{}\n", now_secs()))?;
+    // service inactive, force BMC Standard mode, and fight the sweep.
+    //
+    // The lock carries an EXPIRY rather than a start time, computed from this
+    // sweep's own length. A manual `--calibrate` has no unit and therefore no
+    // ExecStopPost, so Ctrl-C leaves the fans latched in manual mode with no
+    // controller; the watchdog must take over shortly after the sweep *should*
+    // have finished, not after a flat hour during which nothing is driving the
+    // fans on a box that may be under load.
+    let expiry = now_secs() + estimated_duration_secs(cfg) + 300;
+    write_atomic(&cfg.calibrate_lock_path, &format!("{expiry}\n"))?;
     let result = calibrate_inner(cfg);
     let _ = fs::remove_file(&cfg.calibrate_lock_path);
 
@@ -202,7 +218,14 @@ fn calibrate_inner(cfg: &Config) -> Result<Authority> {
         (per_zone * zones.len() as u64).div_ceil(60)
     ));
 
-    // sensor -> (duty, temp) observations, per zone.
+    // (zone, domain) -> (duty, domain temperature) observations.
+    //
+    // Recorded per DOMAIN using its hottest sensor at each step, because that
+    // is what Domain::demand controls on. Fitting per sensor and then keeping
+    // the most responsive one measures a different quantity than the loop uses:
+    // a zone that strongly cools a cool sensor would out-score the zone that
+    // weakly cools the hot one, and calibration would decouple the only zone
+    // actually holding the domain down.
     let mut observations: HashMap<(u8, String), Vec<(f64, f64)>> = HashMap::new();
 
     for z in &zones {
@@ -220,36 +243,35 @@ fn calibrate_inner(cfg: &Config) -> Result<Authority> {
             let t = sample_temps(cfg)?;
             check_safe(cfg, &t)?;
 
-            for (sensor, temp) in &t {
-                observations
-                    .entry((z.id, sensor.clone()))
-                    .or_default()
-                    .push((*step, *temp));
+            for d in &cfg.domains {
+                let hottest = d
+                    .sensors
+                    .iter()
+                    .filter_map(|n| t.get(n).copied())
+                    .fold(f64::NEG_INFINITY, f64::max);
+                if hottest.is_finite() {
+                    observations
+                        .entry((z.id, d.name.clone()))
+                        .or_default()
+                        .push((*step, hottest));
+                }
             }
             log(&format!("  zone {} at {:>5.1}%: sampled", z.id, step));
         }
     }
 
-    // Fit a gain per (zone, domain): the strongest cooling response among the
-    // domain's sensors, since a domain is limited by its hottest component.
+    // One fit per (zone, domain), against the domain temperature the control
+    // loop actually uses.
     let mut raw: HashMap<(u8, String), (f64, f64, u32)> = HashMap::new();
     for z in &zones {
         for d in &cfg.domains {
-            let mut best: Option<(f64, f64, u32)> = None;
-            for sensor in &d.sensors {
-                let Some(points) = observations.get(&(z.id, sensor.clone())) else {
-                    continue;
-                };
-                let Some((slope, r2)) = linear_fit(points) else {
-                    continue;
-                };
-                if best.map(|b| slope < b.0).unwrap_or(true) {
-                    best = Some((slope, r2, points.len() as u32));
-                }
-            }
-            if let Some((slope, r2, n)) = best {
-                raw.insert((z.id, d.name.clone()), (slope, r2, n));
-            }
+            let Some(points) = observations.get(&(z.id, d.name.clone())) else {
+                continue;
+            };
+            let Some((slope, r2)) = linear_fit(points) else {
+                continue;
+            };
+            raw.insert((z.id, d.name.clone()), (slope, r2, points.len() as u32));
         }
     }
 
@@ -278,8 +300,13 @@ fn calibrate_inner(cfg: &Config) -> Result<Authority> {
             // Confidence combines fit quality with signal size: a tidy fit on a
             // 0.01 C/% slope is still indistinguishable from sensor quantisation.
             let signal = (cooling / 0.05).clamp(0.0, 1.0);
+            // Two points make r2 identically 1.0 by construction, which would
+            // otherwise award full confidence - and full confidence is what
+            // permits complete decoupling - from a fit that cannot be wrong
+            // because it has no residual. Scale until there is real redundancy.
+            let evidence = ((n as f64 - 1.0) / 3.0).clamp(0.0, 1.0);
             let confidence = if strongest > 1e-9 {
-                (r2 * signal.max(0.2)).clamp(0.0, 1.0)
+                (r2 * signal.max(0.2) * evidence).clamp(0.0, 1.0)
             } else {
                 0.0
             };
@@ -313,6 +340,15 @@ fn calibrate_inner(cfg: &Config) -> Result<Authority> {
     Ok(authority)
 }
 
+/// Roughly how long the sweep will take, used to bound the watchdog stand-down.
+fn estimated_duration_secs(cfg: &Config) -> u64 {
+    let discovery = (cfg.max_zone_probe as u64 + 1) * 2 * cfg.discover_settle.as_secs();
+    let sweep = cfg.calibrate_steps.len() as u64
+        * (cfg.calibrate_settle.as_secs() + cfg.calibrate_samples as u64 * 4)
+        * (cfg.max_zone_probe as u64 + 1);
+    discovery + sweep
+}
+
 /// Refuse to sweep while the daemon is driving; two writers would produce
 /// nonsense gains and the operator would never know.
 pub fn ensure_daemon_stopped() -> Result<()> {
@@ -329,7 +365,7 @@ pub fn ensure_daemon_stopped() -> Result<()> {
         // refusing to calibrate on that basis would be worse than proceeding.
         Ok(_) => Ok(()),
         Err(e) => {
-            warn(&format!("could not query smc-fand.service ({e}); proceeding"));
+            log(&format!("could not query smc-fand.service ({e}); proceeding"));
             Ok(())
         }
     }

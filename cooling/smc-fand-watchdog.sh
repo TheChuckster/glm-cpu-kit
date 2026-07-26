@@ -11,8 +11,9 @@
 # BMC's own curve, which is always a safe place to land.
 #
 # The guiding rule is FAIL CLOSED. Every uncertain state - missing heartbeat,
-# unreadable timestamp, clock skew, bad configuration - must end with the BMC
-# in control, never with a silent `exit 0`.
+# unreadable timestamp, clock skew, an IPMI read that returns nothing, an
+# uptime we cannot determine - must end with the BMC in control. A branch that
+# reaches `exit 0` because it could not tell what was going on is a bug.
 #
 # Run from smc-fand-watchdog.timer every 60s.
 
@@ -23,16 +24,19 @@ IPMITOOL="${SMC_IPMITOOL:-/usr/bin/ipmitool}"
 TIMEOUT_BIN="${SMC_TIMEOUT_BIN:-/usr/bin/timeout}"
 CALL_TIMEOUT="${SMC_CALL_TIMEOUT:-10}"
 
-# Must exceed the daemon's worst-case tick, or we restart a healthy daemon
-# mid-load. Worst case is roughly (IPMI calls per tick) x SMC_CALL_TIMEOUT:
-# 7 x 10s = 70s, so 120 leaves margin without being sluggish.
-MAX_AGE="${SMC_HEARTBEAT_MAX_AGE:-120}"
+# Must exceed the daemon's worst-case time to first heartbeat, not just its
+# steady-state tick. Startup does sensor resolution plus threshold verification
+# plus tick one - roughly 13 serialised ipmitool calls, so ~130s at a 10s call
+# timeout. Below that we would restart a healthy daemon during every start.
+MAX_AGE="${SMC_HEARTBEAT_MAX_AGE:-180}"
+
+# Our own record of when we first saw the service active without a heartbeat.
+# systemctl's ActiveEnterTimestamp is not always usable, and "I cannot tell how
+# long this has been broken" must not mean "assume it is fine".
+FIRST_SEEN="${SMC_WATCHDOG_FIRST_SEEN:-/run/smc-fand/watchdog-first-seen}"
 
 log() { echo "smc-fand-watchdog: $*"; }
 
-# Reject anything non-numeric rather than letting `[ ... -gt ... ]` error out
-# and fall through to a silent exit 0. "60s" and "1m" are natural things to
-# write given systemd's time syntax, and both would disable this check.
 is_number() {
     case "${1:-}" in
         ''|*[!0-9]*) return 1 ;;
@@ -42,8 +46,8 @@ is_number() {
 
 if ! is_number "$MAX_AGE"; then
     log "ERROR: SMC_HEARTBEAT_MAX_AGE='$MAX_AGE' is not a plain integer number of seconds"
-    log "refusing to run with an uninterpretable limit; falling back to 120"
-    MAX_AGE=120
+    log "refusing to run with an uninterpretable limit; falling back to 180"
+    MAX_AGE=180
 fi
 
 force_bmc_control() {
@@ -54,75 +58,88 @@ force_bmc_control() {
     fi
 }
 
+recover() {
+    # Order matters: make the box safe first, then try to recover the daemon.
+    force_bmc_control
+    rm -f "$FIRST_SEEN"
+    log "restarting smc-fand.service"
+    # --no-block is essential. The headline case this watchdog exists for is a
+    # daemon wedged on /dev/ipmi0; a blocking restart would then wait on a stop
+    # job that cannot complete, and since this unit is Type=oneshot it would
+    # never exit - so OnUnitActiveSec could not fire again and the last safety
+    # layer would be silently gone.
+    systemctl --no-block restart smc-fand.service || log "ERROR: restart request failed"
+}
+
+now=$(date +%s)
+
 # A calibration sweep deliberately drives the fans with the service stopped.
 # Without this we would see "daemon inactive, BMC not in Standard" and fight it,
 # corrupting the very measurement it is taking.
 #
-# Bounded by age: a calibration that crashed or was killed must not be able to
-# disable the last safety layer indefinitely.
+# The lock holds an EXPIRY computed from the sweep's own length, not its start
+# time. A manual --calibrate has no ExecStopPost, so Ctrl-C leaves the fans
+# latched with no controller; we must take over shortly after the sweep should
+# have finished rather than after some flat, generous interval.
 CALIBRATE_LOCK="${SMC_CALIBRATE_LOCK:-/run/smc-fand/calibrating}"
-LOCK_MAX_AGE="${SMC_CALIBRATE_LOCK_MAX_AGE:-3600}"
-is_number "$LOCK_MAX_AGE" || LOCK_MAX_AGE=3600
 
 if [ -f "$CALIBRATE_LOCK" ]; then
-    lock_stamp=$(tr -d ' \n' < "$CALIBRATE_LOCK" 2>/dev/null)
-    lock_age=""
-    if is_number "${lock_stamp:-}"; then
-        lock_age=$(( $(date +%s) - lock_stamp ))
-    fi
-    if is_number "${lock_age:-}" && [ "$lock_age" -ge 0 ] && [ "$lock_age" -le "$LOCK_MAX_AGE" ]; then
-        log "calibration in progress (${lock_age}s); standing down"
+    expiry=$(tr -d ' \n' < "$CALIBRATE_LOCK" 2>/dev/null)
+    if is_number "${expiry:-}" && [ "$now" -lt "$expiry" ]; then
+        log "calibration in progress (expires in $(( expiry - now ))s); standing down"
         exit 0
     fi
-    log "ERROR: calibration lock is stale or unreadable (age=${lock_age:-?}s, limit ${LOCK_MAX_AGE}s)"
+    log "ERROR: calibration lock is expired or unreadable (expiry='${expiry:-}', now=$now)"
     log "assuming the calibration died; removing the lock and taking the fans back"
     rm -f "$CALIBRATE_LOCK"
     force_bmc_control
     exit 1
 fi
 
-recover() {
-    # Order matters: make the box safe first, then try to recover the daemon.
-    force_bmc_control
-    log "restarting smc-fand.service"
-    systemctl restart smc-fand.service || log "ERROR: restart failed"
-}
-
 if ! systemctl is-active --quiet smc-fand.service; then
+    rm -f "$FIRST_SEEN"
     # Not supposed to be running. ExecStopPost should already have restored the
     # BMC, but assert it anyway - this is the layer that assumes nothing.
+    #
+    # Note the comparison: an EMPTY reading (ipmitool timed out, /dev/ipmi0
+    # contended) is NOT "00", so it forces the correction. This is the branch
+    # that rescues a daemon left in a failed state with manual mode engaged,
+    # and it must not skip that job merely because it could not read the mode.
     mode=$("$TIMEOUT_BIN" "$CALL_TIMEOUT" "$IPMITOOL" -I open raw 0x30 0x45 0x00 2>/dev/null | tr -d ' \n')
-    if [ -n "$mode" ] && [ "$mode" != "00" ]; then
-        log "daemon inactive but BMC still in mode 0x${mode}; correcting"
+    if [ "$mode" != "00" ]; then
+        log "daemon inactive and BMC mode is '${mode:-unreadable}', not 00; correcting"
         force_bmc_control
     fi
     exit 0
 fi
 
-now=$(date +%s)
-
-# How long has the unit claimed to be active? A daemon that wedges before its
-# first tick never writes a heartbeat at all, and RuntimeDirectory= wipes the
-# file on every stop, so "file missing" cannot be tolerated indefinitely - it
-# has to be bounded by the service's own uptime. Manual mode is engaged before
-# the loop starts, so this window is not harmless.
-started=$(systemctl show -p ActiveEnterTimestampMonotonic --value smc-fand.service 2>/dev/null)
-uptime_s=""
-if is_number "${started:-}" && [ "${started:-0}" -gt 0 ]; then
-    mono=$(awk '{printf "%d", $1}' /proc/uptime 2>/dev/null)
-    if is_number "${mono:-}"; then
-        uptime_s=$(( mono - started / 1000000 ))
-    fi
+# Daemon claims to be active. Track how long we have been watching it, so a
+# missing heartbeat is bounded by something we control rather than by an
+# uptime query that may return nothing useful.
+if [ ! -f "$FIRST_SEEN" ]; then
+    echo "$now" > "$FIRST_SEEN" 2>/dev/null || log "WARNING: cannot write $FIRST_SEEN"
+fi
+first_seen=$(tr -d ' \n' < "$FIRST_SEEN" 2>/dev/null)
+if is_number "${first_seen:-}" && [ "$first_seen" -le "$now" ]; then
+    watched=$(( now - first_seen ))
+else
+    # Unreadable or in the future. Fail closed: assume we have been watching
+    # long enough rather than granting an unbounded grace period.
+    log "WARNING: $FIRST_SEEN unusable ('${first_seen:-}'); assuming grace expired"
+    watched=$(( MAX_AGE + 1 ))
 fi
 
 if [ ! -f "$HEARTBEAT" ]; then
-    if is_number "${uptime_s:-}" && [ "$uptime_s" -gt "$MAX_AGE" ]; then
-        log "ERROR: active for ${uptime_s}s with no heartbeat at $HEARTBEAT"
-        log "daemon wedged before its first successful tick; manual mode is engaged with nobody driving"
+    # Manual mode is engaged before the control loop starts, so a daemon that
+    # wedges before its first tick has taken the fans and left nobody driving
+    # them. This must not be tolerated indefinitely.
+    if [ "$watched" -gt "$MAX_AGE" ]; then
+        log "ERROR: active for ${watched}s with no heartbeat at $HEARTBEAT"
+        log "daemon wedged before its first successful tick; manual mode engaged with nobody driving"
         recover
         exit 1
     fi
-    log "no heartbeat file yet at $HEARTBEAT (service up ${uptime_s:-?}s, grace ${MAX_AGE}s)"
+    log "no heartbeat file yet at $HEARTBEAT (watched ${watched}s, grace ${MAX_AGE}s)"
     exit 0
 fi
 

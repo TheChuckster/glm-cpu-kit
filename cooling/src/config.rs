@@ -71,6 +71,11 @@ pub struct Config {
     /// Settle time around each discovery probe. Fans take tens of seconds to
     /// spin down; too short and a coasting fan is attributed to the wrong zone.
     pub discover_settle: Duration,
+    /// Duty floor used when the fan-fail thresholds could NOT be confirmed.
+    /// Idling at min_duty under an unlowered threshold recreates the original
+    /// ramp bug, so we run higher rather than refuse to run - falling back to
+    /// the BMC's own curve would idle the fans lower still.
+    pub unverified_min_duty: f64,
 
     // Drift detection.
     pub drift_enable: bool,
@@ -121,6 +126,57 @@ fn default_domain(name: &str) -> Option<(&'static str, f64, f64)> {
 }
 
 impl Config {
+    /// Just enough config to talk to the BMC, with NO validation whatsoever.
+    ///
+    /// `--restore` is the safety net the entire design rests on, and it runs
+    /// from `ExecStopPost`, which re-reads the EnvironmentFile. If it went
+    /// through `from_env()` then a bad edit to that file - a typo, a re-added
+    /// retired variable, a domain with no sensors - would make the restore path
+    /// exit(2) without ever issuing the mode command, leaving the fans latched
+    /// in manual mode with the BMC curve disabled. The thing that recovers from
+    /// a broken configuration must not itself depend on the configuration
+    /// parsing cleanly.
+    pub fn minimal() -> Self {
+        Config {
+            ipmitool: env_str("SMC_IPMITOOL", "/usr/bin/ipmitool"),
+            timeout_bin: env_str("SMC_TIMEOUT_BIN", "/usr/bin/timeout"),
+            call_timeout: env_str("SMC_CALL_TIMEOUT", "10").parse().unwrap_or(10).max(1),
+            tick: Duration::from_secs(5),
+            min_duty: 25.0,
+            max_duty: 100.0,
+            idle_duty: 30.0,
+            slew_up: 30.0,
+            slew_down: 3.0,
+            max_failures: 3,
+            verify_every: 12,
+            mode_check_every: 6,
+            fan_thresholds: Vec::new(),
+            metrics_path: PathBuf::from(env_str(
+                "SMC_METRICS_PATH",
+                "/var/lib/prometheus/node-exporter/smc_fand.prom",
+            )),
+            heartbeat_path: PathBuf::from(env_str("SMC_HEARTBEAT_PATH", "/run/smc-fand/heartbeat")),
+            domains: Vec::new(),
+            authority_mode: AuthorityMode::Uniform,
+            authority_path: PathBuf::from("/var/lib/smc-fand/authority"),
+            static_zone_domains: Vec::new(),
+            calibrate_steps: vec![50.0, 100.0, 25.0, 75.0],
+            calibrate_settle: Duration::from_secs(120),
+            calibrate_samples: 5,
+            calibrate_hold_duty: 60.0,
+            calibrate_abort_margin: 8.0,
+            calibrate_lock_path: PathBuf::from(env_str(
+                "SMC_CALIBRATE_LOCK",
+                "/run/smc-fand/calibrating",
+            )),
+            max_zone_probe: 4,
+            discover_settle: Duration::from_secs(45),
+            unverified_min_duty: 45.0,
+            drift_enable: false,
+            drift_tolerance: 0.35,
+        }
+    }
+
     pub fn from_env() -> Result<Self> {
         let mut retired = Vec::new();
         for (old, new) in RETIRED_VARS {
@@ -251,6 +307,7 @@ impl Config {
             )),
             max_zone_probe: env_u32("SMC_MAX_ZONE_PROBE", 4)?.clamp(1, 8) as u8,
             discover_settle: Duration::from_secs(env_u32("SMC_DISCOVER_SETTLE", 45)?.max(10) as u64),
+            unverified_min_duty: env_f64("SMC_UNVERIFIED_MIN_DUTY", 45.0)?,
 
             drift_enable: env_u32("SMC_DRIFT_ENABLE", 1)? != 0,
             drift_tolerance: env_f64("SMC_DRIFT_TOLERANCE", 0.35)?,
@@ -338,8 +395,110 @@ impl Config {
         if self.slew_up <= 0.0 || self.slew_down <= 0.0 {
             bail!("SMC_SLEW_UP and SMC_SLEW_DOWN must be positive (the sign is implied)");
         }
+        // The PI bias term. Unbounded, this silently disables core behaviour:
+        // too high and every domain reads as permanently saturated (every zone
+        // coupled at 100% forever, drift monitoring gated off, the saturation
+        // alert firing continuously so the real signal is buried); too low and
+        // every setpoint shifts by several degrees with no warning.
+        if !(0.0..=100.0).contains(&self.idle_duty) {
+            bail!(
+                "SMC_IDLE_DUTY ({}) must lie within 0..=100",
+                self.idle_duty
+            );
+        }
+        if self.idle_duty < self.min_duty || self.idle_duty > self.max_duty {
+            bail!(
+                "SMC_IDLE_DUTY ({}) must lie between SMC_MIN_DUTY ({}) and SMC_MAX_DUTY ({})",
+                self.idle_duty,
+                self.min_duty,
+                self.max_duty
+            );
+        }
         if !(0.0..=100.0).contains(&self.calibrate_hold_duty) {
             bail!("SMC_CALIBRATE_HOLD_DUTY must lie within 0..=100");
+        }
+        if !(0.0..=100.0).contains(&self.unverified_min_duty) {
+            bail!("SMC_UNVERIFIED_MIN_DUTY must lie within 0..=100");
+        }
+        // timeout(1) treats 0 as "no timeout", removing the bound that the
+        // whole heartbeat budget is derived from.
+        if self.call_timeout == 0 {
+            bail!("SMC_CALL_TIMEOUT must be >= 1 (timeout(1) reads 0 as no limit)");
+        }
+
+        // A negative gain inverts the loop: hotter would command *less* duty,
+        // the anti-windup guard blocks integral recovery, `saturated` never
+        // becomes true so the coupling escape never fires, and the component
+        // walks to its emergency threshold with the daemon reporting healthy.
+        for d in &self.domains {
+            if d.kp < 0.0 || d.ki < 0.0 {
+                bail!(
+                    "domain {:?}: KP ({}) and KI ({}) must not be negative - a negative gain \
+                     inverts the control loop and cools less as things get hotter",
+                    d.name,
+                    d.kp,
+                    d.ki
+                );
+            }
+        }
+
+        // Duplicate names emit two samples with identical label sets, which
+        // makes node_exporter reject the whole textfile and blinds every alert.
+        let mut seen: Vec<&str> = Vec::new();
+        for d in &self.domains {
+            if seen.contains(&d.name.as_str()) {
+                bail!("domain {:?} is listed more than once in SMC_DOMAINS", d.name);
+            }
+            seen.push(&d.name);
+        }
+
+        // A domain no zone serves gets authority 0.0 at confidence 1.0, which
+        // is the one way to defeat the uniform-prior safety property: it can
+        // never raise a fan, and only the saturation escape eventually helps.
+        if self.authority_mode == AuthorityMode::Static {
+            for d in &self.domains {
+                if !self
+                    .static_zone_domains
+                    .iter()
+                    .any(|(_, served)| served.iter().any(|s| s == &d.name))
+                {
+                    bail!(
+                        "domain {:?} is not listed in any SMC_ZONE<N>_DOMAINS, so no zone would \
+                         ever cool it. Add it to a zone, or remove it from SMC_DOMAINS.",
+                        d.name
+                    );
+                }
+            }
+        }
+
+        // Calibration must not drive fans below the floor the operator set, and
+        // must have genuinely distinct levels for the fit to mean anything.
+        for step in &self.calibrate_steps {
+            if *step < self.min_duty || *step > self.max_duty {
+                bail!(
+                    "SMC_CALIBRATE_STEPS entry {step} lies outside SMC_MIN_DUTY..SMC_MAX_DUTY \
+                     ({}..{})",
+                    self.min_duty,
+                    self.max_duty
+                );
+            }
+        }
+        let mut distinct: Vec<u64> = self
+            .calibrate_steps
+            .iter()
+            .map(|s| (s * 100.0) as u64)
+            .collect();
+        distinct.sort_unstable();
+        distinct.dedup();
+        if distinct.len() < 2 {
+            bail!("SMC_CALIBRATE_STEPS needs at least two DISTINCT duty levels");
+        }
+        if self.calibrate_hold_duty < self.min_duty {
+            bail!(
+                "SMC_CALIBRATE_HOLD_DUTY ({}) is below SMC_MIN_DUTY ({})",
+                self.calibrate_hold_duty,
+                self.min_duty
+            );
         }
         if self.calibrate_abort_margin < 0.0 {
             bail!("SMC_CALIBRATE_ABORT_MARGIN must not be negative");

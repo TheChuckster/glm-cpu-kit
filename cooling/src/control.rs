@@ -74,6 +74,10 @@ pub struct Outcome {
 
 pub struct Controller {
     pub domains: Vec<Domain>,
+    /// False when the fan-fail thresholds could not be confirmed at startup.
+    /// Exported so the operator learns about it from an alert rather than by
+    /// noticing the chassis has started revving again.
+    pub thresholds_ok: bool,
     /// Last duty the BMC is believed to have *accepted*, per zone. Only updated
     /// after a successful write, so a failed write cannot anchor the slew
     /// limiter to a duty the fans never reached.
@@ -84,6 +88,7 @@ impl Controller {
     pub fn new(cfg: &Config) -> Self {
         Controller {
             domains: cfg.domains.iter().map(Domain::new).collect(),
+            thresholds_ok: true,
             applied: HashMap::new(),
         }
     }
@@ -315,6 +320,7 @@ pub struct MetricInputs<'a> {
     pub write_failed: &'a HashMap<u8, bool>,
     pub drift: &'a HashMap<(u8, String), bool>,
     pub heartbeat: u64,
+    pub thresholds_ok: bool,
 }
 
 pub fn render_metrics(m: &MetricInputs, cfg: &Config) -> String {
@@ -420,6 +426,29 @@ pub fn render_metrics(m: &MetricInputs, cfg: &Config) -> String {
         }
         .to_string()
     );
+
+    // Emitted for every CONFIGURED domain, not just those that produced a
+    // demand. A domain whose sensors vanish drops out of outcome.demands
+    // entirely, so without this its saturation and emergency series would
+    // simply disappear and their alerts would become unevaluable - silence
+    // that reads identically to "healthy".
+    s.push_str("# HELP smc_fand_domain_readable At least one of the domain's sensors could be read.\n");
+    s.push_str("# TYPE smc_fand_domain_readable gauge\n");
+    for d in &cfg.domains {
+        let readable = m.outcome.demands.iter().any(|x| x.domain == d.name);
+        s.push_str(&format!(
+            "smc_fand_domain_readable{{domain=\"{}\"}} {}\n",
+            esc(&d.name),
+            if readable { 1 } else { 0 }
+        ));
+    }
+
+    s.push_str("# HELP smc_fand_fan_threshold_ok Fan-fail thresholds were confirmed at startup.\n");
+    s.push_str("# TYPE smc_fand_fan_threshold_ok gauge\n");
+    s.push_str(&format!(
+        "smc_fand_fan_threshold_ok {}\n",
+        if m.thresholds_ok { 1 } else { 0 }
+    ));
 
     s.push_str("# HELP smc_fand_driver Domain currently setting each zone's duty.\n");
     s.push_str("# TYPE smc_fand_driver gauge\n");

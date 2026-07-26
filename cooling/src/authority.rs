@@ -129,7 +129,21 @@ impl Authority {
             AuthorityMode::Static => Self::from_static(cfg),
             AuthorityMode::Uniform => Self::uniform(cfg.declared_zones()),
             AuthorityMode::Calibrated => match Self::read_file(&cfg.authority_path) {
-                Ok(a) => {
+                Ok(mut a) => {
+                    // A zone present on the box but absent from the matrix
+                    // would otherwise never be commanded at all, while manual
+                    // mode is engaged - fans latched with nobody driving them.
+                    // Merging the declared zones in means any such zone gets
+                    // the uniform prior: coupled, and therefore safe.
+                    for z in cfg.declared_zones() {
+                        if !a.zones.contains(&z) {
+                            warn(&format!(
+                                "zone {z} is configured but missing from the calibrated matrix;                                  treating it as fully coupled until the next --calibrate"
+                            ));
+                            a.zones.push(z);
+                        }
+                    }
+                    a.zones.sort_unstable();
                     log(&format!(
                         "loaded calibrated authority matrix from {} ({} cells, {} zones)",
                         cfg.authority_path.display(),

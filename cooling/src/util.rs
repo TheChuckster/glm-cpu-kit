@@ -129,6 +129,43 @@ pub fn write_atomic(path: &Path, contents: &str) -> Result<()> {
     Ok(())
 }
 
+/// Consecutive-failure counters, keyed by operation.
+///
+/// A single global counter is wrong: any success in the same tick resets it, so
+/// a permanently failing zone sitting beside a healthy one never escalates and
+/// its fans stay latched forever while the log prints "(1/3)" every tick.
+/// Successes must only clear the counter for the thing that succeeded.
+#[derive(Default)]
+pub struct Failures {
+    counters: std::collections::HashMap<String, u32>,
+}
+
+impl Failures {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record a failure and return that key's new consecutive count.
+    pub fn fail(&mut self, key: &str) -> u32 {
+        let c = self.counters.entry(key.to_string()).or_insert(0);
+        *c += 1;
+        *c
+    }
+
+    pub fn ok(&mut self, key: &str) {
+        self.counters.remove(key);
+    }
+
+    /// The worst offender, if any has reached `limit`.
+    pub fn exhausted(&self, limit: u32) -> Option<(String, u32)> {
+        self.counters
+            .iter()
+            .filter(|(_, c)| **c >= limit)
+            .max_by_key(|(_, c)| **c)
+            .map(|(k, c)| (k.clone(), *c))
+    }
+}
+
 /// Least-squares slope of y against x. Returns (slope, r_squared).
 ///
 /// Used to turn a calibration sweep into a gain in degrees per percent duty.

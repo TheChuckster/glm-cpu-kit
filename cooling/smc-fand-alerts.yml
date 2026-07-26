@@ -66,6 +66,23 @@ groups:
             All zones forced to 100%, bypassing the control loop and the
             authority matrix entirely.
 
+      - alert: SmcFandDomainUnreadable
+        # Without this, a domain whose sensors get renamed simply stops
+        # emitting - and an alert on an absent series never fires. Silence that
+        # reads exactly like health is the failure mode worth naming.
+        expr: smc_fand_domain_readable == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "smc-fand cannot read any sensor for domain {{ $labels.domain }}"
+          description: >-
+            This domain is contributing nothing to fan demand and its emergency
+            threshold cannot be evaluated - it could overheat with no response
+            and no other alert. Usually a BMC firmware update renaming sensors.
+            Compare `ipmitool -I open sdr type Temperature` against
+            SMC_DOMAIN_{{ $labels.domain | toUpper }}_SENSORS.
+
       # --- loss of control --------------------------------------------------
 
       - alert: SmcFandControlLost
@@ -114,7 +131,13 @@ groups:
       - alert: SmcFandUncalibrated
         # Uniform authority is safe but runs every zone at the worst domain's
         # demand, which is louder than necessary. Worth knowing, not urgent.
-        expr: smc_fand_authority_timestamp_seconds == 0 and min(smc_fand_authority) == 1
+        # Note the shape: `smc_fand_authority_timestamp_seconds` has no labels
+        # while `smc_fand_authority` is per zone/domain, so `and`-ing them
+        # directly matches nothing - vector matching needs identical label sets.
+        # Comparing scalars sidesteps that entirely.
+        expr: >-
+          smc_fand_authority_timestamp_seconds == 0
+          and on() (min(smc_fand_authority) == 1)
         for: 24h
         labels:
           severity: info
@@ -160,25 +183,40 @@ groups:
             thresholds are only re-asserted at daemon startup, so a firmware
             update while stopped can silently restore the ~20s ramp cycle.
 
+      - alert: SmcFandFlapping
+        # max_failures(3) x tick(5s) + RestartSec(10s) cycles in about 25s, so a
+        # crash-looping daemon clears and re-arms every other rule before their
+        # `for:` clauses elapse. Averaging over a window catches what point-in-
+        # time conditions cannot.
+        expr: avg_over_time(smc_fand_up[15m]) < 0.8
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "smc-fand is restarting repeatedly"
+          description: >-
+            The daemon is up less than 80% of the time, so it is crash-looping
+            rather than running. Each cycle hands the fans to the BMC and takes
+            them back. Check `journalctl -u smc-fand -p err`.
+
       # --- the original bug, in case it ever returns ------------------------
 
-      - alert: SmcFandLowRpmFanTrip
-        # Threshold sits just ABOVE the factory 420 RPM fan-fail limit, not
-        # below it. The fans idle at ~420 RPM at SMC_MIN_DUTY by design, so a
-        # rule that waits for <300 RPM can never fire - and during a fan-fail
-        # ramp the RPM goes up, not down.
-        #
-        # Requires monitoring/bmc-exporter.py. On a host without it this rule is
-        # silently absent rather than failing, so confirm bmc_fan_rpm exists
-        # before relying on it.
-        expr: bmc_fan_rpm < 500
-        for: 5m
+      - alert: SmcFandThresholdUnverified
+        # Watches the daemon's own verification rather than raw RPM. An RPM
+        # rule cannot work here: the fans idle at ~420 RPM at SMC_MIN_DUTY by
+        # design, which is the factory fan-fail limit itself, so any threshold
+        # that would catch the bug also fires continuously in normal operation.
+        # And during a fan-fail ramp the RPM goes UP, not down.
+        expr: smc_fand_fan_threshold_ok == 0
+        for: 1m
         labels:
           severity: warning
         annotations:
-          summary: "Fan {{ $labels.fan }} is near the factory fan-fail threshold"
+          summary: "smc-fand could not confirm the fan-fail thresholds"
           description: >-
-            Running close to the 420 RPM factory lower-critical limit. If the
-            BMC starts periodically ramping every ~20s, the thresholds have
-            reverted - restart smc-fand (it re-asserts them at startup) or set
-            them by hand with `ipmitool -I open sensor thresh <FAN> lcr 140`.
+            The low-RPM thresholds could not be read back as set, so the daemon
+            has raised its duty floor to SMC_UNVERIFIED_MIN_DUTY to stay clear
+            of whatever limit the BMC is actually enforcing. The box is safe but
+            louder than it should be. Set them by hand with
+            `ipmitool -I open sensor thresh <FAN> lcr 140`, verify the readback,
+            and restart smc-fand to get the quiet floor back.
