@@ -59,16 +59,34 @@ active_variant() {
     [ -r "$STATE" ] && sed -n 's/^GLM_VARIANT=//p' "$STATE" | tail -1 | tr -d '"'"'"' \n'
 }
 
-# A variant counts as present only if every shard exists and none is zero-length.
-# Partial downloads are the common failure here, and a missing tail shard would
-# otherwise only surface as a server that refuses to start.
-is_downloaded() {
-    local i n
+# Written by cmd_download once every shard has been size-checked against
+# HuggingFace. Its presence is what "ready" means.
+complete_marker() { echo "$V_DIR/.complete"; }
+
+on_disk_bytes() {
+    local i total=0 sz
     for i in $(seq 1 "$V_SHARDS"); do
-        n="$V_DIR/$(shard_name "$i")"
-        [ -s "$n" ] || return 1
+        sz=$(stat -c %s "$V_DIR/$(shard_name "$i")" 2>/dev/null || echo 0)
+        total=$((total + sz))
     done
-    return 0
+    echo "$total"
+}
+
+# A variant is ready only if it was verified complete AND nothing has changed
+# since. Existence and non-emptiness are NOT enough: a shard being actively
+# downloaded is both, so a mid-transfer variant would report ready and
+# `glm-model use` would switch to a truncated model that cannot load.
+is_downloaded() {
+    local marker; marker=$(complete_marker)
+    [ -f "$marker" ] || return 1
+    local recorded; recorded=$(tr -dc '0-9' < "$marker" 2>/dev/null)
+    [ -n "$recorded" ] || return 1
+    [ "$(on_disk_bytes)" = "$recorded" ]
+}
+
+# Are shards currently being fetched into this directory?
+is_downloading() {
+    pgrep -f "curl.*$V_DIR" >/dev/null 2>&1
 }
 
 # Expected sizes from the HuggingFace API, as "filename bytes".
@@ -97,12 +115,13 @@ cmd_list() {
     for name in $(variant_names); do
         load_variant "$name"
         local state size
+        size=$(du -shc "$V_DIR"/*.gguf 2>/dev/null | tail -1 | cut -f1)
         if is_downloaded; then
             state="ready"
-            size=$(du -shc "$V_DIR"/*.gguf 2>/dev/null | tail -1 | cut -f1)
+        elif is_downloading; then
+            state="downloading"
         elif [ -d "$V_DIR" ] && ls "$V_DIR"/*.gguf >/dev/null 2>&1; then
             state="partial"
-            size=$(du -shc "$V_DIR"/*.gguf 2>/dev/null | tail -1 | cut -f1)
         else
             state="absent"
             size="-"
@@ -162,6 +181,7 @@ cmd_download() {
         "https://huggingface.co/$V_REPO/resolve/main/${V_SUBDIR:+$V_SUBDIR/}{}"
 
     echo
+    rm -f "$(complete_marker)"
     cmd_verify "$1"
 }
 
@@ -186,17 +206,28 @@ cmd_verify() {
         fi
     done
     if [ "$bad" -ne 0 ]; then
+        rm -f "$(complete_marker)"
         echo "INCOMPLETE - re-run 'glm-model download $1' (it resumes)" >&2
         return 1
     fi
-    echo "$V_NAME is complete"
+    # Writing the marker here rather than only in cmd_download means a variant
+    # fetched by other means - or one downloaded before this check existed -
+    # can be blessed with `glm-model verify <name>` instead of re-fetching
+    # hundreds of gigabytes.
+    on_disk_bytes > "$(complete_marker)"
+    echo "$V_NAME is complete ($(du -shc "$V_DIR"/*.gguf 2>/dev/null | tail -1 | cut -f1))"
 }
 
 cmd_use() {
     load_variant "$1"
     local act; act=$(active_variant)
 
-    is_downloaded || die "$V_NAME is not fully downloaded. Run: glm-model download $V_NAME"
+    if ! is_downloaded; then
+        if is_downloading; then
+            die "$V_NAME is still downloading ($(du -shc "$V_DIR"/*.gguf 2>/dev/null | tail -1 | cut -f1) so far). Wait for it to finish."
+        fi
+        die "$V_NAME is not verified complete. Run: glm-model download $V_NAME (it resumes)"
+    fi
 
     if [ "$act" = "$V_NAME" ] && systemctl is-active --quiet "$SERVICE"; then
         echo "$V_NAME is already selected and the service is running"
