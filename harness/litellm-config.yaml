@@ -21,6 +21,30 @@ model_list:
       frequency_penalty: 0.4
       presence_penalty: 0.2
 
+
+  # Abliterated variants. These route to the SAME server as glm-5.2 above -
+  # only one model is resident at a time (each is 340-460 GB and mlocked), so
+  # which of these actually answers depends on what `glm-model use` selected.
+  #
+  # llama-server does NOT reject a request whose `model` names a different
+  # alias than the loaded one, so asking for an inactive variant silently
+  # returns whichever is live. Check with `glm-model status` first.
+  - model_name: glm-5.2-abliterated
+    litellm_params:
+      model: openai/glm-5.2-abliterated
+      api_base: http://SERVER_IP:8080/v1
+      api_key: PASTE_YOUR_GLM_API_KEY_HERE
+      timeout: 21600
+      stream_timeout: 21600
+
+  - model_name: glm-5.2-abliterated-q3
+    litellm_params:
+      model: openai/glm-5.2-abliterated-q3
+      api_base: http://SERVER_IP:8080/v1
+      api_key: PASTE_YOUR_GLM_API_KEY_HERE
+      timeout: 21600
+      stream_timeout: 21600
+
 litellm_settings:
   drop_params: true
   set_verbose: false

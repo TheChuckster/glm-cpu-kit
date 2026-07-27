@@ -1,5 +1,5 @@
 # GLM-5.2 inference server - install to /etc/systemd/system/glm-server.service
-# EDIT the two marked lines, then:
+# EDIT the marked lines, then:
 #   sudo systemctl daemon-reload && sudo systemctl enable --now glm-server
 [Unit]
 Description=GLM-5.2 ik_llama.cpp server
@@ -8,11 +8,36 @@ After=network-online.target
 [Service]
 Type=simple
 User=REPLACE_WITH_YOUR_USER
-ExecStart=/home/REPLACE_WITH_YOUR_USER/Projects_new/ai/glm-cpu-kit/serving/serve-glm.sh
+
+# Which model gets served. GLM_VARIANT lives here and is managed by
+# `glm-model use <variant>`; anything else you add to this file is preserved
+# across switches. The '-' means a missing file is not an error - serve-glm.sh
+# defaults to the `base` variant.
+EnvironmentFile=-/etc/default/glm-server
+
+# Serving tuning. These are NOT model selection - they apply to whichever
+# variant is active. Defaults here match the reference box; override in
+# /etc/default/glm-server rather than editing the unit.
+#
+# THREADS must be the PHYSICAL core count. On an SMT part `nproc` reports
+# double that, and oversubscribing hurts token generation badly.
+# CTX: prompt processing is O(n^2). See the runbook's "Context window: the trap"
+# before raising it, and keep the harness limit below this value.
+# NUMA_POLICY: "distribute" for dual-socket; empty for a single NUMA domain.
+Environment=THREADS=64
+Environment=CTX=131072
+Environment=NUMA_POLICY=
+
+ExecStart=/usr/local/bin/serve-glm.sh
 Restart=on-failure
 RestartSec=5
 LimitMEMLOCK=infinity
+LimitNOFILE=1048576
+# Loading a 340-460 GB mlocked model off NVMe takes minutes; no start timeout.
 TimeoutStartSec=0
+# Keep the OOM killer away from the largest RSS on the box - it is the whole
+# point of the machine, and killing it to reclaim memory helps nothing.
+OOMScoreAdjust=-800
 
 [Install]
 WantedBy=multi-user.target

@@ -22,6 +22,34 @@ interleaved across both sockets.
 | `gen-api-key.sh` | create `~/.glm-api-key` | 6 |
 | `serve-glm.sh` | the server launcher (NUMA-aware, thinking-off, anti-repetition) | 6 |
 | `glm-server.service` | systemd unit (survives reboot, `LimitMEMLOCK=infinity`) | 7 |
+| `glm-variants.conf` | registry of servable models (base + abliterated) | - |
+| `glm-model` | list / download / switch which model is served | - |
+
+**Switching models.** `glm-model` picks which registered variant
+`glm-server.service` serves:
+
+```sh
+glm-model list                     # registered, downloaded, live
+glm-model download abliterated     # ~455 GB, resumable, size-verified
+glm-model use abliterated          # switch + restart, waits for readiness
+glm-model status                   # what is ACTUALLY loaded right now
+```
+
+Only one variant is resident at a time — each is 340–460 GB and `--mlock` pins
+it, so a switch is a full reload of several minutes, not a hot swap.
+
+Two abliterated variants are registered and they are **not** equivalent.
+`abliterated` (frz1, Q4_K_M, 455 GB) matches the base model's quant class and
+size almost exactly, but the publisher is unknown and the capability cost of
+their ablation is unverified. `abliterated-q3` (huihui-ai, UD-Q3_K_M, 343 GB) is
+from the established abliteration publisher, but that repo has no Q4-class quant
+at all — so it costs a full quantisation step, which on a 745B MoE is likely a
+larger quality hit than the ablation itself.
+
+Note that `llama-server` does not reject a request naming a different alias than
+the loaded model: asking for `glm-5.2-abliterated` while `base` is live returns
+the base model with no error. `glm-model status` compares `/v1/models` against
+the selected variant, and is the only reliable check.
 
 ### `harness/` (how you talk to it — three paths, pick by privacy vs speed)
 | Script | Backend | Speed | Use for |

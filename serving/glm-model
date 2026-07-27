@@ -1,0 +1,258 @@
+#!/usr/bin/env bash
+# glm-model - list, download and switch the model glm-server.service serves.
+#
+#   glm-model list                 what is registered, downloaded, and live
+#   glm-model status               active variant + server readiness
+#   glm-model download <variant>   fetch shards (resumable), verify sizes
+#   glm-model use <variant>        switch and restart, waiting for readiness
+#   glm-model verify <variant>     re-check on-disk sizes against HuggingFace
+#
+# Only one variant is resident at a time: each is 340-460 GB and --mlock pins
+# it, so switching is a full reload of several minutes, not a hot swap.
+set -uo pipefail
+
+CONF="${GLM_VARIANTS_CONF:-/etc/glm-variants.conf}"
+STATE="${GLM_STATE_FILE:-/etc/default/glm-server}"
+SERVICE="${GLM_SERVICE:-glm-server.service}"
+PORT="${GLM_PORT:-8080}"
+# How long to wait for a switched-to model to become servable. A 460 GB model
+# read off NVMe and mlocked takes minutes; too short a wait would report a
+# healthy switch as a failure.
+READY_TIMEOUT="${GLM_READY_TIMEOUT:-1800}"
+
+die() { echo "glm-model: $*" >&2; exit 1; }
+
+[ -r "$CONF" ] || die "cannot read $CONF"
+
+# --- registry ---------------------------------------------------------------
+
+# Emit "name repo subdir prefix shards alias dir" for one variant, or nothing.
+variant_row() {
+    awk -F'|' -v want="$1" '
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+        { gsub(/^[ \t]+|[ \t]+$/, "", $1)
+          if ($1 != want) next
+          for (i = 2; i <= 7; i++) gsub(/^[ \t]+|[ \t]+$/, "", $i)
+          print $1, $2, $3, $4, $5, $6, $7
+          exit }
+    ' "$CONF"
+}
+
+variant_names() {
+    awk -F'|' '/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+              { gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1 }' "$CONF"
+}
+
+# Populate globals for a variant, or die.
+load_variant() {
+    local row; row=$(variant_row "$1")
+    [ -n "$row" ] || die "unknown variant '$1'. Known: $(variant_names | tr '\n' ' ')"
+    read -r V_NAME V_REPO V_SUBDIR V_PREFIX V_SHARDS V_ALIAS V_DIR <<<"$row"
+}
+
+# Trailing newline matters: this feeds `xargs -I{}`, which splits on lines.
+# Without it all shard names arrive as a single concatenated argument and every
+# request 404s against a nonsense URL.
+shard_name() { printf '%s-%05d-of-%05d.gguf\n' "$V_PREFIX" "$1" "$V_SHARDS"; }
+
+active_variant() {
+    [ -r "$STATE" ] && sed -n 's/^GLM_VARIANT=//p' "$STATE" | tail -1 | tr -d '"'"'"' \n'
+}
+
+# A variant counts as present only if every shard exists and none is zero-length.
+# Partial downloads are the common failure here, and a missing tail shard would
+# otherwise only surface as a server that refuses to start.
+is_downloaded() {
+    local i n
+    for i in $(seq 1 "$V_SHARDS"); do
+        n="$V_DIR/$(shard_name "$i")"
+        [ -s "$n" ] || return 1
+    done
+    return 0
+}
+
+# Expected sizes from the HuggingFace API, as "filename bytes".
+remote_sizes() {
+    local path="$V_SUBDIR"
+    curl -4 -sfL --max-time 60 \
+        "https://huggingface.co/api/models/$V_REPO/tree/main/${path}" 2>/dev/null \
+    | python3 -c '
+import sys, json
+try:
+    for f in json.load(sys.stdin):
+        p = f.get("path", "")
+        if p.endswith(".gguf"):
+            print(p.split("/")[-1], (f.get("lfs") or {}).get("size", 0))
+except Exception:
+    pass
+' 2>/dev/null
+}
+
+# --- commands ---------------------------------------------------------------
+
+cmd_list() {
+    local act; act=$(active_variant)
+    printf '%-16s %-10s %-12s %-24s %s\n' VARIANT STATE SIZE ALIAS REPO
+    local name
+    for name in $(variant_names); do
+        load_variant "$name"
+        local state size
+        if is_downloaded; then
+            state="ready"
+            size=$(du -shc "$V_DIR"/*.gguf 2>/dev/null | tail -1 | cut -f1)
+        elif [ -d "$V_DIR" ] && ls "$V_DIR"/*.gguf >/dev/null 2>&1; then
+            state="partial"
+            size=$(du -shc "$V_DIR"/*.gguf 2>/dev/null | tail -1 | cut -f1)
+        else
+            state="absent"
+            size="-"
+        fi
+        [ "$name" = "$act" ] && state="$state *live"
+        printf '%-16s %-10s %-12s %-24s %s\n' "$V_NAME" "$state" "${size:--}" "$V_ALIAS" "$V_REPO"
+    done
+    echo
+    echo "* = selected in $STATE (see 'glm-model status' for whether it is actually serving)"
+}
+
+cmd_status() {
+    local act; act=$(active_variant)
+    [ -n "$act" ] || { echo "no variant selected in $STATE"; return 1; }
+    load_variant "$act"
+
+    echo "selected variant : $V_NAME  ($V_ALIAS)"
+    echo "model directory  : $V_DIR"
+    echo "service          : $(systemctl is-active "$SERVICE" 2>/dev/null)"
+
+    local health
+    health=$(curl -sf --max-time 5 "http://127.0.0.1:$PORT/health" 2>/dev/null)
+    if [ -n "$health" ]; then
+        echo "health           : $health"
+        # /v1/models reports the alias, which is the only way to confirm from
+        # outside that the model actually loaded is the one selected.
+        local key served
+        key=$(cat "$HOME/.glm-api-key" 2>/dev/null || echo "")
+        served=$(curl -sf --max-time 5 -H "Authorization: Bearer $key" \
+            "http://127.0.0.1:$PORT/v1/models" 2>/dev/null \
+            | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null)
+        if [ -n "$served" ]; then
+            echo "serving alias    : $served"
+            [ "$served" = "$V_ALIAS" ] || \
+                echo "WARNING          : serving '$served' but '$V_ALIAS' is selected - a restart is pending"
+        fi
+    else
+        echo "health           : not responding (still loading, or stopped)"
+    fi
+}
+
+cmd_download() {
+    load_variant "$1"
+    mkdir -p "$V_DIR" || die "cannot create $V_DIR"
+
+    local avail need_gb
+    avail=$(df -BG --output=avail "$V_DIR" 2>/dev/null | tail -1 | tr -dc '0-9')
+    echo "downloading $V_NAME from $V_REPO ($V_SHARDS shards) into $V_DIR"
+    echo "free space: ${avail:-?} GB"
+
+    # IPv4 forced: HF over IPv6 stalls on some networks. Resumable and retrying
+    # hard, because a 455 GB transfer will hit transient failures.
+    local i
+    for i in $(seq 1 "$V_SHARDS"); do shard_name "$i"; done \
+    | xargs -P4 -I{} curl -4 -fL -C - --retry 1000 --retry-delay 10 --retry-all-errors \
+        --progress-bar -o "$V_DIR/{}" \
+        "https://huggingface.co/$V_REPO/resolve/main/${V_SUBDIR:+$V_SUBDIR/}{}"
+
+    echo
+    cmd_verify "$1"
+}
+
+cmd_verify() {
+    load_variant "$1"
+    local sizes; sizes=$(remote_sizes)
+    if [ -z "$sizes" ]; then
+        echo "could not fetch expected sizes from HuggingFace; checking presence only"
+    fi
+
+    local i name local_size want bad=0
+    for i in $(seq 1 "$V_SHARDS"); do
+        name=$(shard_name "$i")
+        local_size=$(stat -c %s "$V_DIR/$name" 2>/dev/null || echo 0)
+        want=$(echo "$sizes" | awk -v n="$name" '$1 == n {print $2}')
+        if [ "$local_size" -eq 0 ]; then
+            printf '  %-52s MISSING\n' "$name"; bad=1
+        elif [ -n "$want" ] && [ "$local_size" != "$want" ]; then
+            printf '  %-52s SHORT %s / %s bytes\n' "$name" "$local_size" "$want"; bad=1
+        else
+            printf '  %-52s ok %6.1f GB\n' "$name" "$(echo "$local_size" | awk '{print $1/1e9}')"
+        fi
+    done
+    if [ "$bad" -ne 0 ]; then
+        echo "INCOMPLETE - re-run 'glm-model download $1' (it resumes)" >&2
+        return 1
+    fi
+    echo "$V_NAME is complete"
+}
+
+cmd_use() {
+    load_variant "$1"
+    local act; act=$(active_variant)
+
+    is_downloaded || die "$V_NAME is not fully downloaded. Run: glm-model download $V_NAME"
+
+    if [ "$act" = "$V_NAME" ] && systemctl is-active --quiet "$SERVICE"; then
+        echo "$V_NAME is already selected and the service is running"
+        echo "(use 'systemctl restart $SERVICE' to force a reload)"
+        return 0
+    fi
+
+    echo "switching $act -> $V_NAME"
+    # Rewrite ONLY the GLM_VARIANT line. This file is a normal systemd
+    # EnvironmentFile and is the natural place for an operator to put THREADS,
+    # CTX or NUMA_POLICY; clobbering it on every switch would silently discard
+    # their tuning and change how the model is served, not just which one.
+    #
+    # Atomic, so a crash mid-write cannot leave the service pointing at a
+    # half-written variant name.
+    local tmp; tmp=$(mktemp "${STATE}.XXXXXX") || die "cannot write near $STATE"
+    if [ -f "$STATE" ]; then
+        grep -v '^[[:space:]]*GLM_VARIANT=' "$STATE" > "$tmp"
+    else
+        echo "# GLM server environment. GLM_VARIANT is managed by glm-model." > "$tmp"
+    fi
+    echo "GLM_VARIANT=$V_NAME" >> "$tmp"
+    chmod 0644 "$tmp"
+    mv "$tmp" "$STATE" || die "cannot replace $STATE"
+
+    systemctl restart "$SERVICE" || die "restart failed"
+
+    echo -n "loading $V_NAME (this takes minutes; ${V_SHARDS} shards, mlocked)"
+    local waited=0
+    while [ "$waited" -lt "$READY_TIMEOUT" ]; do
+        if curl -sf --max-time 5 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+            echo
+            cmd_status
+            return 0
+        fi
+        if ! systemctl is-active --quiet "$SERVICE"; then
+            echo
+            die "service died during load - check: journalctl -u $SERVICE -n 50"
+        fi
+        sleep 10; waited=$((waited + 10))
+        echo -n "."
+    done
+    echo
+    die "still not ready after ${READY_TIMEOUT}s - check: journalctl -u $SERVICE -n 50"
+}
+
+usage() {
+    sed -n '2,10p' "$0" | sed 's/^# \?//'
+    exit 1
+}
+
+case "${1:-}" in
+    list)     cmd_list ;;
+    status)   cmd_status ;;
+    download) [ $# -ge 2 ] || usage; cmd_download "$2" ;;
+    verify)   [ $# -ge 2 ] || usage; cmd_verify "$2" ;;
+    use)      [ $# -ge 2 ] || usage; cmd_use "$2" ;;
+    *)        usage ;;
+esac
