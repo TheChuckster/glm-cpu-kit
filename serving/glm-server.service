@@ -33,8 +33,14 @@ Restart=on-failure
 RestartSec=5
 LimitMEMLOCK=infinity
 LimitNOFILE=1048576
-# Loading a 340-460 GB mlocked model off NVMe takes minutes; no start timeout.
+# Loading a 340-590 GB mlocked model off NVMe takes minutes; no start timeout.
 TimeoutStartSec=0
+# Releasing that much mlocked memory also takes longer than the 90s default:
+# systemd would SIGKILL mid-teardown, mark the unit `failed`, and leave that
+# state behind after every switch - `glm-model use` restarts the service, so
+# this is the normal path, not an edge case. The model is read-only, so a kill
+# loses no data; this just keeps stops clean and the unit state honest.
+TimeoutStopSec=600
 # Keep the OOM killer away from the largest RSS on the box - it is the whole
 # point of the machine, and killing it to reclaim memory helps nothing.
 OOMScoreAdjust=-800
