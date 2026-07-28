@@ -1,5 +1,6 @@
 #!/bin/bash
-# GLM-5.2 inference server - ik_llama.cpp fused-MoE, NUMA-aware.
+# CPU inference server - ik_llama.cpp fused-MoE, NUMA-aware. Serves GLM-5.2 or
+# Kimi K2.x depending on the selected variant.
 # See ../GLM-5.2-CPU-inference-runbook.md  §3 (NUMA), §5 (build), §6 (this script).
 #
 # WHICH model is served comes from GLM_VARIANT, resolved against the registry in
@@ -7,6 +8,11 @@
 # /etc/default/glm-server for the unit's EnvironmentFile to pick up. Defaults to
 # `base`, so an unset or missing state file serves the model the box shipped
 # with rather than failing to start.
+#
+# The registry also supplies per-model serving flags (field 8, `opts`), because
+# the right flags are not the same across model families - GLM turns thinking
+# off with a chat-template kwarg, Kimi with --reasoning off. Those are appended
+# LAST, so a variant can override any default set below.
 #
 # Env overrides:
 #   GLM_VARIANT variant handle from the registry  (default base)
@@ -37,22 +43,40 @@ if [ -n "${MODEL_DIR:-}" ]; then
     [ -n "$MODEL" ] || { echo "model not found in $MODEL_DIR"; exit 1; }
 else
     [ -r "$VARIANTS" ] || { echo "cannot read $VARIANTS (set MODEL_DIR to bypass)"; exit 1; }
-    row=$(awk -F'|' -v want="$GLM_VARIANT" '
+    # Re-joined with '|', not a space: fields are legitimately empty (subdir is,
+    # for a repo-root quant) and `read` collapses runs of whitespace, which
+    # would shift every later field one to the left. See glm-model's
+    # variant_row for the same reasoning. Field 8 (opts) keeps its inner spaces.
+    row=$(awk -F'|' -v want="$GLM_VARIANT" 'BEGIN { OFS = "|" }
         /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
         { gsub(/^[ \t]+|[ \t]+$/, "", $1)
           if ($1 != want) next
-          for (i = 2; i <= 7; i++) gsub(/^[ \t]+|[ \t]+$/, "", $i)
-          print $4, $5, $6, $7
+          for (i = 2; i <= 8; i++) gsub(/^[ \t]+|[ \t]+$/, "", $i)
+          print $4, $5, $6, $7, $8
           exit }' "$VARIANTS")
     [ -n "$row" ] || { echo "unknown GLM_VARIANT '$GLM_VARIANT' - not in $VARIANTS"; exit 1; }
-    read -r PREFIX SHARDS ALIAS DIR <<<"$row"
-    MODEL="$DIR/$(printf '%s-%05d-of-%05d.gguf' "$PREFIX" 1 "$SHARDS")"
-    [ -s "$MODEL" ] || {
-        echo "variant '$GLM_VARIANT' selected but its first shard is missing: $MODEL"
+    # SHARDS is unused (the first shard is found by glob below) but must still
+    # be named: drop it and PREFIX would absorb the rest of the line.
+    # shellcheck disable=SC2034
+    IFS='|' read -r PREFIX SHARDS ALIAS DIR VARIANT_OPTS <<<"$row"
+    # Glob rather than reconstruct the -000NN-of-000MM suffix: the shard count
+    # may be `?` (resolved from HuggingFace at download time, runbook), and a
+    # publisher re-sharding a repo should not silently break serving.
+    MODEL=$(ls "$DIR/$PREFIX"-00001-of-*.gguf 2>/dev/null | head -1)
+    [ -n "$MODEL" ] && [ -s "$MODEL" ] || {
+        echo "variant '$GLM_VARIANT' selected but its first shard is missing in $DIR"
         echo "run: glm-model download $GLM_VARIANT"
         exit 1
     }
 fi
+
+# ─── per-variant serving flags ────────────────────────────────────────────────
+# Field 8 of the registry. Expanded as shell words so a JSON argument keeps its
+# embedded space; appended LAST below so a variant can override any default.
+# The registry is root-owned and read by a root-installed unit, so this is the
+# same trust boundary as the unit file.
+VARIANT_ARGS=()
+[ -n "${VARIANT_OPTS:-}" ] && eval "VARIANT_ARGS=($VARIANT_OPTS)"
 
 [ -x "$IK" ]    || { echo "ik llama-server not found at $IK (build it, runbook §5)"; exit 1; }
 [ -f "$HOME/.glm-api-key" ] || { echo "no ~/.glm-api-key - run gen-api-key.sh"; exit 1; }
@@ -82,10 +106,10 @@ exec "$IK" \
     --cache-type-k q8_0 --cache-type-v q8_0 \
     --mlock \
     --jinja \
-    --chat-template-kwargs '{"enable_thinking": false}' \
     --repeat-penalty 1.1 --repeat-last-n 256 \
     --metrics \
-    --api-key-file "$HOME/.glm-api-key"
+    --api-key-file "$HOME/.glm-api-key" \
+    "${VARIANT_ARGS[@]}"
 
 # NOTE: llama-server does not reject requests whose `model` field names a
 # different alias - it serves whatever is loaded. So a client asking for

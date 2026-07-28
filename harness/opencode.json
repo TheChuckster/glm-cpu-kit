@@ -1,15 +1,19 @@
 {
-  "//": "opencode config for GLM-5.2 direct to the ik_llama.cpp server (no litellm needed).",
+  "//": "opencode config for the ik_llama.cpp server, direct (no litellm needed).",
   "//edit": "Replace SERVER_IP and export GLM_API_KEY (the contents of ~/.glm-api-key on the server).",
   "//critical": "limit.context MUST be set BELOW the server's --ctx-size (serve-glm.sh CTX). It makes",
   "//critical2": "opencode auto-COMPACT before it hits the server ceiling. Without it, opencode assumes a",
   "//critical3": "huge window, balloons the context to 100k+ tokens, and the server grinds for HOURS (O(n^2)",
   "//critical4": "prompt-processing). Server CTX 64k -> set context 60000. If you raise one, raise both.",
+  "//variants": "Listing several models here does NOT make them all available at once - only one is",
+  "//variants2": "resident (each is 440-590 GB and mlocked). llama-server serves whatever is loaded no",
+  "//variants3": "matter which name you ask for, so picking an inactive one here silently gets you the",
+  "//variants4": "live model instead. Switch with `glm-model use <variant>`, confirm with `glm-model status`.",
   "$schema": "https://opencode.ai/config.json",
   "provider": {
     "local": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "Local GLM-5.2 (ik_llama.cpp)",
+      "name": "Local CPU inference (ik_llama.cpp)",
       "options": {
         "baseURL": "http://SERVER_IP:8080/v1",
         "apiKey": "{env:GLM_API_KEY}"
@@ -17,6 +21,14 @@
       "models": {
         "glm-5.2": {
           "name": "GLM-5.2 (Q4, CPU)",
+          "limit": { "context": 60000, "output": 8000 }
+        },
+        "kimi-k2.7-code": {
+          "name": "Kimi K2.7-Code (Q4, CPU)",
+          "limit": { "context": 60000, "output": 8000 }
+        },
+        "kimi-k2.6": {
+          "name": "Kimi K2.6 (Q4_X, CPU)",
           "limit": { "context": 60000, "output": 8000 }
         }
       }

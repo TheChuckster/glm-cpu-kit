@@ -22,21 +22,43 @@ interleaved across both sockets.
 | `gen-api-key.sh` | create `~/.glm-api-key` | 6 |
 | `serve-glm.sh` | the server launcher (NUMA-aware, thinking-off, anti-repetition) | 6 |
 | `glm-server.service` | systemd unit (survives reboot, `LimitMEMLOCK=infinity`) | 7 |
-| `glm-variants.conf` | registry of servable models (base + abliterated) | - |
-| `glm-model` | list / download / switch which model is served | - |
+| `glm-variants.conf` | registry of servable models (GLM + Kimi) and their per-model flags | 6a |
+| `glm-model` | list / download / switch / track which model is served | 6a |
 
 **Switching models.** `glm-model` picks which registered variant
 `glm-server.service` serves:
 
 ```sh
 glm-model list                     # registered, downloaded, live
-glm-model download abliterated     # ~455 GB, resumable, size-verified
-glm-model use abliterated          # switch + restart, waits for readiness
+glm-model download kimi-k2.7-code  # ~584 GB, resumable, size-verified
+glm-model use kimi-k2.7-code       # switch + restart, waits for readiness
 glm-model status                   # what is ACTUALLY loaded right now
+glm-model upstream                 # what HF publishes now, and does it fit this box
 ```
 
-Only one variant is resident at a time — each is 340–460 GB and `--mlock` pins
+Only one variant is resident at a time — each is 340–590 GB and `--mlock` pins
 it, so a switch is a full reload of several minutes, not a hot swap.
+
+**Registered today:** `base` (GLM-5.2, 440 GB), two GLM abliterated variants,
+and two Kimi at genuine 4-bit — `kimi-k2.7-code` (unsloth UD-Q4_K_XL, 584 GB)
+and `kimi-k2.6` (ubergarm Q4_X, 4.549 bpw, built to match Moonshot's official
+int4). Kimi K2.x is ~1T total but only ~32B active vs GLM's ~40B, and token
+generation is memory-bandwidth-bound, so **Kimi generates faster here** for
+~145 GB more RAM.
+
+`kimi-k3` / `kimi-k3-ik` are registered but show as `pending`: no trusted quant
+is published yet, and ik_llama.cpp has no `kimi-k3` architecture. K3 also can't
+fit at 4-bit — Moonshot ships its experts already `mxfp4` and the native release
+is 1,561 GB against this box's 1,133 GB, so anything that fits is a
+requantisation down to ~2–3 bpw and will likely land *below* GLM-5.2 Q4. Run
+`glm-model upstream` to see whether unsloth/ubergarm have shipped. Runbook §6a
+has the full analysis, including what an ik port would take.
+
+**Per-model flags.** Field 8 (`opts`) of a registry row is appended last to the
+server command line. It exists because "turn thinking off" is not one flag:
+GLM takes `--chat-template-kwargs '{"enable_thinking": false}'`, while Kimi's
+template has no such variable and needs `--reasoning off`. Passing GLM's flag to
+Kimi fails *silently* — no error, just thinking output that breaks the harness.
 
 Two abliterated variants are registered and they are **not** equivalent.
 `abliterated` (frz1, Q4_K_M, 455 GB) matches the base model's quant class and
@@ -99,7 +121,8 @@ always safe: louder, never hotter.
 ## Setup order
 
 Fastest path: mount fast storage at `/models`, then run `./install.sh`. It does deps, builds
-ik_llama.cpp (verifying VNNI), generates the API key, and installs the systemd service. Add
+ik_llama.cpp (verifying VNNI), generates the API key, installs the model registry and the
+`glm-model` CLI, and installs the systemd service. Add
 `--download` to also pull the ~440 GB model. Then benchmark NUMA and thread counts and set up
 the harness.
 

@@ -45,6 +45,37 @@ model_list:
       timeout: 21600
       stream_timeout: 21600
 
+  # Kimi variants - same server, same one-resident-model caveat as above.
+  # ~1T total but only ~32B active against GLM's ~40B, so these generate
+  # FASTER here (TG is memory-bandwidth-bound, runbook §0) while costing
+  # ~145 GB more RAM to hold. Both are genuine 4-bit.
+  #
+  # No temperature/penalty overrides: Moonshot's own generation_config asks for
+  # temp 1.0 / top_p 0.95, and serve-glm.sh already applies those plus
+  # --repeat-penalty server-side from the registry's per-variant opts. Setting
+  # them here too would fight the server rather than help it.
+  - model_name: kimi-k2.7-code
+    litellm_params:
+      model: openai/kimi-k2.7-code
+      api_base: http://SERVER_IP:8080/v1
+      api_key: PASTE_YOUR_GLM_API_KEY_HERE
+      timeout: 21600
+      stream_timeout: 21600
+
+  - model_name: kimi-k2.6
+    litellm_params:
+      model: openai/kimi-k2.6
+      api_base: http://SERVER_IP:8080/v1
+      api_key: PASTE_YOUR_GLM_API_KEY_HERE
+      timeout: 21600
+      stream_timeout: 21600
+
+  # kimi-k3 / kimi-k3-ik are registered in glm-variants.conf but not servable
+  # yet (no trusted quant published, and ik_llama.cpp has no kimi-k3 arch).
+  # Add them here once `glm-model upstream` shows a quant has landed AND the
+  # engine can load it - not before, or a client will silently get whichever
+  # model actually is resident.
+
 litellm_settings:
   drop_params: true
   set_verbose: false

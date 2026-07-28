@@ -166,6 +166,102 @@ curl -4 -s "https://huggingface.co/api/models/unsloth/GLM-5.2-GGUF/tree/main/UD-
   | jq -r '.[] | select(.path|endswith(".gguf")) | "\(.lfs.size)\t\(.path)"'
 ```
 
+In practice you don't run that by hand: `glm-model download <variant>` does the same thing driven
+by the registry, and refuses to mark a variant ready until every shard's size matches HuggingFace.
+
+---
+
+## 6a. Other models: Kimi, and how to judge whether one fits
+
+The registry (`serving/glm-variants.conf`) is not GLM-only. Anything ik_llama.cpp can load and that
+fits in RAM can be a variant; field 8 (`opts`) carries the flags that model needs.
+
+**Registered and runnable today:**
+
+| variant | quant | size | notes |
+|---|---|---|---|
+| `base` | unsloth UD-Q4_K_XL | 440 GB | GLM-5.2, the reference |
+| `kimi-k2.7-code` | unsloth UD-Q4_K_XL | 584 GB | current Kimi coder |
+| `kimi-k2.6` | ubergarm Q4_X, 4.549 bpw | 584 GB | built to match Moonshot's official int4; ubergarm targets ik specifically |
+
+Kimi K2.x is ~1T total but only **~32B active** against GLM's ~40B. Since TG is bandwidth-bound
+(§0), fewer active parameters means Kimi **generates faster** than GLM here, at ~145 GB more RAM.
+
+**The sizing rule that actually matters.** Judge a model by the size of the *quant file*, not by
+parameter count, and check it against RAM *before* downloading half a terabyte:
+
+```bash
+glm-model upstream            # every registered variant: what HF publishes now, and does it fit
+glm-model upstream kimi-k3    # just one
+```
+
+That command exists because a registry row is a *guess* about what a publisher will name their
+files. It prints what is really in the repo, so you can correct `subdir`/`prefix` before fetching.
+
+### Why "turn thinking off" is per-model (and why `opts` exists)
+
+§10 explains why reasoning blocks must be off for agentic harnesses. There is no single flag:
+
+- **GLM** — its template takes a kwarg: `--chat-template-kwargs '{"enable_thinking": false}'`
+- **Kimi** — its template has **no such variable at all**; it unconditionally opens the assistant
+  turn with `<think>`. The kwarg is silently a no-op. Use `--reasoning off` instead.
+
+That silent no-op is the trap: pass GLM's flag to Kimi and nothing errors, you just get thinking
+output that breaks the harness. Before `opts` existed these flags were hardcoded in `serve-glm.sh`,
+so every model got GLM's.
+
+### Kimi K3: why it is registered but not servable (as of 2026-07-28)
+
+K3 (released 2026-07-27) is a ~2.8T MoE — 896 experts, 16 active + 2 shared, 93 layers, hybrid
+KDA-linear + MLA attention, multimodal, 1M context. Two independent blockers:
+
+**1. It does not fit at 4-bit.** Moonshot ships the routed experts *already* 4-bit (`mxfp4`,
+group 32; attention, shared experts, dense MLP, lm_head and the vision tower stay bf16). The native
+release is **1,561 GB** against this box's 1,133 GB. So a true 4-bit K3 cannot run here at all, and
+anything that fits is a **requantisation of already-4-bit weights** down to ~2–3 bpw. Expect it to
+land *below* GLM-5.2 Q4_K_XL, not beside it.
+
+| what exists | size | fits 1,133 GB? |
+|---|---|---|
+| native mxfp4 (true 4-bit) | 1,561 GB | no, +428 GB over |
+| GrEarl `Q2_K`, 2.673 bpw | 929 GB | yes, tight |
+| GrEarl `IQ1_S` | 567 GB | yes, but 1-bit |
+| unsloth / ubergarm | — | **not published yet** |
+
+GrEarl's is the only K3 GGUF that exists, and its own README says the author lacks the hardware to
+run or validate it. It is deliberately **not** registered. Prefer a *dynamic* quant (unsloth `UD-*`,
+ubergarm `IQ*_K`) when they land: keeping sensitive tensors at higher precision matters far more
+than usual when the source is already quantised.
+
+**2. ik_llama.cpp has no `kimi-k3` architecture.** Mainline support is unmerged PR
+[#26185](https://github.com/ggml-org/llama.cpp/pull/26185) (text-only, so it drops vision). No
+`opts` value substitutes for a missing arch — the server simply refuses to load the GGUF.
+
+Porting it to ik is *tractable but not small*. ik already has the hard parts:
+
+- `ggml_delta_net` — the gated delta-rule linear-attention kernel (from Qwen3-Next)
+- `ggml_ssm_conv` — the short convolution KDA needs (kernel size 4)
+- the hybrid recurrent+attention KV cache: per-sequence state slots, save/restore, mixed-batch
+  handling. This is the genuinely gnarly infrastructure and it is done.
+- MLA via `LLM_ARCH_DEEPSEEK2` for K3's 24 full-attention layers; sigmoid-router grouped-topk MoE;
+  MXFP4 (`MXFP4_R8` landed 2026-07-28), matching K3's native weight format
+- DS4 / `HC_PRE`, which the PR reuses for the cross-layer residual, is landing upstream now
+
+What would still have to be written: the `situ` activation (replaces SwiGLU *everywhere*, so it
+needs an AVX-512 path or it becomes the bottleneck); **the full-rank KDA gate** — K3 sets
+`use_full_rank_gate`, a per-channel decay, where ik's `ggml_delta_net` takes a per-head scalar `g`,
+so the inner recurrence has to change, and this is the main technical risk; latent MoE (routed
+experts at 3584 latent vs 7168 hidden); the MLA output gate; and the arch plumbing plus a ~600-line
+graph builder rewritten against ik's monolithic `src/llama.cpp` style rather than mainline's
+`src/models/*.cpp` — a re-implementation, not a cherry-pick.
+
+Mainline's version is 1,313 lines from an experienced llama.cpp contributor. Budget 1–3 weeks
+against a PR that is days old and still churning.
+
+**The reason not to do it yet is not difficulty, it's payoff:** a perfect port buys you K3 at
+~2.7 bpw, which is very likely worse than the GLM-5.2 Q4 you already run. Wait for unsloth and
+ubergarm — both have shipped every prior Kimi — then reassess. `glm-model upstream` is the check.
+
 ---
 
 ## 7. The server launch script
@@ -195,11 +291,18 @@ exec ~/ik_llama.cpp/build/bin/llama-server \
     --cache-type-k q8_0 --cache-type-v q8_0 \  # quantized KV to save memory at long context
     --mlock \                                  # pin weights in RAM (no page-fault jitter)
     --jinja \                                  # use the model's embedded chat template
-    --chat-template-kwargs '{"enable_thinking": false}' \  # required; see 10
     --repeat-penalty 1.1 --repeat-last-n 256 \ # stops repetition loops; see 10
     --metrics \                                # Prometheus /metrics endpoint
-    --api-key-file ~/.glm-api-key
+    --api-key-file ~/.glm-api-key \
+    --chat-template-kwargs '{"enable_thinking": false}'   # PER-MODEL; see below and 6a
 ```
+
+The last line is the only model-specific flag here, and in the real script
+(`serving/serve-glm.sh`) it does **not** appear: it comes from field 8 (`opts`) of the registry
+row, appended last so a variant can override any default above it. That indirection exists because
+the equivalent flag differs per model family — Kimi needs `--reasoning off` and silently ignores
+GLM's kwarg (§6a). Everything else on this command line is a property of the *box*, not the model,
+and stays hardcoded.
 ```bash
 # one-time
 head -c 24 /dev/urandom | base64 | tr -d '/+=' > ~/.glm-api-key
@@ -372,7 +475,9 @@ OS-level.
 | You want | Do this |
 |---|---|
 | Max quality, patient use | GLM-5.2 Q4, this setup. TG ~18-25 tok/s here. |
-| Faster generation | Fewer-active model: Kimi K2 (32B) or Qwen3-Coder-Next (3B active, ~5-10x). |
+| Faster generation | Fewer-active model: `glm-model use kimi-k2.7-code` (~32B active vs GLM's ~40B), or Qwen3-Coder-Next (3B active, ~5-10x). |
+| Coding specifically | `kimi-k2.7-code` (unsloth UD-Q4_K_XL, 584 GB). Genuine 4-bit, fits with ~550 GB spare. |
+| Kimi K3 | Not yet: doesn't fit at 4-bit (1,561 GB native) and ik has no `kimi-k3` arch. See 6a. |
 | Fast first-token on big context | Add a GPU for attention/KV offload (`-ngl 99 -ot exps=CPU`), or keep context small. |
 | Serve many users | Wrong tool: CPU aggregate throughput is low. Use GPUs. |
 | Don't time out on huge prompts | Raise client timeout to 30-60 min; but really, keep context lean. |
@@ -384,10 +489,11 @@ OS-level.
 1. Provision and RAID0 NVMe into `/models`, install deps.
 2. `numactl --hardware`, understand your NUMA nodes.
 3. Build ik_llama.cpp with `GGML_NATIVE=ON`; verify VNNI via `objdump`.
-4. Download GLM-5.2 Q4_K_XL (IPv4, parallel).
+4. Download GLM-5.2 Q4_K_XL (IPv4, parallel) — or `glm-model download <variant>`.
 5. Write `serve-glm.sh` with `--numa distribute`, thinking off, repeat-penalty, threads=physical.
 6. Benchmark NUMA strategies and thread counts; keep the winner.
-7. systemd service, `LimitMEMLOCK=infinity`.
+7. systemd service, `LimitMEMLOCK=infinity`. Install the registry and `glm-model` (`install.sh`
+   step 4) — without `/etc/glm-variants.conf` the unit starts and immediately dies.
 8. Harness: opencode direct; keep context lean; long timeouts.
 9. Prometheus, Grafana, and Loki for visibility.
 

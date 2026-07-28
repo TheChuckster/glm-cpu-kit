@@ -15,12 +15,12 @@ USER_NAME="$(id -un)"
 MODEL_DIR="${MODEL_DIR:-/models/GLM-5.2-Q4_K_XL/UD-Q4_K_XL}"
 say(){ printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
 
-say "1/6  dependencies"
+say "1/7  dependencies"
 sudo apt-get update -qq
 sudo apt-get -y install build-essential cmake git python3 python3-pip numactl unzip curl jq >/dev/null
 echo "  ok"
 
-say "2/6  build ik_llama.cpp (native AVX-512/VNNI)"
+say "2/7  build ik_llama.cpp (native AVX-512/VNNI)"
 if [ ! -x "$HOME/ik_llama.cpp/build/bin/llama-server" ]; then
   [ -d "$HOME/ik_llama.cpp" ] || git clone --depth 1 https://github.com/ikawrakow/ik_llama.cpp "$HOME/ik_llama.cpp"
   cd "$HOME/ik_llama.cpp"
@@ -32,10 +32,28 @@ fi
 VNNI=$(objdump -d "$HOME/ik_llama.cpp/build/bin/libggml-cpu.so" 2>/dev/null | grep -c vpdpbusd || true)
 echo "  VNNI (vpdpbusd) instructions in binary: ${VNNI:-0}  (must be > 0)"
 
-say "3/6  api key"
+say "3/7  api key"
 bash "$KITDIR/serving/gen-api-key.sh"
 
-say "4/6  install systemd service"
+say "4/7  install model registry + glm-model CLI"
+# serve-glm.sh resolves the active variant against /etc/glm-variants.conf, so
+# without this step a fresh box starts the unit and immediately dies on
+# "cannot read /etc/glm-variants.conf".
+CONF=/etc/glm-variants.conf
+if [ -e "$CONF" ] && ! sudo cmp -s "$KITDIR/serving/glm-variants.conf" "$CONF"; then
+  # Never clobber a registry the operator has edited - correcting a pre-staged
+  # variant's subdir/prefix once its publisher ships is expected, and a silent
+  # overwrite would throw that away along with any local variants.
+  sudo cp "$KITDIR/serving/glm-variants.conf" "$CONF.new"
+  echo "  $CONF exists and differs - wrote $CONF.new instead (diff and merge)"
+else
+  sudo cp "$KITDIR/serving/glm-variants.conf" "$CONF"
+  echo "  installed $CONF"
+fi
+sudo install -m 0755 "$KITDIR/serving/glm-model" /usr/local/bin/glm-model
+echo "  installed /usr/local/bin/glm-model   (try: glm-model list)"
+
+say "5/7  install systemd service"
 SVC=/etc/systemd/system/glm-server.service
 sed -e "s|REPLACE_WITH_YOUR_USER|$USER_NAME|g" "$KITDIR/serving/glm-server.service" \
   | sed -e "s|ExecStart=.*serve-glm.sh|ExecStart=$KITDIR/serving/serve-glm.sh|" \
@@ -43,7 +61,7 @@ sed -e "s|REPLACE_WITH_YOUR_USER|$USER_NAME|g" "$KITDIR/serving/glm-server.servi
 sudo systemctl daemon-reload
 echo "  installed $SVC  (User=$USER_NAME, ExecStart=$KITDIR/serving/serve-glm.sh)"
 
-say "5/6  model"
+say "6/7  model"
 if [ "${1:-}" = "--download" ]; then
   bash "$KITDIR/serving/download-model.sh" "$MODEL_DIR"
 fi
@@ -53,7 +71,7 @@ else
   echo "  NOT PRESENT. Run (in tmux, ~440 GB):  $KITDIR/serving/download-model.sh $MODEL_DIR"; MODEL_READY=0
 fi
 
-say "6/6  start"
+say "7/7  start"
 if [ "${MODEL_READY:-0}" = "1" ]; then
   sudo systemctl enable --now glm-server
   echo "  starting (loads ~440 GB + mlock - a few minutes). Watch health:"

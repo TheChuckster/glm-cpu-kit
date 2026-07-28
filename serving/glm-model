@@ -6,8 +6,10 @@
 #   glm-model download <variant>   fetch shards (resumable), verify sizes
 #   glm-model use <variant>        switch and restart, waiting for readiness
 #   glm-model verify <variant>     re-check on-disk sizes against HuggingFace
+#   glm-model upstream [variant]   ask HuggingFace what each repo actually
+#                                  publishes now, and whether it fits this box
 #
-# Only one variant is resident at a time: each is 340-460 GB and --mlock pins
+# Only one variant is resident at a time: each is 340-590 GB and --mlock pins
 # it, so switching is a full reload of several minutes, not a hot swap.
 set -uo pipefail
 
@@ -26,14 +28,21 @@ die() { echo "glm-model: $*" >&2; exit 1; }
 
 # --- registry ---------------------------------------------------------------
 
-# Emit "name repo subdir prefix shards alias dir" for one variant, or nothing.
+# Emit the 8 trimmed fields of one variant, re-joined with '|', or nothing.
+#
+# The separator must NOT be whitespace. `subdir` is legitimately empty for a
+# publisher who puts quants at the repo root, and bash `read` collapses runs of
+# whitespace, so a space-joined row would silently shift every later field one
+# to the left - prefix landing in subdir, shards in prefix, and so on. '|' is
+# not IFS whitespace, so empty fields survive; the format already forbids '|'
+# inside a field, which is what makes it safe to reuse here.
 variant_row() {
-    awk -F'|' -v want="$1" '
+    awk -F'|' -v want="$1" 'BEGIN { OFS = "|" }
         /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
         { gsub(/^[ \t]+|[ \t]+$/, "", $1)
           if ($1 != want) next
-          for (i = 2; i <= 7; i++) gsub(/^[ \t]+|[ \t]+$/, "", $i)
-          print $1, $2, $3, $4, $5, $6, $7
+          for (i = 2; i <= 8; i++) gsub(/^[ \t]+|[ \t]+$/, "", $i)
+          print $1, $2, $3, $4, $5, $6, $7, $8
           exit }
     ' "$CONF"
 }
@@ -47,13 +56,41 @@ variant_names() {
 load_variant() {
     local row; row=$(variant_row "$1")
     [ -n "$row" ] || die "unknown variant '$1'. Known: $(variant_names | tr '\n' ' ')"
-    read -r V_NAME V_REPO V_SUBDIR V_PREFIX V_SHARDS V_ALIAS V_DIR <<<"$row"
+    # V_OPTS is only consumed by serve-glm.sh, but it must still be named here:
+    # drop it and V_DIR would absorb the rest of the line.
+    # shellcheck disable=SC2034
+    IFS='|' read -r V_NAME V_REPO V_SUBDIR V_PREFIX V_SHARDS V_ALIAS V_DIR V_OPTS <<<"$row"
+}
+
+# A registry shard count of `?` means "whatever the publisher shipped" - used to
+# pre-stage a variant whose repo has not published yet, so the count cannot be
+# known when the row is written. Resolve it from HuggingFace once and cache it,
+# because download/verify need to enumerate shard names offline afterwards.
+#
+# Echoes the count, or nothing if it is unknown AND cannot be determined.
+effective_shards() {
+    if [ "$V_SHARDS" != "?" ]; then echo "$V_SHARDS"; return 0; fi
+    local cache="$V_DIR/.shards" n
+    if [ -r "$cache" ]; then
+        n=$(tr -dc '0-9' < "$cache"); [ -n "$n" ] && { echo "$n"; return 0; }
+    fi
+    # Every shard is named <prefix>-000NN-of-000MM.gguf; take MM from the first
+    # one we see. index() rather than a regex so a prefix containing "." (every
+    # Kimi one does) is matched literally; sub() rather than gawk's 3-arg
+    # match(), which mawk - the default awk on Ubuntu - does not implement.
+    n=$(remote_sizes | awk -v p="$V_PREFIX" '
+        index($1, p "-") == 1 && $1 ~ /-of-[0-9]+\.gguf$/ {
+            s = $1; sub(/^.*-of-/, "", s); sub(/\.gguf$/, "", s)
+            print s + 0; exit }')
+    [ -n "$n" ] && [ "$n" -gt 0 ] 2>/dev/null || return 1
+    mkdir -p "$V_DIR" 2>/dev/null && echo "$n" > "$cache" 2>/dev/null
+    echo "$n"
 }
 
 # Trailing newline matters: this feeds `xargs -I{}`, which splits on lines.
 # Without it all shard names arrive as a single concatenated argument and every
 # request 404s against a nonsense URL.
-shard_name() { printf '%s-%05d-of-%05d.gguf\n' "$V_PREFIX" "$1" "$V_SHARDS"; }
+shard_name() { printf '%s-%05d-of-%05d.gguf\n' "$V_PREFIX" "$1" "$2"; }
 
 active_variant() {
     [ -r "$STATE" ] && sed -n 's/^GLM_VARIANT=//p' "$STATE" | tail -1 | tr -d '"'"'"' \n'
@@ -63,10 +100,14 @@ active_variant() {
 # HuggingFace. Its presence is what "ready" means.
 complete_marker() { echo "$V_DIR/.complete"; }
 
+# Sum by glob rather than by enumerating 1..N: the shard count may be `?` until
+# the publisher ships, and this must work offline. A stray or missing file
+# changes the total, which is exactly what the .complete comparison wants.
 on_disk_bytes() {
-    local i total=0 sz
-    for i in $(seq 1 "$V_SHARDS"); do
-        sz=$(stat -c %s "$V_DIR/$(shard_name "$i")" 2>/dev/null || echo 0)
+    local total=0 sz f
+    for f in "$V_DIR/$V_PREFIX"-*-of-*.gguf; do
+        [ -f "$f" ] || continue
+        sz=$(stat -c %s "$f" 2>/dev/null || echo 0)
         total=$((total + sz))
     done
     echo "$total"
@@ -122,6 +163,12 @@ cmd_list() {
             state="downloading"
         elif [ -d "$V_DIR" ] && ls "$V_DIR"/*.gguf >/dev/null 2>&1; then
             state="partial"
+        elif [ "$V_SHARDS" = "?" ]; then
+            # Pre-staged for a quant that had not been published when the row
+            # was written. Distinguished from "absent" so it does not read as
+            # "just run download" - it may not exist upstream yet at all.
+            state="pending"
+            size="-"
         else
             state="absent"
             size="-"
@@ -167,15 +214,22 @@ cmd_download() {
     load_variant "$1"
     mkdir -p "$V_DIR" || die "cannot create $V_DIR"
 
-    local avail need_gb
+    local n; n=$(effective_shards) || die "$V_NAME: $V_REPO/${V_SUBDIR:-.} publishes no
+shards matching '$V_PREFIX-000NN-of-000MM.gguf' yet.
+
+This variant is pre-staged for a quant that has not been released, or its
+subdir/prefix in $CONF do not match what the publisher actually named the
+files. Run 'glm-model upstream $V_NAME' to see what is really in the repo."
+
+    local avail
     avail=$(df -BG --output=avail "$V_DIR" 2>/dev/null | tail -1 | tr -dc '0-9')
-    echo "downloading $V_NAME from $V_REPO ($V_SHARDS shards) into $V_DIR"
+    echo "downloading $V_NAME from $V_REPO ($n shards) into $V_DIR"
     echo "free space: ${avail:-?} GB"
 
     # IPv4 forced: HF over IPv6 stalls on some networks. Resumable and retrying
     # hard, because a 455 GB transfer will hit transient failures.
     local i
-    for i in $(seq 1 "$V_SHARDS"); do shard_name "$i"; done \
+    for i in $(seq 1 "$n"); do shard_name "$i" "$n"; done \
     | xargs -P4 -I{} curl -4 -fL -C - --retry 1000 --retry-delay 10 --retry-all-errors \
         --progress-bar -o "$V_DIR/{}" \
         "https://huggingface.co/$V_REPO/resolve/main/${V_SUBDIR:+$V_SUBDIR/}{}"
@@ -192,9 +246,14 @@ cmd_verify() {
         echo "could not fetch expected sizes from HuggingFace; checking presence only"
     fi
 
+    local n; n=$(effective_shards) \
+        || die "$V_NAME: cannot determine the shard count - nothing matching
+'$V_PREFIX-000NN-of-000MM.gguf' is published in $V_REPO/${V_SUBDIR:-.}.
+Run 'glm-model upstream $V_NAME' to see what the repo actually contains."
+
     local i name local_size want bad=0
-    for i in $(seq 1 "$V_SHARDS"); do
-        name=$(shard_name "$i")
+    for i in $(seq 1 "$n"); do
+        name=$(shard_name "$i" "$n")
         local_size=$(stat -c %s "$V_DIR/$name" 2>/dev/null || echo 0)
         want=$(echo "$sizes" | awk -v n="$name" '$1 == n {print $2}')
         if [ "$local_size" -eq 0 ]; then
@@ -216,6 +275,81 @@ cmd_verify() {
     # hundreds of gigabytes.
     on_disk_bytes > "$(complete_marker)"
     echo "$V_NAME is complete ($(du -shc "$V_DIR"/*.gguf 2>/dev/null | tail -1 | cut -f1))"
+}
+
+# Group every .gguf in a repo into "subdir<TAB>prefix<TAB>shards<TAB>bytes",
+# so we can report what a publisher actually shipped rather than what the
+# registry guessed they would call it.
+repo_quants() {
+    curl -4 -sfL --max-time 90 \
+        "https://huggingface.co/api/models/$1/tree/main?recursive=1" 2>/dev/null \
+    | python3 -c '
+import sys, json, re, collections
+try:
+    files = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+if not isinstance(files, list):
+    sys.exit(0)
+size, count = collections.Counter(), collections.Counter()
+for f in files:
+    p = f.get("path", "")
+    if not p.endswith(".gguf"):
+        continue
+    sub, _, base = p.rpartition("/")
+    m = re.match(r"(.*?)-\d{5}-of-\d{5}\.gguf$", base)
+    key = (sub, m.group(1) if m else base[:-5])
+    size[key] += (f.get("lfs") or {}).get("size") or f.get("size") or 0
+    count[key] += 1
+for (sub, pre) in sorted(size):
+    print("%s\t%s\t%d\t%d" % (sub or ".", pre, count[(sub, pre)], size[(sub, pre)]))
+' 2>/dev/null
+}
+
+# What does HuggingFace have RIGHT NOW, and would it fit in this box's RAM?
+# The point of this command is the pre-staged variants: a row can be written
+# before its publisher ships, and this is how you find out that they have -
+# and what they actually named the files, which the registry can only guess.
+cmd_upstream() {
+    local ram_gb
+    ram_gb=$(awk '/^MemTotal:/ {printf "%d", $2/1048576}' /proc/meminfo 2>/dev/null)
+    echo "box RAM: ${ram_gb:-?} GB   (a model must fit with room for KV cache + OS)"
+    echo
+
+    local names
+    if [ $# -ge 1 ]; then names="$1"; else names=$(variant_names); fi
+
+    local name
+    for name in $names; do
+        load_variant "$name"
+        printf '%s  ->  %s/%s\n' "$V_NAME" "$V_REPO" "${V_SUBDIR:-.}"
+
+        local quants; quants=$(repo_quants "$V_REPO")
+        if [ -z "$quants" ]; then
+            echo "    repo publishes no .gguf files yet (or is unreachable)"
+            echo
+            continue
+        fi
+
+        # Does the row's configured subdir+prefix exist upstream?
+        local hit
+        hit=$(echo "$quants" | awk -F'\t' -v s="${V_SUBDIR:-.}" -v p="$V_PREFIX" \
+                '$1 == s && $2 == p {print; exit}')
+        if [ -n "$hit" ]; then
+            echo "$hit" | awk -F'\t' -v ram="${ram_gb:-0}" '
+                { gb = $4/1e9
+                  printf "    %-34s %2d shards  %7.1f GB   %s\n", $2, $3, gb,
+                         (ram > 0 && gb < ram ? "fits" : "DOES NOT FIT") }'
+        else
+            echo "    configured prefix '$V_PREFIX' is NOT published in '${V_SUBDIR:-.}'"
+            echo "    what the repo does have (fix subdir/prefix in $CONF to match):"
+            echo "$quants" | awk -F'\t' -v ram="${ram_gb:-0}" '
+                { gb = $4/1e9
+                  printf "      %-14s %-32s %2d shards %7.1f GB  %s\n", $1, $2, $3, gb,
+                         (ram > 0 && gb < ram ? "fits" : "too big") }'
+        fi
+        echo
+    done
 }
 
 cmd_use() {
@@ -275,7 +409,9 @@ cmd_use() {
 }
 
 usage() {
-    sed -n '2,10p' "$0" | sed 's/^# \?//'
+    # Line range tracks the comment block at the top of this file - keep in
+    # step with it when adding a command.
+    sed -n '2,13p' "$0" | sed 's/^# \?//'
     exit 1
 }
 
@@ -285,5 +421,6 @@ case "${1:-}" in
     download) [ $# -ge 2 ] || usage; cmd_download "$2" ;;
     verify)   [ $# -ge 2 ] || usage; cmd_verify "$2" ;;
     use)      [ $# -ge 2 ] || usage; cmd_use "$2" ;;
+    upstream) shift; cmd_upstream "$@" ;;
     *)        usage ;;
 esac
