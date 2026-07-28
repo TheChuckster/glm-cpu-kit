@@ -1,0 +1,213 @@
+{
+  "k3_config": {
+    "activation_situ_beta": 4.0,
+    "activation_situ_linear_beta": 25.0,
+    "attn_res_block_size": 12,
+    "hidden_size": 7168,
+    "kda_gate_lower_bound": -5.0,
+    "kda_head_dim": 128,
+    "kda_num_heads": 96,
+    "kda_short_conv_kernel_size": 4,
+    "kda_use_full_rank_gate": true,
+    "moe_intermediate_size": 3072,
+    "num_experts": 896,
+    "num_experts_per_token": 16,
+    "num_hidden_layers": 93,
+    "num_shared_experts": 2,
+    "rms_norm_eps": 1e-05,
+    "routed_expert_hidden_size": 3584
+  },
+  "latent_moe": {
+    "bytes_per_expert": 17547264.0,
+    "bytes_per_token": 25829572608.0,
+    "expert_intermediate": 3072,
+    "expert_width": 3584,
+    "router_width": 7168,
+    "shared_expert_width": 7168
+  },
+  "note": "float32 little-endian raw arrays; C order. Regenerate with k3_ops_oracle.py --emit and diff the manifest.",
+  "ops": {
+    "attn_res": {
+      "inputs": {
+        "block_residual": {
+          "file": "attn_res.block_residual.f32",
+          "sha256": "258960b5d47d8b73e47dfc899f8dfdbd1abf666ffcacf3ee69e5c2bc81003561",
+          "shape": [
+            32,
+            8,
+            256
+          ]
+        },
+        "norm_weight": {
+          "file": "attn_res.norm_weight.f32",
+          "sha256": "91a0433490c4b8dd48890a034f46434621a14870373f8c69d2b6cb553badb9d1",
+          "shape": [
+            256
+          ]
+        },
+        "prefix_sum": {
+          "file": "attn_res.prefix_sum.f32",
+          "sha256": "7d26c89bbc21ff84c0c71dd3bb5ca6ab558a28fa73c06de815cd7473b8debe36",
+          "shape": [
+            32,
+            256
+          ]
+        },
+        "proj_weight": {
+          "file": "attn_res.proj_weight.f32",
+          "sha256": "0e9c1cad5f9263497b1b421e4770e5f5502eabd4d8a458749cb4356ad5dcf0f7",
+          "shape": [
+            256
+          ]
+        }
+      },
+      "output": {
+        "file": "attn_res.out.f32",
+        "sha256": "2da0aad2464472b2f294ce957b4eb2862270c6009f6ab74b586e6694c58ee633",
+        "shape": [
+          32,
+          256
+        ]
+      },
+      "params": {
+        "eps": 1e-05
+      }
+    },
+    "kda_gate_per_channel": {
+      "inputs": {
+        "A_log": {
+          "file": "kda_gate_per_channel.A_log.f32",
+          "sha256": "0a82f6a9ec5587ba19c195a936ffc3565b04d048930f8191659aded06bbf8997",
+          "shape": [
+            128
+          ]
+        },
+        "dt_bias": {
+          "file": "kda_gate_per_channel.dt_bias.f32",
+          "sha256": "eda2c101824ef9f764da6bfb4f572f4608817f4b94643f68d31087cd6816a36d",
+          "shape": [
+            512
+          ]
+        },
+        "g": {
+          "file": "kda_gate_per_channel.g.f32",
+          "sha256": "407207d38fe7b4538a26b40b5715426105d61bc9b2995cdd570100242808246e",
+          "shape": [
+            1,
+            16,
+            4,
+            128
+          ]
+        }
+      },
+      "output": {
+        "file": "kda_gate_per_channel.out.f32",
+        "sha256": "3108843ef9139837207f2110c10ced07f9a10a3f5f91f6ff3db8c0a0c17bb36b",
+        "shape": [
+          1,
+          16,
+          4,
+          128
+        ]
+      },
+      "params": {
+        "lower_bound": -5.0
+      }
+    },
+    "kda_gate_per_head_softplus": {
+      "inputs": {
+        "A_log": {
+          "file": "kda_gate_per_head_softplus.A_log.f32",
+          "sha256": "268bdabf1c1ed875db6ad09620322f3512f602f60d4277b703ee37357ec9763a",
+          "shape": [
+            4
+          ]
+        },
+        "dt_bias": {
+          "file": "kda_gate_per_head_softplus.dt_bias.f32",
+          "sha256": "eda2c101824ef9f764da6bfb4f572f4608817f4b94643f68d31087cd6816a36d",
+          "shape": [
+            512
+          ]
+        },
+        "g": {
+          "file": "kda_gate_per_head_softplus.g.f32",
+          "sha256": "407207d38fe7b4538a26b40b5715426105d61bc9b2995cdd570100242808246e",
+          "shape": [
+            1,
+            16,
+            4,
+            128
+          ]
+        }
+      },
+      "output": {
+        "file": "kda_gate_per_head_softplus.out.f32",
+        "sha256": "51cc8924dea3b504eacd726860453f7b30e6b76b0d4012a64b9030e4d75e9707",
+        "shape": [
+          1,
+          16,
+          4,
+          128
+        ]
+      },
+      "params": {
+        "lower_bound": null
+      }
+    },
+    "mla_output_gate": {
+      "inputs": {
+        "attn_output": {
+          "file": "mla_output_gate.attn_output.f32",
+          "sha256": "765a045881b768b32600f25b63c5fddcef8b30c37eca8dd6ec2d567c0da75a3c",
+          "shape": [
+            32,
+            256
+          ]
+        },
+        "g_pre": {
+          "file": "mla_output_gate.g_pre.f32",
+          "sha256": "bc3f2d57376297ff762e424cbdca119ab291fcd8484e22b26691ad9932c11af4",
+          "shape": [
+            32,
+            256
+          ]
+        }
+      },
+      "output": {
+        "file": "mla_output_gate.out.f32",
+        "sha256": "56596394e0a005d2d24e5c419065a2d5d488b107f2f8edf21b197befb3ad81de",
+        "shape": [
+          32,
+          256
+        ]
+      },
+      "params": {}
+    },
+    "situ": {
+      "inputs": {
+        "x": {
+          "file": "situ.x.f32",
+          "sha256": "eeac4ad6d592e9257bbc9351a1339c626dba685a342a3c2ff54f65e8f0ea8b5f",
+          "shape": [
+            64,
+            512
+          ]
+        }
+      },
+      "output": {
+        "file": "situ.out.f32",
+        "sha256": "527a09676419e8165d97eb6b8e131dffe8500db6de5c2e992d25a42d6b628884",
+        "shape": [
+          64,
+          256
+        ]
+      },
+      "params": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    }
+  },
+  "seed": 19251
+}

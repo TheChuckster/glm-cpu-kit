@@ -20,3 +20,6 @@ __pycache__/
 
 # Rust build artifacts
 target/
+
+# Generated test fixtures (deterministic: porting/k3/k3_ops_oracle.py --emit)
+porting/k3/fixtures/*.f32

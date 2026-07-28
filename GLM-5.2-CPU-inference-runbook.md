@@ -262,6 +262,40 @@ against a PR that is days old and still churning.
 ~2.7 bpw, which is very likely worse than the GLM-5.2 Q4 you already run. Wait for unsloth and
 ubergarm — both have shipped every prior Kimi — then reassess. `glm-model upstream` is the check.
 
+Groundwork is in `porting/k3/`: a validated numerical oracle for the four new ops, plus the port
+sequence. See that README before writing any C.
+
+### Streaming experts instead of fitting them: measured, and rejected
+
+The "it doesn't fit" verdict above assumes the model is pinned with `--mlock`. It is fair to ask
+whether K3 could instead be *streamed* — mmap the full 1,561 GB from NVMe and let the page cache
+hold what it can, exploiting the fact that only 16 of 896 experts fire per token.
+[gavamedia/deltafin](https://github.com/gavamedia/deltafin) does exactly this to run K3 on a 64 GB
+Mac. We measured whether it makes sense here. It does not.
+
+Each token reads **16 experts × 92 MoE layers × 17.5 MB = 25.8 GB** of expert weights. Where those
+bytes come from is the entire question:
+
+| | deltafin (M1 Max, 64 GB) | this box (1,133 GB) |
+|---|---|---|
+| expert cache coverage | ~2.4% | ~67% |
+| bytes/token from storage | ~25 GB | ~8.5 GB (uniform routing) |
+| storage read rate | ~6.6 GB/s | **4.6 GB/s measured** |
+| result | 16–76 s/token | **~0.5–1.5 tok/s** |
+
+Measured with `dd iflag=direct` (page cache bypassed) on `/models`: 5.4 GB/s sequential, 4.2–5.1
+GB/s on 20 MB expert-sized random reads. Worth knowing: **md1 is RAID0 across two NVMe, not four**
+— §1 suggests four, and this box has two.
+
+Against that, a ~2.7 bpw quant that *fits* is ~930 GB, RAM-resident, reading ~16.4 GB/token at
+memory bandwidth instead of storage bandwidth: **~10–20 tok/s**, the same class as GLM-5.2 Q4.
+
+So streaming is a **~15× regression here**. It is the right design on a 64 GB machine, where
+nothing else is possible; on this box capacity is the one thing we have, and the correct move is
+to make the model fit and pin it. The general rule, worth remembering beyond K3: on this hardware,
+**always prefer the largest quant that fits in RAM over streaming a better one from disk.** The gap
+between memory bandwidth and NVMe is two orders of magnitude, and MoE sparsity does not close it.
+
 ---
 
 ## 7. The server launch script
