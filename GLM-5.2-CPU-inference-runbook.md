@@ -224,9 +224,17 @@ land *below* GLM-5.2 Q4_K_XL, not beside it.
 | what exists | size | fits 1,133 GB? |
 |---|---|---|
 | native mxfp4 (true 4-bit) | 1,561 GB | no, +428 GB over |
+| unsloth `UD-Q4_K_XL` (32 shards) | 1,508.7 GB | no |
+| unsloth `UD-Q8_K_XL` (34 shards) | 1,561.2 GB | no |
 | GrEarl `Q2_K`, 2.673 bpw | 929 GB | yes, tight |
 | GrEarl `IQ1_S` | 567 GB | yes, but 1-bit |
-| unsloth / ubergarm | — | **not published yet** |
+| unsloth sub-4-bit (`UD-Q2_K_XL`-class, ~950 GB est.) | — | **not published yet** |
+
+unsloth began publishing on 2026-07-28. Note their Q8 tier is the same size as
+Moonshot's native MXFP4 release — the source is already 4-bit QAT, so a higher tier recovers
+nothing and only costs space. That is the clearest possible illustration of the double-quantisation
+problem: above 4 bits there is no information left to keep, and below it you are destroying what
+the QAT put there.
 
 GrEarl's is the only K3 GGUF that exists, and its own README says the author lacks the hardware to
 run or validate it. It is deliberately **not** registered. Prefer a *dynamic* quant (unsloth `UD-*`,
