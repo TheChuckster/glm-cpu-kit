@@ -198,6 +198,37 @@ glm-model upstream kimi-k3    # just one
 That command exists because a registry row is a *guess* about what a publisher will name their
 files. It prints what is really in the repo, so you can correct `subdir`/`prefix` before fetching.
 
+### Known ik + Kimi issue: multi-turn tool calls can 400 silently
+
+[ik #1605](https://github.com/ikawrakow/ik_llama.cpp/issues/1605), open since 2026-04-09 with no
+comments, affects both registered Kimi variants (K2.6 and K2.7-Code share the `kimi_k25` template
+family):
+
+> Silent HTTP 400 when an assistant message has content + tool_calls in multi-turn conversations.
+
+It never fires on the first request — only after a tool-call round-trip, when the client replays an
+assistant message carrying *both* content and `tool_calls`. The free text between `</think>` and
+`<|tool_calls_section_begin|>` appears to break GBNF grammar generation. The server returns 400
+instantly with an empty body, and a fresh request seconds later succeeds. That combination makes it
+read like a flaky network rather than a template bug.
+
+Note the reporter already had thinking off, so **`--reasoning off` does not avoid this** — the
+registry's `opts` fix the reasoning-channel problem, not this one. Untested candidate workarounds:
+`--skip-chat-parsing` (forces a pure content parser, at the cost of tool-call parsing), or driving
+Kimi without grammar-constrained tool calling. Neither is verified here.
+
+Practical read: Kimi is fine for chat and single-shot coding on this box; treat **agentic
+tool-calling loops as unproven** until this is either fixed upstream or worked around locally. GLM
+remains the known-good agentic path.
+
+### Engine vintage matters for Kimi
+
+[ik #1686](https://github.com/ikawrakow/ik_llama.cpp/pull/1686) (merged 2026-04-24) fixed the
+Kimi-K2 parser ignoring `enable_thinking=false` and dumping the whole response into
+`reasoning_content`. Any ik build older than that mis-handles the registry's `--reasoning off`.
+Check with `git -C ~/ik_llama.cpp log -1 --date=short --format=%ad` — anything from 2026-05 onward
+is fine.
+
 ### Why "turn thinking off" is per-model (and why `opts` exists)
 
 §10 explains why reasoning blocks must be off for agentic harnesses. There is no single flag:
