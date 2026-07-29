@@ -9,6 +9,9 @@
 #   glm-model upstream [variant]   ask HuggingFace what each repo actually
 #                                  publishes now, and whether it fits this box
 #
+# `use` needs root - it writes /etc/default/glm-server and restarts the unit.
+# Everything else, download included, runs as your normal user.
+#
 # Only one variant is resident at a time: each is 340-590 GB and --mlock pins
 # it, so switching is a full reload of several minutes, not a hot swap.
 set -uo pipefail
@@ -411,7 +414,7 @@ cmd_use() {
 usage() {
     # Line range tracks the comment block at the top of this file - keep in
     # step with it when adding a command.
-    sed -n '2,13p' "$0" | sed 's/^# \?//'
+    sed -n '2,16p' "$0" | sed 's/^# \?//'
     exit 1
 }
 
