@@ -255,26 +255,48 @@ land *below* GLM-5.2 Q4_K_XL, not beside it.
 | what exists | size | fits 1,133 GB? |
 |---|---|---|
 | native mxfp4 (true 4-bit) | 1,561 GB | no, +428 GB over |
-| unsloth `UD-Q4_K_XL` (32 shards) | 1,508.7 GB | no |
 | unsloth `UD-Q8_K_XL` (34 shards) | 1,561.2 GB | no |
+| unsloth `UD-Q4_K_XL` (32 shards) | 1,508.7 GB | no |
 | GrEarl `Q2_K`, 2.673 bpw | 929 GB | yes, tight |
-| GrEarl `IQ1_S` | 567 GB | yes, but 1-bit |
-| unsloth sub-4-bit (`UD-Q2_K_XL`-class, ~950 GB est.) | — | **not published yet** |
+| **unsloth `UD-Q2_K_XL` (19 shards)** | **861.3 GB** | **yes, ~270 GB spare** |
+| unsloth `UD-IQ2_XXS` (16 shards) | 711.1 GB | yes |
+| unsloth `UD-IQ1_M` (15 shards) | 648.9 GB | yes |
+| unsloth `UD-IQ1_S` (14 shards) | 594.0 GB | yes |
 
-unsloth began publishing on 2026-07-28. Note their Q8 tier is the same size as
-Moonshot's native MXFP4 release — the source is already 4-bit QAT, so a higher tier recovers
-nothing and only costs space. That is the clearest possible illustration of the double-quantisation
-problem: above 4 bits there is no information left to keep, and below it you are destroying what
-the QAT put there.
+unsloth published the sub-4-bit tiers on 2026-07-29, so **a fitting quant now exists** —
+`UD-Q2_K_XL` is the largest, at roughly 2.5 bpw.
+
+Their Q8 tier is the same size as Moonshot's native MXFP4 release, which states the
+double-quantisation problem as plainly as it can be put: above 4 bits there is no information left
+to keep, and below it you are destroying what the QAT put there. Whether ~2.5 bpw over
+already-4-bit-QAT weights beats the GLM-5.2 Q4 running here is **unmeasured**, and it is the
+question that decides whether any of the engine work below is worth doing.
 
 GrEarl's is the only K3 GGUF that exists, and its own README says the author lacks the hardware to
 run or validate it. It is deliberately **not** registered. Prefer a *dynamic* quant (unsloth `UD-*`,
 ubergarm `IQ*_K`) when they land: keeping sensitive tensors at higher precision matters far more
 than usual when the source is already quantised.
 
-**2. ik_llama.cpp has no `kimi-k3` architecture.** Mainline support is unmerged PR
-[#26185](https://github.com/ggml-org/llama.cpp/pull/26185) (text-only, so it drops vision). No
-`opts` value substitutes for a missing arch — the server simply refuses to load the GGUF.
+**2. No engine we run can load it — now the only blocker.** ik has no `kimi-k3` arch; mainline's
+PR [#26185](https://github.com/ggml-org/llama.cpp/pull/26185) is open and conflicted; unsloth built
+these GGUFs against their own fork ([unslothai/llama.cpp#48](https://github.com/unslothai/llama.cpp/pull/48))
+and their README says to use it. No `opts` value substitutes for a missing arch.
+
+There is also a cap that precedes all the arch work: `LLAMA_MAX_EXPERTS` is **512** (raised for
+Qwen3 Next) and K3 has **896**, so it trips a generic assert in `load_hparams` before any arch hook
+runs — in ik that is `src/llama-hparams.cpp:9`, asserted at `:165`. Mainline's PR to raise it
+(#26192) was closed unmerged. One line, but step zero.
+
+Two further things from Moonshot's README invalidate settings that are correct for K2.x:
+
+- **K3 always thinks** — no `enable_thinking` equivalent, and effort is a top-level
+  `reasoning_effort` field (`low`/`high`/`max`, default `max`) that llama.cpp has no flag for. So
+  `--reasoning off` is meaningless for K3; the registry uses `--reasoning-format deepseek` instead.
+  With `max` as default, thinking dominates the cost of a reply.
+- **Preserved thinking history** — multi-turn and tool calls require the *complete* assistant
+  message replayed, including `reasoning_content` and `tool_calls`. That is exactly the shape
+  ik #1605 400s on. For K2 you can avoid it; for K3 it is mandatory, so #1605 becomes **blocking**
+  for agentic K3 rather than a caveat.
 
 Porting it to ik is *tractable but not small*. ik already has the hard parts:
 

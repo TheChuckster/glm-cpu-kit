@@ -4,15 +4,57 @@ Groundwork for adding the `kimi-k3` architecture to ik_llama.cpp. Nothing here
 runs K3 — this is the reference material and the numerical harness you check an
 implementation against, assembled while the ecosystem catches up.
 
-Status as of 2026-07-28 (K3 is one day old):
+Status as of 2026-07-29:
 
 | | |
 |---|---|
-| ik_llama.cpp | no `kimi-k3` arch |
-| mainline llama.cpp | unmerged PR [#26185](https://github.com/ggml-org/llama.cpp/pull/26185), text-only |
-| trusted GGUF quant | none published (unsloth repo is a README; ubergarm has no K3 repo) |
+| trusted GGUF quant | **available** — unsloth `UD-Q2_K_XL`, 19 shards, 861.3 GB, fits |
+| ik_llama.cpp | no `kimi-k3` arch, and `LLAMA_MAX_EXPERTS` is 512 vs K3's 896 |
+| mainline llama.cpp | PR [#26185](https://github.com/ggml-org/llama.cpp/pull/26185) open and conflicted; the expert-cap PR [#26192](https://github.com/ggml-org/llama.cpp/pull/26192) was **closed unmerged** |
+| unsloth's own answer | their fork, [unslothai/llama.cpp#48](https://github.com/unslothai/llama.cpp/pull/48) |
 
-Track both with `glm-model upstream`.
+The quant gate is satisfied, so the engine is now the only thing between us and
+running K3. Track with `glm-model upstream`.
+
+## Step 0: the expert-count cap
+
+Before any op work, K3 does not get far enough to fail interestingly:
+
+```
+src/llama-hparams.cpp:9     #define LLAMA_MAX_EXPERTS 512  // Qwen3 Next
+src/llama-hparams.cpp:165   GGML_ASSERT(hparams.n_expert <= LLAMA_MAX_EXPERTS);
+```
+
+K3 has **896** routed experts, so it trips an arch-generic assert in
+`load_hparams` before any `kimi-k3` hook could run. Mainline hit the identical
+wall (same constant, same reason — it was raised to 512 for Qwen3 Next).
+
+One line to change, but worth understanding rather than just bumping: the
+constant sizes stack arrays in the hparams/graph paths, so raising it is only
+free if nothing downstream assumes 512. Check that before assuming it is a
+one-liner, and note mainline's attempt to raise it was closed rather than merged.
+
+## Serving K3 is not like serving K2.x
+
+Two things from Moonshot's README that a port has to accommodate, both of which
+invalidate settings that are correct for K2:
+
+- **K3 always thinks.** There is no `enable_thinking` equivalent. Effort is a
+  top-level `reasoning_effort` field (`low`/`high`/`max`, default `max`) that
+  llama.cpp has no flag for at all. So `--reasoning off` is meaningless here;
+  `--reasoning-format deepseek` (thoughts into `reasoning_content`, which is what
+  K3 returns) is the closest available behaviour. Capping effort would need new
+  plumbing, and with `max` as the default a K3 answer carries a lot of thinking
+  tokens — Simon Willison measured 13,241 reasoning tokens for a 3,417-token
+  answer. On this box that is the dominant cost of a reply.
+- **Preserved thinking history.** K3 was trained expecting the *complete*
+  assistant message replayed on every turn — `reasoning_content` and
+  `tool_calls`, not just `content`. That is exactly the message shape
+  [ik #1605](https://github.com/ikawrakow/ik_llama.cpp/issues/1605) reports a
+  silent HTTP 400 on for the `kimi_k25` family. For K2 that bug is avoidable by
+  not replaying both fields; for K3 the pattern is **mandatory**, so #1605 is a
+  blocking issue for agentic K3 on ik rather than a caveat. Fix or verify it
+  before trusting K3 in an agent loop.
 
 ---
 
@@ -210,6 +252,7 @@ goalposts. The fixtures are a contract.
 
 Suggested order of work, dependency-first:
 
+0. `LLAMA_MAX_EXPERTS` 512 → ≥896, and audit what assumed 512
 1. SiTU — self-contained, needed by every expert, easiest to validate
 2. MLA output gate — three lines
 3. AttnRes — check whether ik's DS4 `HC_PRE` lands first
@@ -217,6 +260,10 @@ Suggested order of work, dependency-first:
 5. latent MoE — new code path
 6. `LLM_ARCH_KIMI_K3` plumbing + graph builder + conversion
 
-Do not start before a trusted quant exists to measure against. Until then the
-port cannot be validated end-to-end, and the quality question that decides
-whether any of this is worth running stays open.
+A trusted quant now exists, so the port *can* be validated end-to-end — that
+precondition is met. What is still open is whether it is worth running at all:
+`UD-Q2_K_XL` is ~2.5 bpw over weights Moonshot already QAT'd at 4.25 bpw, and
+whether that beats the GLM-5.2 Q4 on this box is unmeasured. The cheap way to
+find out, before committing to an ik port, is to build unsloth's fork and
+measure — one throwaway build against 861 GB of already-downloaded weights
+answers the question that decides everything else.
