@@ -4,17 +4,17 @@ Groundwork for adding the `kimi-k3` architecture to ik_llama.cpp. Nothing here
 runs K3 — this is the reference material and the numerical harness you check an
 implementation against, assembled while the ecosystem catches up.
 
-Status as of 2026-07-29:
+Status as of 2026-08-02:
 
 | | |
 |---|---|
-| trusted GGUF quant | **available** — unsloth `UD-Q2_K_XL`, 19 shards, 861.3 GB, fits |
-| ik_llama.cpp | no `kimi-k3` arch, and `LLAMA_MAX_EXPERTS` is 512 vs K3's 896 |
+| trusted GGUF quant | **downloaded** — unsloth `UD-Q2_K_XL`, 19 shards, 861.3 GB, at `/models/Kimi-K3-UD-Q2_K_XL` |
+| a runnable engine | **yes, unsloth's fork** — [unslothai/llama.cpp#48](https://github.com/unslothai/llama.cpp/pull/48), branch `kimi-k3-fullsize-vision`; see "the cheap experiment" below |
+| ik_llama.cpp (the fast path) | no `kimi-k3` arch, and `LLAMA_MAX_EXPERTS` is 512 vs K3's 896 |
 | mainline llama.cpp | PR [#26185](https://github.com/ggml-org/llama.cpp/pull/26185) open and conflicted; the expert-cap PR [#26192](https://github.com/ggml-org/llama.cpp/pull/26192) was **closed unmerged** |
-| unsloth's own answer | their fork, [unslothai/llama.cpp#48](https://github.com/unslothai/llama.cpp/pull/48) |
 
-The quant gate is satisfied, so the engine is now the only thing between us and
-running K3. Track with `glm-model upstream`.
+So K3 can now be *run* (unsloth's fork, mainline-speed). The open work is only
+whether it is worth running well enough to justify the ik port — measure first.
 
 ## Step 0: the expert-count cap
 
@@ -263,7 +263,46 @@ Suggested order of work, dependency-first:
 A trusted quant now exists, so the port *can* be validated end-to-end — that
 precondition is met. What is still open is whether it is worth running at all:
 `UD-Q2_K_XL` is ~2.5 bpw over weights Moonshot already QAT'd at 4.25 bpw, and
-whether that beats the GLM-5.2 Q4 on this box is unmeasured. The cheap way to
-find out, before committing to an ik port, is to build unsloth's fork and
-measure — one throwaway build against 861 GB of already-downloaded weights
-answers the question that decides everything else.
+whether that beats the GLM-5.2 Q4 on this box is unmeasured.
+
+## The cheap experiment (do this BEFORE any ik port)
+
+`UD-Q2_K_XL` is downloaded (861 GB, `/models/Kimi-K3-UD-Q2_K_XL`, verified). The
+question that decides everything else — is a ~2.5 bpw K3 actually better than the
+GLM-5.2 Q4 already running — is answerable with one throwaway build, no ik work.
+
+unsloth built their GGUFs against their own fork, and its
+[PR #48](https://github.com/unslothai/llama.cpp/pull/48) says the full-size model
+"loads and generates correctly across the four published quants." So:
+
+```bash
+git clone --depth 1 --branch kimi-k3-fullsize-vision \
+    https://github.com/unslothai/llama.cpp ~/llama.cpp-k3
+cd ~/llama.cpp-k3
+cmake -B build -DGGML_NATIVE=ON -DGGML_CUDA=OFF -DLLAMA_CURL=OFF
+cmake --build build --config Release -j "$(nproc)"
+```
+
+That branch is mainline #26185 (K3 text) + two commits of full-size fixes:
+`n_expert_used` read per-layer so the dense prefix and MoE layers need not agree,
+KV cache sized from the actual KDA-layer count instead of all 92 layers, and
+expert tensors kept in source order to avoid a whole-layer-resident repack. It is
+**mainline**, so it lacks ik's fused-MoE kernels — PP will be slower than a
+finished ik port would give. That is fine: this measures *quality and viability*,
+not final speed.
+
+**RAM:** K3 needs ~861 GB mlocked; it cannot coexist with the GLM server's
+~441 GB (1,302 > 1,133). Stop `glm-server` first, run K3 on a **different port**
+(not 8080) from the dedicated build dir, and restart `glm-server` after. Nothing
+about this touches `~/ik_llama.cpp` or the registry.
+
+What to measure once it runs: does it load at all; first-token latency and TG
+tok/s (mainline CPU, so expect below ik's GLM numbers); and — the real
+question — answer quality on a handful of prompts held against GLM-5.2 Q4. Only
+if K3 clearly wins is the multi-week ik port worth starting. If it is a wash or
+worse, the ~2.5 bpw double-quantisation hypothesis was right and the port is not
+worth it.
+
+Note this fork also carries the `LLAMA_MAX_EXPERTS` fix (step 0) and everything
+else — so if you only ever want to *run* K3, not run it fast, this build is the
+whole answer and the ik port below is optional.
