@@ -12,8 +12,8 @@
 # `use` needs root - it writes /etc/default/glm-server and restarts the unit.
 # Everything else, download included, runs as your normal user.
 #
-# Only one variant is resident at a time: each is 340-590 GB and --mlock pins
-# it, so switching is a full reload of several minutes, not a hot swap.
+# Only one variant is resident at a time: they are 155-800 GB and --mlock pins
+# them, so switching is a full reload of minutes, not a hot swap.
 set -uo pipefail
 
 CONF="${GLM_VARIANTS_CONF:-/etc/glm-variants.conf}"
@@ -31,21 +31,22 @@ die() { echo "glm-model: $*" >&2; exit 1; }
 
 # --- registry ---------------------------------------------------------------
 
-# Emit the 8 trimmed fields of one variant, re-joined with '|', or nothing.
+# Emit the 9 trimmed fields of one variant, re-joined with '|', or nothing.
 #
 # The separator must NOT be whitespace. `subdir` is legitimately empty for a
-# publisher who puts quants at the repo root, and bash `read` collapses runs of
-# whitespace, so a space-joined row would silently shift every later field one
-# to the left - prefix landing in subdir, shards in prefix, and so on. '|' is
-# not IFS whitespace, so empty fields survive; the format already forbids '|'
-# inside a field, which is what makes it safe to reuse here.
+# publisher who puts quants at the repo root, `engine` is for anything served by
+# the default build, and bash `read` collapses runs of whitespace, so a
+# space-joined row would silently shift every later field one to the left -
+# prefix landing in subdir, shards in prefix, and so on. '|' is not IFS
+# whitespace, so empty fields survive; the format already forbids '|' inside a
+# field, which is what makes it safe to reuse here.
 variant_row() {
     awk -F'|' -v want="$1" 'BEGIN { OFS = "|" }
         /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
         { gsub(/^[ \t]+|[ \t]+$/, "", $1)
           if ($1 != want) next
-          for (i = 2; i <= 8; i++) gsub(/^[ \t]+|[ \t]+$/, "", $i)
-          print $1, $2, $3, $4, $5, $6, $7, $8
+          for (i = 2; i <= 9; i++) gsub(/^[ \t]+|[ \t]+$/, "", $i)
+          print $1, $2, $3, $4, $5, $6, $7, $8, $9
           exit }
     ' "$CONF"
 }
@@ -60,9 +61,9 @@ load_variant() {
     local row; row=$(variant_row "$1")
     [ -n "$row" ] || die "unknown variant '$1'. Known: $(variant_names | tr '\n' ' ')"
     # V_OPTS is only consumed by serve-glm.sh, but it must still be named here:
-    # drop it and V_DIR would absorb the rest of the line.
+    # drop it and V_ENGINE would absorb the rest of the line.
     # shellcheck disable=SC2034
-    IFS='|' read -r V_NAME V_REPO V_SUBDIR V_PREFIX V_SHARDS V_ALIAS V_DIR V_OPTS <<<"$row"
+    IFS='|' read -r V_NAME V_REPO V_SUBDIR V_PREFIX V_SHARDS V_ALIAS V_DIR V_ENGINE V_OPTS <<<"$row"
 }
 
 # A registry shard count of `?` means "whatever the publisher shipped" - used to
@@ -81,19 +82,39 @@ effective_shards() {
     # one we see. index() rather than a regex so a prefix containing "." (every
     # Kimi one does) is matched literally; sub() rather than gawk's 3-arg
     # match(), which mawk - the default awk on Ubuntu - does not implement.
-    n=$(remote_sizes | awk -v p="$V_PREFIX" '
+    local sizes; sizes=$(remote_sizes)
+    n=$(echo "$sizes" | awk -v p="$V_PREFIX" '
         index($1, p "-") == 1 && $1 ~ /-of-[0-9]+\.gguf$/ {
             s = $1; sub(/^.*-of-/, "", s); sub(/\.gguf$/, "", s)
             print s + 0; exit }')
+    # Nothing sharded upstream, but the bare <prefix>.gguf is there: an
+    # unsharded publisher (see shard_names). That is 1 file, not "unknown".
+    [ -z "$n" ] && echo "$sizes" | awk -v f="$V_PREFIX.gguf" '$1 == f {exit 0} END {exit 1}' && n=1
     [ -n "$n" ] && [ "$n" -gt 0 ] 2>/dev/null || return 1
     mkdir -p "$V_DIR" 2>/dev/null && echo "$n" > "$cache" 2>/dev/null
     echo "$n"
 }
 
+# The filenames a variant is expected to consist of, one per line.
+#
+#   shards >= 2   <prefix>-000NN-of-000MM.gguf for NN in 1..MM   (the common case)
+#   shards == 1   a single <prefix>.gguf with no suffix at all
+#
+# The second form is not hypothetical: ggml-org and antirez both publish
+# DeepSeek-V4-Flash as ONE ~155 GB file. Publishers only shard when they must,
+# and a 155 GB model is small enough that several do not bother. A model
+# genuinely split into exactly one piece (-00001-of-00001) does not occur in
+# practice; if one ever did, serve-glm.sh's glob would still find it and only
+# `verify` would need the row corrected.
+#
 # Trailing newline matters: this feeds `xargs -I{}`, which splits on lines.
 # Without it all shard names arrive as a single concatenated argument and every
 # request 404s against a nonsense URL.
-shard_name() { printf '%s-%05d-of-%05d.gguf\n' "$V_PREFIX" "$1" "$2"; }
+shard_names() {
+    local n="$1" i
+    if [ "$n" = 1 ]; then printf '%s.gguf\n' "$V_PREFIX"; return 0; fi
+    for i in $(seq 1 "$n"); do printf '%s-%05d-of-%05d.gguf\n' "$V_PREFIX" "$i" "$n"; done
+}
 
 active_variant() {
     [ -r "$STATE" ] && sed -n 's/^GLM_VARIANT=//p' "$STATE" | tail -1 | tr -d '"'"'"' \n'
@@ -106,9 +127,12 @@ complete_marker() { echo "$V_DIR/.complete"; }
 # Sum by glob rather than by enumerating 1..N: the shard count may be `?` until
 # the publisher ships, and this must work offline. A stray or missing file
 # changes the total, which is exactly what the .complete comparison wants.
+#
+# Both naming forms are globbed. They cannot overlap - a name either carries the
+# -000NN-of-000MM suffix or it does not - so nothing is double-counted.
 on_disk_bytes() {
     local total=0 sz f
-    for f in "$V_DIR/$V_PREFIX"-*-of-*.gguf; do
+    for f in "$V_DIR/$V_PREFIX"-*-of-*.gguf "$V_DIR/$V_PREFIX.gguf"; do
         [ -f "$f" ] || continue
         sz=$(stat -c %s "$f" 2>/dev/null || echo 0)
         total=$((total + sz))
@@ -154,7 +178,10 @@ except Exception:
 
 cmd_list() {
     local act; act=$(active_variant)
-    printf '%-16s %-10s %-12s %-24s %s\n' VARIANT STATE SIZE ALIAS REPO
+    # ENGINE is worth a column: variants no longer all share one binary, and
+    # pointing a variant at a build that cannot serve its architecture is a
+    # crash-loop, not a warning.
+    printf '%-16s %-10s %-12s %-10s %-24s %s\n' VARIANT STATE SIZE ENGINE ALIAS REPO
     local name
     for name in $(variant_names); do
         load_variant "$name"
@@ -177,7 +204,8 @@ cmd_list() {
             size="-"
         fi
         [ "$name" = "$act" ] && state="$state *live"
-        printf '%-16s %-10s %-12s %-24s %s\n' "$V_NAME" "$state" "${size:--}" "$V_ALIAS" "$V_REPO"
+        printf '%-16s %-10s %-12s %-10s %-24s %s\n' \
+            "$V_NAME" "$state" "${size:--}" "${V_ENGINE:-build}" "$V_ALIAS" "$V_REPO"
     done
     echo
     echo "* = selected in $STATE (see 'glm-model status' for whether it is actually serving)"
@@ -190,6 +218,7 @@ cmd_status() {
 
     echo "selected variant : $V_NAME  ($V_ALIAS)"
     echo "model directory  : $V_DIR"
+    echo "engine           : ${V_ENGINE:-build}"
     echo "service          : $(systemctl is-active "$SERVICE" 2>/dev/null)"
 
     local health
@@ -217,8 +246,8 @@ cmd_download() {
     load_variant "$1"
     mkdir -p "$V_DIR" || die "cannot create $V_DIR"
 
-    local n; n=$(effective_shards) || die "$V_NAME: $V_REPO/${V_SUBDIR:-.} publishes no
-shards matching '$V_PREFIX-000NN-of-000MM.gguf' yet.
+    local n; n=$(effective_shards) || die "$V_NAME: $V_REPO/${V_SUBDIR:-.} publishes nothing
+matching '$V_PREFIX-000NN-of-000MM.gguf' or '$V_PREFIX.gguf' yet.
 
 This variant is pre-staged for a quant that has not been released, or its
 subdir/prefix in $CONF do not match what the publisher actually named the
@@ -231,8 +260,7 @@ files. Run 'glm-model upstream $V_NAME' to see what is really in the repo."
 
     # IPv4 forced: HF over IPv6 stalls on some networks. Resumable and retrying
     # hard, because a 455 GB transfer will hit transient failures.
-    local i
-    for i in $(seq 1 "$n"); do shard_name "$i" "$n"; done \
+    shard_names "$n" \
     | xargs -P4 -I{} curl -4 -fL -C - --retry 1000 --retry-delay 10 --retry-all-errors \
         --progress-bar -o "$V_DIR/{}" \
         "https://huggingface.co/$V_REPO/resolve/main/${V_SUBDIR:+$V_SUBDIR/}{}"
@@ -250,13 +278,15 @@ cmd_verify() {
     fi
 
     local n; n=$(effective_shards) \
-        || die "$V_NAME: cannot determine the shard count - nothing matching
-'$V_PREFIX-000NN-of-000MM.gguf' is published in $V_REPO/${V_SUBDIR:-.}.
+        || die "$V_NAME: cannot determine the shard count - neither
+'$V_PREFIX-000NN-of-000MM.gguf' nor '$V_PREFIX.gguf' is published in
+$V_REPO/${V_SUBDIR:-.}.
 Run 'glm-model upstream $V_NAME' to see what the repo actually contains."
 
-    local i name local_size want bad=0
-    for i in $(seq 1 "$n"); do
-        name=$(shard_name "$i" "$n")
+    # Process substitution, not a pipe: a pipe runs the loop in a subshell and
+    # `bad=1` would be discarded, so an incomplete variant would verify clean.
+    local name local_size want bad=0
+    while read -r name; do
         local_size=$(stat -c %s "$V_DIR/$name" 2>/dev/null || echo 0)
         want=$(echo "$sizes" | awk -v n="$name" '$1 == n {print $2}')
         if [ "$local_size" -eq 0 ]; then
@@ -266,7 +296,7 @@ Run 'glm-model upstream $V_NAME' to see what the repo actually contains."
         else
             printf '  %-52s ok %6.1f GB\n' "$name" "$(echo "$local_size" | awk '{print $1/1e9}')"
         fi
-    done
+    done < <(shard_names "$n")
     if [ "$bad" -ne 0 ]; then
         rm -f "$(complete_marker)"
         echo "INCOMPLETE - re-run 'glm-model download $1' (it resumes)" >&2
@@ -392,7 +422,7 @@ cmd_use() {
 
     systemctl restart "$SERVICE" || die "restart failed"
 
-    echo -n "loading $V_NAME (this takes minutes; ${V_SHARDS} shards, mlocked)"
+    echo -n "loading $V_NAME (this takes minutes; $(du -shc "$V_DIR"/*.gguf 2>/dev/null | tail -1 | cut -f1) mlocked, engine ${V_ENGINE:-build})"
     local waited=0
     while [ "$waited" -lt "$READY_TIMEOUT" ]; do
         if curl -sf --max-time 5 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then

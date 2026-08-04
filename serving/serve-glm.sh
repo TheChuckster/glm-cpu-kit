@@ -1,6 +1,6 @@
 #!/bin/bash
-# CPU inference server - ik_llama.cpp fused-MoE, NUMA-aware. Serves GLM-5.2 or
-# Kimi K2.x depending on the selected variant.
+# CPU inference server - ik_llama.cpp fused-MoE, NUMA-aware. Serves GLM-5.2,
+# Kimi K2.x or DeepSeek-V4-Flash depending on the selected variant.
 # See ../GLM-5.2-CPU-inference-runbook.md  §3 (NUMA), §5 (build), §6 (this script).
 #
 # WHICH model is served comes from GLM_VARIANT, resolved against the registry in
@@ -9,16 +9,25 @@
 # `base`, so an unset or missing state file serves the model the box shipped
 # with rather than failing to start.
 #
-# The registry also supplies per-model serving flags (field 8, `opts`), because
+# The registry also supplies per-model serving flags (field 9, `opts`), because
 # the right flags are not the same across model families - GLM turns thinking
-# off with a chat-template kwarg, Kimi with --reasoning off. Those are appended
-# LAST, so a variant can override any default set below.
+# off with a chat-template kwarg, Kimi with --reasoning off, DeepSeek-V4 with
+# --reasoning-format deepseek. Those are appended LAST, so a variant can
+# override any default set below.
+#
+# It also supplies which ENGINE serves a variant (field 8). Architectures land
+# in ik_llama.cpp continuously, so the commit that can serve a new model is
+# usually newer than the one already serving the old ones well. Field 8 lets a
+# new arch be brought up in its own build tree without repointing the engine
+# under a model that currently works.
 #
 # Env overrides:
 #   GLM_VARIANT variant handle from the registry  (default base)
 #   VARIANTS    path to the registry              (default /etc/glm-variants.conf)
 #   MODEL_DIR   bypass the registry entirely and serve this dir (escape hatch)
-#   IK_LLAMA    path to ik llama-server binary   (default ~/ik_llama.cpp/build/bin/llama-server)
+#   IK_ROOT     ik_llama.cpp checkout             (default ~/ik_llama.cpp)
+#   IK_LLAMA    full path to a llama-server binary; overrides the registry's
+#               engine field entirely (escape hatch for a one-off engine)
 #   THREADS     = PHYSICAL core count            (default nproc; on an SMT part nproc is
 #               double the physical count and too high - set it explicitly. Sweep DOWN
 #               for TG, see §7)
@@ -31,56 +40,83 @@ set -e
 
 VARIANTS="${VARIANTS:-/etc/glm-variants.conf}"
 GLM_VARIANT="${GLM_VARIANT:-base}"
-IK="${IK_LLAMA:-$HOME/ik_llama.cpp/build/bin/llama-server}"
+IK_ROOT="${IK_ROOT:-$HOME/ik_llama.cpp}"
 THREADS="${THREADS:-$(nproc)}"
 CTX="${CTX:-65536}"
 NUMA_POLICY="${NUMA_POLICY:-}"
 ALIAS="glm-5.2"
+ENGINE=""
 
 if [ -n "${MODEL_DIR:-}" ]; then
     # Explicit directory wins, for one-off experiments outside the registry.
     MODEL=$(ls "$MODEL_DIR"/*-00001-of-*.gguf 2>/dev/null | head -1)
+    [ -n "$MODEL" ] || MODEL=$(ls "$MODEL_DIR"/*.gguf 2>/dev/null | head -1)
     [ -n "$MODEL" ] || { echo "model not found in $MODEL_DIR"; exit 1; }
 else
     [ -r "$VARIANTS" ] || { echo "cannot read $VARIANTS (set MODEL_DIR to bypass)"; exit 1; }
     # Re-joined with '|', not a space: fields are legitimately empty (subdir is,
-    # for a repo-root quant) and `read` collapses runs of whitespace, which
-    # would shift every later field one to the left. See glm-model's
-    # variant_row for the same reasoning. Field 8 (opts) keeps its inner spaces.
+    # for a repo-root quant; engine is, for the default build) and `read`
+    # collapses runs of whitespace, which would shift every later field one to
+    # the left. See glm-model's variant_row for the same reasoning. Field 9
+    # (opts) keeps its inner spaces.
     row=$(awk -F'|' -v want="$GLM_VARIANT" 'BEGIN { OFS = "|" }
         /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
         { gsub(/^[ \t]+|[ \t]+$/, "", $1)
           if ($1 != want) next
-          for (i = 2; i <= 8; i++) gsub(/^[ \t]+|[ \t]+$/, "", $i)
-          print $4, $5, $6, $7, $8
+          for (i = 2; i <= 9; i++) gsub(/^[ \t]+|[ \t]+$/, "", $i)
+          print $4, $5, $6, $7, $8, $9
           exit }' "$VARIANTS")
     [ -n "$row" ] || { echo "unknown GLM_VARIANT '$GLM_VARIANT' - not in $VARIANTS"; exit 1; }
-    # SHARDS is unused (the first shard is found by glob below) but must still
+    # SHARDS is unused (the model file is found by glob below) but must still
     # be named: drop it and PREFIX would absorb the rest of the line.
     # shellcheck disable=SC2034
-    IFS='|' read -r PREFIX SHARDS ALIAS DIR VARIANT_OPTS <<<"$row"
+    IFS='|' read -r PREFIX SHARDS ALIAS DIR ENGINE VARIANT_OPTS <<<"$row"
     # Glob rather than reconstruct the -000NN-of-000MM suffix: the shard count
     # may be `?` (resolved from HuggingFace at download time, runbook), and a
     # publisher re-sharding a repo should not silently break serving.
     MODEL=$(ls "$DIR/$PREFIX"-00001-of-*.gguf 2>/dev/null | head -1)
+    # Not every publisher shards. ggml-org and antirez ship DeepSeek-V4-Flash as
+    # ONE ~155 GB file with no -000NN-of-000MM suffix at all, so fall back to the
+    # bare <prefix>.gguf. Sharded first, because only one of the two can match.
+    [ -n "$MODEL" ] || { [ -f "$DIR/$PREFIX.gguf" ] && MODEL="$DIR/$PREFIX.gguf"; }
     [ -n "$MODEL" ] && [ -s "$MODEL" ] || {
-        echo "variant '$GLM_VARIANT' selected but its first shard is missing in $DIR"
+        echo "variant '$GLM_VARIANT' selected but its weights are missing in $DIR"
         echo "run: glm-model download $GLM_VARIANT"
         exit 1
     }
 fi
 
+# ─── engine ───────────────────────────────────────────────────────────────────
+# Field 8 of the registry names the build tree under $IK_ROOT that serves this
+# variant (empty = `build`, the default), or an absolute path to a llama-server
+# binary for an engine that lives somewhere else entirely. IK_LLAMA overrides
+# both.
+#
+# This exists because bringing up a new architecture means moving to a much
+# newer ik commit, and that commit is not automatically the one you want under
+# the model that is already serving well. Separate build trees let a new arch be
+# proven before anything else is repointed at it.
+if [ -n "${IK_LLAMA:-}" ]; then
+    IK="$IK_LLAMA"
+elif [ -z "$ENGINE" ]; then
+    IK="$IK_ROOT/build/bin/llama-server"
+elif [ "${ENGINE#/}" != "$ENGINE" ]; then
+    IK="$ENGINE"
+else
+    IK="$IK_ROOT/$ENGINE/bin/llama-server"
+fi
+
 # ─── per-variant serving flags ────────────────────────────────────────────────
-# Field 8 of the registry. Expanded as shell words so a JSON argument keeps its
+# Field 9 of the registry. Expanded as shell words so a JSON argument keeps its
 # embedded space; appended LAST below so a variant can override any default.
 # The registry is root-owned and read by a root-installed unit, so this is the
 # same trust boundary as the unit file.
 VARIANT_ARGS=()
 [ -n "${VARIANT_OPTS:-}" ] && eval "VARIANT_ARGS=($VARIANT_OPTS)"
 
-[ -x "$IK" ]    || { echo "ik llama-server not found at $IK (build it, runbook §5)"; exit 1; }
+[ -x "$IK" ]    || { echo "llama-server not found at $IK (engine='${ENGINE:-build}', build it - runbook §5)"; exit 1; }
 [ -f "$HOME/.glm-api-key" ] || { echo "no ~/.glm-api-key - run gen-api-key.sh"; exit 1; }
-echo "serving variant '$GLM_VARIANT' as '$ALIAS'  (threads=$THREADS ctx=$CTX)"
+echo "serving variant '$GLM_VARIANT' as '$ALIAS'  (threads=$THREADS ctx=$CTX engine=${ENGINE:-build})"
 echo "model: $MODEL"
 
 # ─── NUMA ──────────────────────────────────────────────────────────────────────
