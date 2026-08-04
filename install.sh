@@ -29,8 +29,11 @@ if [ ! -x "$HOME/ik_llama.cpp/build/bin/llama-server" ]; then
 else
   echo "  already built"
 fi
-VNNI=$(objdump -d "$HOME/ik_llama.cpp/build/bin/libggml-cpu.so" 2>/dev/null | grep -c vpdpbusd || true)
-echo "  VNNI (vpdpbusd) instructions in binary: ${VNNI:-0}  (must be > 0)"
+# ggml lives at ggml/src/libggml.so in an ik build tree - NOT bin/libggml-cpu.so,
+# which is mainline llama.cpp's layout. Checking the mainline path here silently
+# reported 0 and made a correctly-built engine look like it had no VNNI at all.
+VNNI=$(objdump -d "$HOME/ik_llama.cpp/build/ggml/src/libggml.so" 2>/dev/null | grep -c vpdpbusd || true)
+echo "  VNNI (vpdpbusd) instructions in ggml: ${VNNI:-0}  (must be > 0)"
 
 say "3/7  api key"
 bash "$KITDIR/serving/gen-api-key.sh"

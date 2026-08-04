@@ -132,15 +132,25 @@ cmake --build build --config Release -j "$(nproc)"
 ```
 Verify VNNI actually got compiled in (should be non-zero):
 ```bash
-objdump -d build/bin/libggml-cpu.so | grep -c vpdpbusd   # AVX-512 VNNI int8 dot-product
+objdump -d build/ggml/src/libggml.so | grep -c vpdpbusd   # AVX-512 VNNI int8 dot-product
 ```
-> `GGML_AVX512_VNNI=OFF` in CMakeCache is a red herring: `GGML_NATIVE=ON` already enables it via
-> the compiler. The `objdump` count is the source of truth.
+> The path matters. ggml lives at **`ggml/src/libggml.so`** in an ik build tree; `bin/libggml-cpu.so`
+> is mainline llama.cpp's layout, and checking that in an ik tree reports 0 for a perfectly good
+> build. This runbook and `install.sh` both had it wrong until DS4 forced a rebuild.
+>
+> `GGML_AVX512_VNNI=OFF` in CMakeCache is a separate red herring: `GGML_NATIVE=ON` already enables
+> it via the compiler. The `objdump` count is the source of truth.
 
 Fused MoE is on by default (`--no-fmoe` disables it). We tested `--run-time-repack` (RTR): only
 about 2% gain and it forces `--no-mmap`, so skip RTR. We tested MTP speculative decoding and it
 made TG 2x slower on MoE (verifying drafts pulls in many experts' weights), so don't use
 spec-decode on MoE.
+
+> Both of those conclusions were reached on a **440 GB** model, and both are worth re-measuring per
+> model rather than inheriting. RTR was rejected largely because forcing `--no-mmap` on 440 GB was
+> unaffordable — at DeepSeek-V4-Flash's 155 GB it is not, and ik has since added `MXFP4_R8`
+> ([#2196](https://github.com/ikawrakow/ik_llama.cpp/pull/2196)), a repacked MXFP4 CPU kernel that
+> did not exist when we tested. See §6b.
 
 ---
 
@@ -174,7 +184,10 @@ by the registry, and refuses to mark a variant ready until every shard's size ma
 ## 6a. Other models: Kimi, and how to judge whether one fits
 
 The registry (`serving/glm-variants.conf`) is not GLM-only. Anything ik_llama.cpp can load and that
-fits in RAM can be a variant; field 8 (`opts`) carries the flags that model needs.
+fits in RAM can be a variant; field 9 (`opts`) carries the flags that model needs, and field 8
+(`engine`) carries *which build of ik* serves it (see §6b — new architectures need newer engines
+than the one already working, and repointing the global engine to gain one model re-rolls the dice
+on every other model on the box).
 
 **Registered and runnable today:**
 
@@ -356,6 +369,109 @@ nothing else is possible; on this box capacity is the one thing we have, and the
 to make the model fit and pin it. The general rule, worth remembering beyond K3: on this hardware,
 **always prefer the largest quant that fits in RAM over streaming a better one from disk.** The gap
 between memory bandwidth and NVMe is two orders of magnitude, and MoE sparsity does not close it.
+
+---
+
+## 6b. DeepSeek-V4-Flash: the first model that is *small* here
+
+Everything above is written around models that barely fit. DeepSeek-V4-Flash-0731 does not have
+that shape, and it is worth understanding why, because the reasoning generalises to whatever ships
+next.
+
+| | GLM-5.2 Q4 | Kimi K2.7 Q4 | **DS4-Flash MXFP4** |
+|---|---|---|---|
+| total params | 753B | ~1T | **284B** |
+| active params | ~40B | ~32B | **~13B** |
+| on disk | 440 GB | 584 GB | **155 GB** |
+| bytes read per token | ~23 GB | ~19 GB | **~7–8 GB** |
+
+Three things stack up in its favour on a bandwidth-bound box:
+
+1. **Only ~13B active.** 43 layers, 256 routed experts, 6 active + 1 shared, `moe_intermediate_size`
+   2048. TG ≈ bandwidth / bytes-per-token (§0), so a third of GLM's read per token is roughly three
+   times the tokens per second from the same memory.
+2. **The experts are natively fp4.** `expert_dtype: "fp4"` in the config — DeepSeek trained and
+   shipped them at 4 bits. A straight MXFP4 conversion is therefore *lossless*, not a quantisation.
+3. **DSA keeps long context cheap.** `index_topk 512`, `sliding_window 128`: attention is sparse by
+   construction, so the O(n²) prompt-processing wall that dominates §10's "context is everything"
+   advice is much further out.
+
+### Choosing the quant: the ladder is the wrong axis
+
+Because the source is already fp4, the usual "how many bits can I afford" ladder does not apply:
+
+- **Above fp4 recovers nothing.** unsloth's `UD-Q8_K_XL` is 161.9 GB against `UD-Q4_K_XL`'s 155.1.
+  Seven extra gigabytes buy precision the weights never had.
+- **Below fp4 destroys what training put there.** The IQ1/IQ2 tiers (82–97 GB) exist, and on a box
+  with 1.1 TB of RAM there is no reason to touch them.
+
+What *is* worth choosing is the treatment of the ~5% of tensors that are **not** fp4 experts —
+attention projections, the hyper-connection layers, the compressor, and the DSA indexer. Hence the
+three registered rows are a *treatment* comparison, not a size ladder:
+
+| variant | publisher | size | what it is |
+|---|---|---|---|
+| `ds4-flash` | ggml-org | 155.0 GB | straight MXFP4 conversion, one unsharded file. The reference. |
+| `ds4-flash-mix` | antirez | 156.0 GB | MXFP4 experts, F16 hyper-connection/compressor/indexer, Q8 attention/shared/output, imatrix |
+| `ds4-flash-unsloth` | unsloth | 155.1 GB | the control — see the garbling note below |
+
+### Engine: this is the part that will bite you
+
+`deepseek4` did not exist in ik_llama.cpp before **2026-07-22**, and was still being fixed daily
+through 08-03. Two of those late fixes are CPU GEMM *correctness*, which matters more here than
+anywhere else because this box has no GPU:
+
+- [#2224](https://github.com/ikawrakow/ik_llama.cpp/pull/2224) — Fix IQ3_XXS CPU GEMM (08-01)
+- [#2233](https://github.com/ikawrakow/ik_llama.cpp/pull/2233) — Fix IQ4_NL_R4 GEMM on CPUs with
+  FANCY_SIMD, i.e. exactly this AVX-512 part (08-02)
+
+Those are the fixes behind [#2214](https://github.com/ikawrakow/ik_llama.cpp/issues/2214) /
+[#2218](https://github.com/ikawrakow/ik_llama.cpp/issues/2218), where DS4 loaded happily and then
+emitted `"dekametersapl dekametersapl"` — perplexity looked normal, so it was a broken quantisation
+kernel, not a broken model. ikawrakow's interim workarounds were `-rtr` and `-ctk q8_0`, and
+`serve-glm.sh` already passes the latter.
+
+**Do not turn flash attention off for DS4.** It was the first thing the #2218 reporter tried and
+ikawrakow asked twice for it to be left on.
+
+This is why the registry gained an `engine` field. Bringing up DS4 means moving the engine forward
+by three weeks of commits; doing that globally would have silently re-rolled GLM and Kimi too. So
+DS4 rows point at `build-ds4` while everything else stays on `build`:
+
+```bash
+cd ~/ik_llama.cpp && git fetch && git checkout 6038941
+cmake -B build-ds4 -DGGML_NATIVE=ON -DGGML_CUDA=OFF -DLLAMA_CURL=OFF
+cmake --build build-ds4 --config Release -j 60
+objdump -d build-ds4/ggml/src/libggml.so | grep -c vpdpbusd   # 13271 here
+```
+
+Note the objdump path: **`ggml/src/libggml.so`**, not `bin/libggml-cpu.so`. The latter is mainline
+llama.cpp's layout; checking it in an ik tree silently reports 0 and makes a correctly-built engine
+look like it has no VNNI at all. (§5 and `install.sh` had this wrong.)
+
+### Not every publisher shards
+
+ggml-org and antirez both ship DS4 as **one ~155 GB file** with no `-000NN-of-000MM` suffix.
+Publishers shard when they must, and 155 GB is small enough that several do not bother. The
+registry's `shards` field takes `1` to mean exactly that, and `glm-model` and `serve-glm.sh` handle
+both layouts.
+
+### Thinking, tool calls, and what is still open
+
+DS4 **always reasons**. There is no `enable_thinking` kwarg (§6a), so GLM's flag is a silent no-op
+and Kimi's `--reasoning off` is not the lever either. Two options, and they are not equivalent:
+
+- `--reasoning-format deepseek` — routes thoughts to `message.reasoning_content`. Note ik's own help
+  text: *"except in streaming mode, which behaves as `none`"*, and harnesses stream.
+- `--reasoning-budget 0` — ends thinking immediately. The closest equivalent to §10's thinking-off
+  requirement, but this model is *trained* to reason, so it is a quality tradeoff rather than a free
+  win. Measure it (`/models/.ds4-run/validate-ds4-flash-nothink/`) rather than assuming.
+
+**Still open at pin 6038941:** [#2242](https://github.com/ikawrakow/ik_llama.cpp/pull/2242) fixes
+DSV4 tool-call wiring. Without it ik falls back to the autoparser, which forces `string="true"` on
+every argument — that diverges from what the template renders, so it **breaks prompt caching** and
+loses parallel tool calls. Verify tool calling before pointing a coding harness at DS4; the
+validation script checks for exactly this signature.
 
 ---
 

@@ -22,7 +22,7 @@ interleaved across both sockets.
 | `gen-api-key.sh` | create `~/.glm-api-key` | 6 |
 | `serve-glm.sh` | the server launcher (NUMA-aware, thinking-off, anti-repetition) | 6 |
 | `glm-server.service` | systemd unit (survives reboot, `LimitMEMLOCK=infinity`) | 7 |
-| `glm-variants.conf` | registry of servable models (GLM + Kimi) and their per-model flags | 6a |
+| `glm-variants.conf` | registry of servable models (GLM, Kimi, DeepSeek-V4) with per-model engine + flags | 6a, 6b |
 | `glm-model` | list / download / switch / track which model is served | 6a |
 
 **Switching models.** `glm-model` picks which registered variant
@@ -36,15 +36,21 @@ glm-model status                   # what is ACTUALLY loaded right now
 glm-model upstream                 # what HF publishes now, and does it fit this box
 ```
 
-Only one variant is resident at a time — each is 340–590 GB and `--mlock` pins
-it, so a switch is a full reload of several minutes, not a hot swap.
+Only one variant is resident at a time — they are 155–800 GB and `--mlock` pins
+them, so a switch is a full reload of minutes, not a hot swap.
 
 **Registered today:** `base` (GLM-5.2, 440 GB), two GLM abliterated variants,
-and two Kimi at genuine 4-bit — `kimi-k2.7-code` (unsloth UD-Q4_K_XL, 584 GB)
-and `kimi-k2.6` (ubergarm Q4_X, 4.549 bpw, built to match Moonshot's official
-int4). Kimi K2.x is ~1T total but only ~32B active vs GLM's ~40B, and token
-generation is memory-bandwidth-bound, so **Kimi generates faster here** for
-~145 GB more RAM.
+two Kimi at genuine 4-bit — `kimi-k2.7-code` (unsloth UD-Q4_K_XL, 584 GB) and
+`kimi-k2.6` (ubergarm Q4_X, 4.549 bpw, built to match Moonshot's official int4)
+— and three **DeepSeek-V4-Flash-0731** quants at ~155 GB. Kimi K2.x is ~1T total
+but only ~32B active vs GLM's ~40B, and token generation is
+memory-bandwidth-bound, so **Kimi generates faster here** for ~145 GB more RAM.
+
+**DeepSeek-V4-Flash is the fast one.** 284B total but only ~13B active, with
+experts shipped natively at fp4, so a lossless MXFP4 conversion is ~155 GB —
+about a third of GLM's footprint and roughly a third of its bytes-per-token.
+Runbook §6b covers why the usual quant ladder does not apply to it, why it needs
+its own engine build, and what is still open upstream for tool calling.
 
 `kimi-k3` / `kimi-k3-ik` are registered but show as `pending`: no trusted quant
 is published yet, and ik_llama.cpp has no `kimi-k3` architecture. K3 also can't
@@ -54,11 +60,22 @@ requantisation down to ~2–3 bpw and will likely land *below* GLM-5.2 Q4. Run
 `glm-model upstream` to see whether unsloth/ubergarm have shipped. Runbook §6a
 has the full analysis, including what an ik port would take.
 
-**Per-model flags.** Field 8 (`opts`) of a registry row is appended last to the
+**Per-model flags.** Field 9 (`opts`) of a registry row is appended last to the
 server command line. It exists because "turn thinking off" is not one flag:
-GLM takes `--chat-template-kwargs '{"enable_thinking": false}'`, while Kimi's
-template has no such variable and needs `--reasoning off`. Passing GLM's flag to
-Kimi fails *silently* — no error, just thinking output that breaks the harness.
+GLM takes `--chat-template-kwargs '{"enable_thinking": false}'`, Kimi's template
+has no such variable and needs `--reasoning off`, and DeepSeek-V4 has neither —
+it always reasons, and takes `--reasoning-format deepseek` (or
+`--reasoning-budget 0`). Passing GLM's flag to Kimi fails *silently* — no error,
+just thinking output that breaks the harness.
+
+**Per-model engine.** Field 8 (`engine`) names the build tree under
+`~/ik_llama.cpp` that serves a variant — empty means `build`, the default.
+Architectures land in ik continuously, so the commit that can serve a new model
+is always much newer than the one already serving the others well; DeepSeek-V4
+needed an engine three weeks newer than the one this box had been running GLM
+on. Repointing the single global engine to gain one model silently re-rolls the
+dice on every other model, so instead a new architecture gets its own build tree
+and nothing else moves until it is proven.
 
 Two abliterated variants are registered and they are **not** equivalent.
 `abliterated` (frz1, Q4_K_M, 455 GB) matches the base model's quant class and
