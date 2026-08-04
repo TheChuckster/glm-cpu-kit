@@ -24,6 +24,7 @@ interleaved across both sockets.
 | `glm-server.service` | systemd unit (survives reboot, `LimitMEMLOCK=infinity`) | 7 |
 | `glm-variants.conf` | registry of servable models (GLM, Kimi, DeepSeek-V4) with per-model engine + flags | 6a, 6b |
 | `glm-model` | list / download / switch / track which model is served | 6a |
+| `validate-model.sh` | prove a new quant loads, stays coherent, keeps reasoning out of `content`, and can call a tool — on a spare port | 6b |
 
 **Switching models.** `glm-model` picks which registered variant
 `glm-server.service` serves:
