@@ -412,8 +412,22 @@ three registered rows are a *treatment* comparison, not a size ladder:
 | variant | publisher | size | what it is |
 |---|---|---|---|
 | `ds4-flash` | ggml-org | 155.0 GB | straight MXFP4 conversion, one unsharded file. The reference. |
-| `ds4-flash-mix` | antirez | 156.0 GB | MXFP4 experts, F16 hyper-connection/compressor/indexer, Q8 attention/shared/output, imatrix |
+| `ds4-flash-mix` | antirez | 156.0 GB | MXFP4 experts; router F16, attention/shared/output Q8_0, indexer + compressor + hyper-connection F16, norms F32 |
 | `ds4-flash-unsloth` | unsloth | 155.1 GB | the control — see the garbling note below |
+
+antirez's reasoning for that asymmetry is worth quoting, because it is the
+general principle for MoE quantisation: the routed experts are most of the
+parameters but each individual expert sees only a fraction of tokens, so
+aggressive quantisation there costs less average quality than the same treatment
+of the router, the projections, or the shared experts — *keep the
+decision-making components precise and crush the experts*.
+
+**But note what that quant is actually built for.** antirez publishes these for
+his own engine ([github.com/antirez/ds4](https://github.com/antirez/ds4)); his
+README says they "should" work in other engines, not that they do. ubergarm is
+the publisher who targets ik specifically, and ubergarm has no DS4 repo yet. So
+`ds4-flash-mix` is a hypothesis to test here, not a known-good alternative —
+which is exactly why the reference row is the one we serve by default.
 
 ### Engine: this is the part that will bite you
 
