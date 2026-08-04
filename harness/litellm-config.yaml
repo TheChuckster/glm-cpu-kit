@@ -76,6 +76,35 @@ model_list:
   # engine can load it - not before, or a client will silently get whichever
   # model actually is resident.
 
+  # DeepSeek-V4-Flash-0731 - same server, same one-resident-model caveat.
+  # 284B total but only ~13B active and natively fp4, so ~155 GB resident and
+  # roughly 2-3x GLM's generation speed (runbook §6b). This is the variant to
+  # reach for when GLM's ~10 tok/s is the thing making a session unpleasant.
+  #
+  # No sampling overrides here on purpose. DeepSeek's generation_config asks for
+  # temp 1.0 / top_p 1.0 and the registry already applies exactly that
+  # server-side, alongside serve-glm.sh's --repeat-penalty 1.1. The GLM rows
+  # above carry frequency/presence penalties because a quantized model decoding
+  # near-greedy for tool calls falls into repetition loops; if DS4 shows that
+  # too, add them here - but measure first rather than inheriting GLM's numbers,
+  # because this model reasons on every turn and over-penalising a reasoning
+  # trace degrades it.
+  - model_name: deepseek-v4-flash-0731
+    litellm_params:
+      model: openai/deepseek-v4-flash-0731
+      api_base: http://SERVER_IP:8080/v1
+      api_key: PASTE_YOUR_GLM_API_KEY_HERE
+      timeout: 21600
+      stream_timeout: 21600
+
+  - model_name: deepseek-v4-flash-0731-mix
+    litellm_params:
+      model: openai/deepseek-v4-flash-0731-mix
+      api_base: http://SERVER_IP:8080/v1
+      api_key: PASTE_YOUR_GLM_API_KEY_HERE
+      timeout: 21600
+      stream_timeout: 21600
+
 litellm_settings:
   drop_params: true
   set_verbose: false

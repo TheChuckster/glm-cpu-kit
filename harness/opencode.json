@@ -6,7 +6,7 @@
   "//critical3": "huge window, balloons the context to 100k+ tokens, and the server grinds for HOURS (O(n^2)",
   "//critical4": "prompt-processing). Server CTX 64k -> set context 60000. If you raise one, raise both.",
   "//variants": "Listing several models here does NOT make them all available at once - only one is",
-  "//variants2": "resident (each is 440-590 GB and mlocked). llama-server serves whatever is loaded no",
+  "//variants2": "resident (they are 155-800 GB and mlocked). llama-server serves whatever is loaded no",
   "//variants3": "matter which name you ask for, so picking an inactive one here silently gets you the",
   "//variants4": "live model instead. Switch with `glm-model use <variant>`, confirm with `glm-model status`.",
   "$schema": "https://opencode.ai/config.json",
@@ -29,6 +29,14 @@
         },
         "kimi-k2.6": {
           "name": "Kimi K2.6 (Q4_X, CPU)",
+          "limit": { "context": 60000, "output": 8000 }
+        },
+        "deepseek-v4-flash-0731": {
+          "name": "DeepSeek-V4-Flash-0731 (MXFP4, CPU)",
+          "limit": { "context": 60000, "output": 8000 }
+        },
+        "deepseek-v4-flash-0731-mix": {
+          "name": "DeepSeek-V4-Flash-0731 (antirez mixed MXFP4/F16, CPU)",
           "limit": { "context": 60000, "output": 8000 }
         }
       }
