@@ -397,6 +397,32 @@ Three things stack up in its favour on a bandwidth-bound box:
    construction, so the O(n²) prompt-processing wall that dominates §10's "context is everything"
    advice is much further out.
 
+### Measured on this box (EPYC 9575F, 64 threads, `ds4-flash`, pin 6038941)
+
+`llama-sweep-bench`, batch/ubatch 2048, `-fa 1`, `-ctk q8_0` — the serving settings:
+
+| context depth | prefill (PP) tok/s | decode (TG) tok/s |
+|---:|---:|---:|
+| 0 | 376.8 | 23.6 |
+| 8,192 | 347.5 | 21.4 |
+| 16,384 | 331.4 | 20.9 |
+| 30,720 | 308.3 | 20.3 |
+
+Compare GLM-5.2 on the same box: PP 110–129 tok/s and TG ~10. **DS4 is ~3x the
+prefill and ~2x the decode, and it barely decays** — 18% PP and 14% TG lost across
+30K of context, where GLM's O(n²) prefill is what makes §10's "keep working context lean"
+advice necessary. A cold 30K-token agentic prompt prefills in ~95 s here.
+
+Threads (8K context): **64 is the right number** — 32 threads gives 280 PP / 22.1 TG,
+48 gives 340 / 23.7, 64 gives 348 / 21.4-23.6. §7's "sweep down for TG because bandwidth
+saturates before cores" does not pay off at only ~13B active; there is enough compute
+demand per byte that the extra cores still earn their keep.
+
+Concurrency: leave `--parallel 1`. Decode is bandwidth-bound, so N streams split
+one budget rather than multiplying it — and ik
+[#2229 "deepseek4: fix multi-stream (parallel sequence) decoding"](https://github.com/ikawrakow/ik_llama.cpp/pull/2229)
+is still **open** at this pin, so `--parallel > 1` is untested territory for DS4.
+
 ### Choosing the quant: the ladder is the wrong axis
 
 Because the source is already fp4, the usual "how many bits can I afford" ladder does not apply:
@@ -426,9 +452,20 @@ decision-making components precise and crush the experts*.
 **But note what that quant is actually built for.** antirez publishes these for
 his own engine ([github.com/antirez/ds4](https://github.com/antirez/ds4)); his
 README says they "should" work in other engines, not that they do. ubergarm is
-the publisher who targets ik specifically, and ubergarm has no DS4 repo yet. So
-`ds4-flash-mix` is a hypothesis to test here, not a known-good alternative —
-which is exactly why the reference row is the one we serve by default.
+the publisher who targets ik specifically, and ubergarm has no DS4 repo yet.
+
+**Tested: it segfaults.** In ik at 6038941 the server dies with SIGSEGV during
+warmup, immediately after `ensure_dsv4_cache_tensors`, reproducibly, at 8K and
+65K context, with the box otherwise idle. The better-on-paper recipe is
+unreachable from this engine. It also ships rope metadata upstream does not
+specify — `rope.scaling.type = yarn`, factor 16 over a 64K base, where
+DeepSeek's own `config.json` declares 1,048,576 positions and no `rope_scaling`
+field at all — so even if it loaded it would be a different positional setup
+from the reference, applied at every position rather than only long ones.
+
+The row stays registered as the record of a tested-and-rejected option. This is
+the general lesson: a quant's recipe tells you what it would be good at, not
+whether your engine can run it.
 
 ### Engine: this is the part that will bite you
 
