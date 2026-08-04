@@ -436,11 +436,13 @@ What *is* worth choosing is the treatment of the ~5% of tensors that are **not**
 attention projections, the hyper-connection layers, the compressor, and the DSA indexer. Hence the
 three registered rows are a *treatment* comparison, not a size ladder:
 
-| variant | publisher | size | what it is |
-|---|---|---|---|
-| `ds4-flash` | ggml-org | 155.0 GB | straight MXFP4 conversion, one unsharded file. The reference. |
-| `ds4-flash-mix` | antirez | 156.0 GB | MXFP4 experts; router F16, attention/shared/output Q8_0, indexer + compressor + hyper-connection F16, norms F32 |
-| `ds4-flash-unsloth` | unsloth | 155.1 GB | the control — see the garbling note below |
+| variant | publisher | size | result | what it is |
+|---|---|---|---|---|
+| `ds4-flash` | ggml-org | 155.0 GB | **23.01 tok/s, serve this** | straight MXFP4 conversion, one unsharded file. The reference. |
+| `ds4-flash-mix` | antirez | 156.0 GB | **SIGSEGV on load** | MXFP4 experts; router F16, attention/shared/output Q8_0, indexer + compressor + hyper-connection F16, norms F32 |
+| `ds4-flash-unsloth` | unsloth | 155.1 GB | 22.09 tok/s, works | the control for the garbling bug below |
+
+All three were validated with `serving/validate-model.sh`, not assumed.
 
 antirez's reasoning for that asymmetry is worth quoting, because it is the
 general principle for MoE quantisation: the routed experts are most of the
@@ -482,6 +484,13 @@ Those are the fixes behind [#2214](https://github.com/ikawrakow/ik_llama.cpp/iss
 emitted `"dekametersapl dekametersapl"` — perplexity looked normal, so it was a broken quantisation
 kernel, not a broken model. ikawrakow's interim workarounds were `-rtr` and `-ctk q8_0`, and
 `serve-glm.sh` already passes the latter.
+
+**We re-tested that bug and it is gone.** The `ds4-flash-unsloth` row exists precisely to check,
+since those reports named unsloth quants: at pin 6038941 it produces coherent output and working
+tool calls at 22.09 tok/s. So #2214 was specific to **IQ3_XXS** and fixed by #2224 — not a blanket
+problem with unsloth's DS4, and not a reason to avoid that publisher. It is simply a hair slower
+than the reference for no compensating benefit, since both are ~155 GB and neither requantises the
+experts.
 
 **Do not turn flash attention off for DS4.** It was the first thing the #2218 reporter tried and
 ikawrakow asked twice for it to be left on.
