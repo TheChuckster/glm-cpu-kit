@@ -150,7 +150,8 @@ spec-decode on MoE.
 > model rather than inheriting. RTR was rejected largely because forcing `--no-mmap` on 440 GB was
 > unaffordable — at DeepSeek-V4-Flash's 155 GB it is not, and ik has since added `MXFP4_R8`
 > ([#2196](https://github.com/ikawrakow/ik_llama.cpp/pull/2196)), a repacked MXFP4 CPU kernel that
-> did not exist when we tested. See §6b.
+> did not exist when we tested. We did re-measure it on DS4, and it **aborts** rather than merely
+> underperforming — see §6b.
 
 ---
 
@@ -473,19 +474,55 @@ both layouts.
 ### Thinking, tool calls, and what is still open
 
 DS4 **always reasons**. There is no `enable_thinking` kwarg (§6a), so GLM's flag is a silent no-op
-and Kimi's `--reasoning off` is not the lever either. Two options, and they are not equivalent:
+and Kimi's `--reasoning off` is not the lever either. Use **`--reasoning-format deepseek`**, which is
+what the registry rows carry.
 
-- `--reasoning-format deepseek` — routes thoughts to `message.reasoning_content`. Note ik's own help
-  text: *"except in streaming mode, which behaves as `none`"*, and harnesses stream.
-- `--reasoning-budget 0` — ends thinking immediately. The closest equivalent to §10's thinking-off
-  requirement, but this model is *trained* to reason, so it is a quality tradeoff rather than a free
-  win. Measure it (`/models/.ds4-run/validate-ds4-flash-nothink/`) rather than assuming.
+**Do not use `--reasoning-budget 0`.** It reads like the DS4 equivalent of GLM's thinking-off, and
+it is not. Measured here: it does not suppress the reasoning, it just stops routing it — the raw
+numbered chain-of-thought lands in user-visible `content` and `reasoning_content` comes back empty:
 
-**Still open at pin 6038941:** [#2242](https://github.com/ikawrakow/ik_llama.cpp/pull/2242) fixes
-DSV4 tool-call wiring. Without it ik falls back to the autoparser, which forces `string="true"` on
-every argument — that diverges from what the template renders, so it **breaks prompt caching** and
-loses parallel tool calls. Verify tool calling before pointing a coding harness at DS4; the
-validation script checks for exactly this signature.
+```
+content  : '1.  The user asks to say hello and name the capital of France...\n2.  ...'
+reasoning: ''
+```
+
+That is precisely the failure §10 is about, and a naive check passes it because the right answer is
+in there somewhere. TG was unchanged (23.20 vs 23.01 tok/s), so it does not even buy speed.
+
+**Streaming is fine, despite what the help text says.** ik's `--reasoning-format` help claims
+`deepseek` behaves as `none` when streaming, which would put thoughts in `content` on exactly the
+path every agentic harness uses. At pin 6038941 that is stale — streamed responses carry
+`reasoning_content` as its own delta field and `content` holds only the answer. Verified, because
+the non-streaming result proves nothing about the streaming path:
+
+```
+STREAMED content  : 'Hello, the capital of France is Paris.'
+STREAMED reasoning: '1.  The user asks for a greeting and the capital...'
+```
+
+**Tool calling works at 6038941**, which was not a given:
+[#2242](https://github.com/ikawrakow/ik_llama.cpp/pull/2242) (fixing DSV4 tool-call wiring) is still
+open, and without it ik was expected to fall back to the autoparser — which forces `string="true"`
+on every argument, diverging from what the template renders, breaking prompt caching and losing
+parallel calls. A single-tool round trip returns a clean `{"path":"/tmp"}` with no such signature.
+Multi-tool and multi-turn are still worth watching; the validation script checks for the autoparser
+signature specifically.
+
+### `-rtr` does not just underperform on DS4 — it crashes
+
+§5 rejected RTR for GLM on cost/benefit grounds, and §6b originally flagged it as worth
+re-measuring at 155 GB now that ik has `MXFP4_R8`. Measured: it aborts during warmup, after
+repacking succeeds.
+
+```
+============ Repacked 789 tensors
+iqk/iqk_gemm_legacy_quants.cpp:1826: GGML_ASSERT(nrc_x%16 == 0) failed
+  iqk_mul_mat -> iqk_mul_mat_4d -> ggml_abort
+```
+
+So the answer for DS4 is not "skip RTR because it is not worth it" but **"-rtr is broken here"** —
+the repacked layout produces a row count the legacy-quant GEMM refuses. Worth an upstream report.
+Nothing in the serving path passes `-rtr`, so this only bites if you add it by hand.
 
 ---
 
