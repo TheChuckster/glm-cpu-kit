@@ -1,38 +1,59 @@
 # Porting Kimi K3 to ik_llama.cpp
 
-Groundwork for adding the `kimi-k3` architecture to ik_llama.cpp. Nothing here
-runs K3 — this is the reference material and the numerical harness you check an
-implementation against, assembled while the ecosystem catches up.
+The port lives on [`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp),
+branch `kimi-k3`, based on ik pin `6038941` (the commit already proven for
+DeepSeek-V4). It is a fork because ikawrakow declined the work himself on
+[ik #2203](https://github.com/ikawrakow/ik_llama.cpp/issues/2203) — *"Kimi-K3 is
+seriously beyond my hardware limits. Not sure I want to just blindly copy the
+mainline K3 PR"* — which is a hardware and review-confidence objection, and
+exactly the one a port validated on real hardware answers.
 
-Status as of 2026-08-02:
+Status:
 
 | | |
 |---|---|
 | trusted GGUF quant | **downloaded** — unsloth `UD-Q2_K_XL`, 19 shards, 861.3 GB, at `/models/Kimi-K3-UD-Q2_K_XL` |
-| a runnable engine | **yes, unsloth's fork** — [unslothai/llama.cpp#48](https://github.com/unslothai/llama.cpp/pull/48), branch `kimi-k3-fullsize-vision`; see "the cheap experiment" below |
-| ik_llama.cpp (the fast path) | no `kimi-k3` arch, and `LLAMA_MAX_EXPERTS` is 512 vs K3's 896 |
-| mainline llama.cpp | PR [#26185](https://github.com/ggml-org/llama.cpp/pull/26185) open and conflicted; the expert-cap PR [#26192](https://github.com/ggml-org/llama.cpp/pull/26192) was **closed unmerged** |
+| reference engine | unsloth's fork, **built** at `~/llama.cpp-k3` — use it to diff logits when output looks wrong |
+| expert cap | **done** — `LLAMA_MAX_EXPERTS` 512 → 1024 |
+| per-channel KDA gate | **done** — `ggml_delta_net` accepts `g->ne[1] ∈ {1, S_v}`, verified numerically |
+| SiTU / MLA gate / AttnRes / latent MoE | to do (see below — all smaller than first estimated) |
+| `LLM_ARCH_KIMI_K3` + graph builder | to do — the bulk |
+| mainline llama.cpp | PR [#26185](https://github.com/ggml-org/llama.cpp/pull/26185) still open, but matured: perplexity runs, lineage-bench passes at 64/128/256, agent tool calls work |
 
-So K3 can now be *run* (unsloth's fork, mainline-speed). The open work is only
-whether it is worth running well enough to justify the ik port — measure first.
+## What ik gained underneath this (checked, not assumed)
 
-## Step 0: the expert-count cap
+The original estimate here was written before ik landed DeepSeek-V4. That work
+changed the shape of the port substantially:
 
-Before any op work, K3 does not get far enough to fail interestingly:
+- **AttnRes needs no new op.** ik now has `GGML_OP_HC_PRE` / `GGML_OP_HC_POST`
+  (`ggml/include/ggml.h:712`). Mainline's K3 builder calls `ggml_dsv4_hc_pre` for
+  exactly this weighted sum. It is a call, not an implementation.
+- **Every primitive K3 needs already exists in ik**: `softplus`, `l2_norm`,
+  `sigmoid`, `tanh`, `sum_rows`, `soft_max`, `ssm_conv`, `delta_net`, `hc_pre`,
+  `hc_post`, `concat`, `scale`. Mainline's PR touches **no ggml files at all**.
+- **SiTU needs no kernel.** Mainline composes it from `tanh`/`sigmoid`/`mul`;
+  there is no `ggml_situ`. A fused AVX-512 version is an optimisation, not a
+  prerequisite.
+
+## Step 0: the expert-count cap — done
 
 ```
-src/llama-hparams.cpp:9     #define LLAMA_MAX_EXPERTS 512  // Qwen3 Next
-src/llama-hparams.cpp:165   GGML_ASSERT(hparams.n_expert <= LLAMA_MAX_EXPERTS);
+src/llama-hparams.cpp:10   #define LLAMA_MAX_EXPERTS 512  // Qwen3 Next
+src/llama-hparams.cpp:171  GGML_ASSERT(hparams.n_expert <= LLAMA_MAX_EXPERTS);
 ```
 
 K3 has **896** routed experts, so it trips an arch-generic assert in
-`load_hparams` before any `kimi-k3` hook could run. Mainline hit the identical
-wall (same constant, same reason — it was raised to 512 for Qwen3 Next).
+`load_hparams` before any `kimi-k3` hook could run.
 
-One line to change, but worth understanding rather than just bumping: the
-constant sizes stack arrays in the hparams/graph paths, so raising it is only
-free if nothing downstream assumes 512. Check that before assuming it is a
-one-liner, and note mainline's attempt to raise it was closed rather than merged.
+Audited rather than assumed, and in ik it is genuinely free: the constant appears
+**only** at its definition and that one assert, nothing allocates against it, and
+`n_expert` is `uint32_t`. Raised to 1024.
+
+Correcting the earlier note here: mainline's standalone bump
+([#26192](https://github.com/ggml-org/llama.cpp/pull/26192)) was **not** rejected
+on technical grounds — the PR-template bot closed it over its description
+formatting and AI-generated content. Mainline is doing the same bump inside the
+K3 PR itself. There was never a technical objection to inherit.
 
 ## Serving K3 is not like serving K2.x
 
@@ -172,16 +193,33 @@ a = exp(A_log)                       # [H] → (H,1)   or   [K] → (1,K)
 g = lower_bound * sigmoid(a * g)     # lower_bound = -5.0
 ```
 
-**The porting problem in one line:** K3 ships `A_log` with shape `[128] = [K]` —
-one decay per **channel**, broadcast across heads (`use_full_rank_gate: true`).
-Qwen3-Next's gated DeltaNet, which is what ik's `ggml_delta_net` implements, has
-one **scalar** decay per head.
+**Corrected against the shipped GGUF.** This section previously said K3 ships
+`A_log` with shape `[128] = [K]`, one decay per channel. It does not — the GGUF
+has `ssm_a` at `[96] = [H]`, one per **head**, same as Qwen3-Next.
 
-So the gate entering the recurrence is a full `[B,T,H,K]` tensor rather than
-`[B,T,H]`, and `ggml_delta_net`'s inner loop must broadcast a per-channel decay.
-This is the single highest-risk change in the port. The fixture covers both the
-per-channel/lower-bound path (K3) and the per-head/softplus path
-(Kimi-Linear-48B), so one kernel can be proven to serve both.
+The full-rank-ness comes from somewhere else: the gate is produced by a low-rank
+projection, `ssm_f_a [7168, 128]` → `ssm_f_b [128, 12288]`, yielding
+`12288 = H×K = 96×128` values per token. So `a = exp(A_log)` is per-head, but the
+`g` it multiplies is per-channel, and the product entering the recurrence is a
+full `[B,T,H,K]` tensor either way.
+
+The conclusion is unchanged and the fix is the same — `ggml_delta_net`'s inner
+loop must broadcast a per-channel decay — but the reason matters if you are
+reading tensor shapes to decide what to implement. `ssm_dt.bias` is `[12288]`,
+which is the giveaway: a per-head gate would not need `H×K` biases.
+
+**Done.** ik's assert now reads `g->ne[1] ∈ {1, S_v}`, and the kernel applies the
+gate to the state in place, once, before anything reads it — which is what
+mainline's kernel does, and the only option for a per-channel decay, since it
+cannot be factored out of `v_prime`/`out_val`. Decay is indexed by the **column**
+(key) axis, per mainline's `S[i][:] *= exp(g[i])`.
+
+Verified numerically before trusting it: the per-head path is bit-identical
+before and after the refactor (max diff 1.7e-17, so no Qwen3-Next regression),
+the per-channel path matches an independent matrix-form reference exactly, and a
+per-channel gate with all channels equal reproduces the per-head result. The
+fused AVX-512 kernel cannot express a per-channel gate in its signature, so it is
+skipped for full-rank gates and the scalar path runs.
 
 ### Not an op, but easy to get wrong: latent MoE
 
@@ -200,6 +238,57 @@ not a parameter change. Note the shared experts consume `identity` — the block
 input — not the down-projected tensor.
 
 ---
+
+## The shipped model, read directly (not inferred)
+
+Dumped from the GGUF with `porting/k3/gguf_peek.py` (dependency-free — chuckdancer
+has no numpy, and `gguf-py` hard-imports it just to read a header). The GGUF
+already declares `general.architecture = kimi-k3`, so the arch name is fixed.
+
+**Layer layout — 93 blocks:**
+- `blk.0` alone is dense FFN (`leading_dense_block_count = 1`); `blk.1..92` are latent MoE.
+- **24 full-attention (MLA) layers** at indices 3, 7, 11, … 87, 91, **and 92**.
+  Note 92 breaks the every-fourth pattern — the last layer is full attention.
+- The other **69 are KDA**. Which is which comes from
+  `kimi-k3.attention.head_count_kv`, a per-layer **array** (0 = KDA, 1 = full).
+  That is unusual and easy to miss: it is a list, not a scalar.
+
+**KDA layer** (`blk.0`): `attn_q/k/v` `[7168,12288]`, `attn_output` `[12288,7168]`,
+plus `ssm_a [96]`, `ssm_beta [7168,96]`, `ssm_conv1d_{q,k,v} [4,1,12288]`,
+`ssm_dt.bias [12288]`, `ssm_f_a [7168,128]`, `ssm_f_b [128,12288]`,
+`ssm_g [7168,12288]`, `ssm_norm [128]`.
+
+**Full-attention layer** (`blk.3`) is DeepSeek-style MLA, which ik already has
+via `LLM_ARCH_DEEPSEEK2` and the DS4 work: `attn_q_a [7168,1536]`,
+`attn_q_a_norm [1536]`, `attn_q_b [1536,18432]`, `attn_kv_a_mqa [7168,576]`,
+`attn_kv_a_norm [512]`, `attn_k_b [128,512,96]`, `attn_v_b [512,128,96]`,
+`attn_output [12288,7168]` — plus **`attn_gate [7168,12288]`**, the MLA output
+gate. Its input width of 7168 confirms it gates on the **layer input**, not the
+attention output, which is the silent bug the fixture guards.
+
+**AttnRes ships pre-folded.** `attn_res_score [7168]` and `ffn_res_score [7168]`
+— one vector per site, two sites per layer. The notes predicted `norm.weight` and
+`proj.weight` would collapse into a single `[hidden]` vector to fold at load
+time; unsloth's converter already did the fold, so there is nothing to do but use
+them.
+
+**Latent MoE** (`blk.1`) is exactly the three-width shape described below:
+router `ffn_gate_inp [7168,896]` and `exp_probs_b.bias [896]` at full width;
+`ffn_routed_down [7168,3584]` → `ffn_routed_norm [3584]` → `ffn_routed_up [3584,7168]`;
+experts `ffn_{gate,up}_exps [3584,3072,896]` and `ffn_down_exps [3072,3584,896]`
+at the latent width; shared experts `ffn_*_shexp [7168,6144]` at **full** width
+(6144 = 2×3072, the two shared experts merged).
+
+**Hparams worth having in one place:** `block_count 93`, `embedding_length 7168`,
+`context_length 1048576`, `vocab_size 163840`, `expert_count 896`,
+`expert_used_count 16`, `expert_shared_count 2`, `expert_feed_forward_length 3072`,
+`expert_latent_length 3584`, `expert_gating_func 2` (sigmoid), `expert_weights_norm true`,
+`attention.head_count 96`, `key_length 576`, `value_length 74`,
+`key_length_mla 192`, `value_length_mla 128`, `q_lora_rank 1536`,
+`kv_lora_rank 512`, `rope.dimension_count 64`, `rope.freq_base 10000`,
+`ssm.conv_kernel 4`, `kda.head_dim 128`, `kda.gate_lower_bound -5.0`,
+`activation.situ_beta 4.0`, `activation.situ_linear_beta 25.0`,
+`attn_res.block_size 12`.
 
 ## What ik already has
 
