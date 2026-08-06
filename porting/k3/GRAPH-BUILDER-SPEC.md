@@ -351,3 +351,63 @@ allocated for the 24 attention layers.
 
 Until that path is wired the MLA layer aborts explicitly rather than filling a
 mis-sized cache and producing quiet garbage.
+
+---
+
+## Status: runs end to end, output still incoherent
+
+All 93 layers execute. `llama-cli`, 64 threads, `-fa 1 -mla 3`, no `--mlock`:
+
+```
+prompt eval  5 tokens @ 11.13 tok/s
+eval        32 tokens @  3.60 tok/s
+```
+
+3.6 tok/s is far below the ~10-20 the sizing predicted, but speed is not worth
+chasing until the output is right — the scalar delta-net path is in use (the
+fused AVX-512 kernel declines per-channel gates) and that alone explains a lot.
+
+### What the AttnRes bisect says
+
+`KIMI_K3_NO_ATTNRES=1` swaps AttnRes for a plain residual add. Both settings
+produce garbage, but *different* garbage:
+
+```
+with AttnRes:     " safety relation capital of of //  . the 1. The erset the"
+without AttnRes:  "表格 Mok delegationolomammadammadomadomad，，，，，，"
+```
+
+With AttnRes the output at least echoes the prompt ("capital of") and stays in
+English; without it, it collapses into repeated CJK. So AttnRes is contributing
+something structurally right and is **not** the sole bug. Keep it on while
+hunting elsewhere.
+
+### Ruled out
+
+- **Conv SiLU.** K3 does apply `ggml_silu` after the conv (`kimi_k3_conv1d`
+  ends with it), which is what ik's `build_qkv` does unconditionally. Match.
+- **Double L2-norm.** `build_qkv` L2-normalises q/k and the delta-net kernel
+  normalises internally too, but L2-normalising an already-normalised vector is
+  idempotent, so this is harmless.
+- **q/k/v and conv ordering.** `build_qkv` slices the conv output as q at 0,
+  k at `key_dim`, v at `2*key_dim`; the builder concatenates in that same order.
+- **Gate range.** `g = -5.0 * sigmoid(...)` gives `decay = exp(g)` in
+  ~(0.0067, 1), which is a sensible forget range.
+
+### Still to check, roughly in order of suspicion
+
+1. **KDA gate orientation.** The per-channel permute and `ssm_a`'s pre-folded
+   `-exp(A_log)` interact; a sign or axis error here degrades quality without
+   crashing. The `fixtures/kda_gate_*` files exist precisely for this — wire a
+   C-level check against them rather than reasoning about it.
+2. **MLA `kq_scale`.** Currently `1/sqrt(n_embd_head_k_mla)` = `1/sqrt(192)`.
+   Confirm against the reference; MLA scale conventions vary with whether the
+   rope half is counted.
+3. **`KQ_mask` shape for the absorbed path.** `build_inp_KQ_mask()` is used, but
+   ik's deepseek2 builds masks specific to its MLA modes.
+4. **Per-layer state indexing on a hybrid model.** The KV cache is allocated for
+   all 93 layers while only 24 attention layers use `k_l` and 69 use `s_l`;
+   worth confirming nothing aliases.
+
+The cheapest next move is a logit diff against `~/llama.cpp-k3` on a one-token
+prompt, layer by layer, rather than more reasoning from shapes.
