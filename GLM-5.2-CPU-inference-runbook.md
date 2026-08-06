@@ -619,6 +619,16 @@ So the 3.7 tok/s is the MoE path, not the gate — 16 of 896 experts active acro
 92 layers. That is a separate investigation, and no part of it was ever measured
 by the claim this section used to make.
 
+### K3 always reasons, and spends the budget before it answers
+
+K3 emits its whole `<|open|>think<|sep|>` section before the response section
+opens, and it is not brief - 1800+ characters of reasoning for "write a Python
+one-liner and name a capital". A tight `max_tokens` therefore returns **empty
+`content` with a full `reasoning_content`** and `finish_reason: length`. It looks
+exactly like a parser failure and is not one; the model simply never got to the
+answer. Budget 1500+ output tokens, and remember that at 3.7 tok/s that is
+minutes of wall clock.
+
 ### Why 3.7 tok/s, settled
 
 The kernel work above raised prompt processing and left generation exactly where

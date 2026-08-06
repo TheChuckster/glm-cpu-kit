@@ -26,6 +26,13 @@
 #   markers reach content. (Earlier versions of this script warned that they
 #   did. They no longer do.)
 #
+#   BUDGET TOKENS GENEROUSLY. K3 always reasons and is not brief about it -
+#   1800+ characters of reasoning for "write a one-liner and name a capital".
+#   Reasoning is spent BEFORE the response section opens, so a tight max_tokens
+#   returns EMPTY content with a full reasoning_content and finish_reason
+#   "length". That reads like a broken parser and is not one. opencode.json's
+#   output limit of 8000 is fine; hand-rolled curl calls are where this bites.
+#
 # K3 must be the resident model - only one is, and they are 155-860 GB mlocked:
 #   ssh chuckdancer 'sudo glm-model use kimi-k3'   # ~30s once page-cached
 #   ssh chuckdancer 'glm-model status'             # confirm before trusting it
