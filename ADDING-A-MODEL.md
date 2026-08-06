@@ -201,11 +201,24 @@ against: `stat -c %s *.gguf | paste -sd+ | bc > .complete`.
 Same flag, same box, same day: a solid win, a wash, and a serious regression.
 It lives in the registry row's `opts`, never in `serve-glm.sh`.
 
-Two things tested here and NOT worth adopting, recorded so they are not
-retried: `--no-mmap` to get transparent huge pages behind the weights (TG 28.09
--> 27.74, and `AnonHugePages` never rose — with `defrag=[madvise]` the kernel
-will not eagerly back a 145 GB anonymous region), and raising thread count above
-64 (TG is flat from 32 to 96 threads and falls off a cliff at 128).
+Tested here and NOT worth adopting, recorded so nobody retries them:
+
+- `--no-mmap`, to get transparent huge pages behind the weights instead of the
+  ~200M 4 KB file-backed pages an mmap'd 800 GiB model runs on. TG 28.09 ->
+  27.74, and `AnonHugePages` never rose: with `defrag=[madvise]` the kernel will
+  not eagerly back a large anonymous region, so the premise never even held.
+- **Thread counts above 64.** TG is 3.67 at 32 threads, 3.67 at 64, 3.66 at 96
+  and 2.54 at 128. It scales near-linearly to 8 and then hits the bandwidth wall;
+  the 128 figure is SMT contention.
+- `-muge` (merge up/gate experts) and `-mqkv` (merge Q,K,V) on K3: 39.0-39.8 PP
+  and 4.29-4.32 TG against a 39.49 / 4.30 baseline. Both are fusions rather than
+  approximations and cost nothing to try, but neither moves this workload.
+- **Four-bit non-expert weights** — see the ladder above. Real perplexity cost.
+
+The pattern across all of them: on a bandwidth-bound workload, only two things
+have ever moved the number — reading fewer bytes, and not paying too much CPU per
+byte to decode them. Everything that rearranges *how* the work is scheduled has
+come back flat.
 
 ---
 
