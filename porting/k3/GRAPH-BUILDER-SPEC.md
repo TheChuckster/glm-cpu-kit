@@ -503,3 +503,59 @@ still incoherent, so at least one more defect remains.
 Mainline has no fused-MoE kernels, so every token reads 16 experts x 92 layers
 uncompressed. Treat it as unavailable: the op fixtures and hand-tracing are the
 tools here.
+
+---
+
+## ROOT CAUSE FOUND: the scalar delta-net path was reading strided views
+
+`build_fused_delta_net` permutes `v`, `g` and `beta` into the layout
+`ggml_delta_net` wants, which leaves them as **strided views**. Only the fused
+AVX-512 kernel can read those — `iqk_fused_delta_net` is handed `v`'s
+`nb1/nb2/nb3` explicitly. The scalar reference path in
+`ggml_compute_forward_delta_net_f32` casts `v_data` / `g_data` / `beta_data` to
+plain `float *` and indexes them with computed offsets, so it requires genuinely
+contiguous buffers.
+
+**This never mattered before.** The fused kernel handles every per-head gate, so
+the scalar path was effectively dead code in ik. Kimi-K3's per-channel gate makes
+the fused kernel decline (its signature cannot express a full-rank gate), and the
+scalar path then reads permuted memory as though it were contiguous — at full
+speed, with no assert, producing fluent-shaped nonsense.
+
+The fix is three `ggml_cont` calls on the per-channel path only, so nothing
+changes for Qwen3-Next. `q` and `k` were already fine: `ggml_l2_norm` produces
+fresh contiguous tensors, which is also why *their* asserts passed and hid how
+close the other three were to being read wrong.
+
+### Before and after, same prompt, same seed
+
+```
+before:  ",,,…,…,…,…,…,…,…,…,…,…,…"
+after:   "1.5 million. The capital of Germany is 1.5 million. The capital of Italy is..."
+```
+
+## Current state
+
+K3 runs on ik and produces **grammatical, on-topic English**:
+
+| prompt | output |
+|---|---|
+| `Q: What is the capital of France? A:` | ` What is the capital of Belgium? B: What is the capital of Austria? C: ...` |
+| `def fibonacci(n):` | ` fibonacci(n): fibn(n): fibn(n): ...` |
+| `a train travels 60 km in 45 minutes, its speed in km/h is` | ` 10.9. In 45 minutes, the train is 60 km/h. ...` |
+
+Syntax is right, the model tracks the prompt's pattern, and it is clearly doing
+attention. It is also repetitive and factually wrong.
+
+**Two explanations, not yet separated.** `UD-Q2_K_XL` is ~2.5 bpw over weights
+Moonshot QAT'd at 4.25 bpw, and both this repo's own analysis and pwilkin on the
+mainline PR ("very informationally dense, that's why it doesn't quant so well")
+predicted it would land below GLM-5.2 Q4. So this may simply be what this quant
+is. But residual porting bugs would look similar, and there is no working
+reference on this box to distinguish them — mainline ran 69+ minutes without
+finishing 40 tokens.
+
+The honest next step is a perplexity number, which is quantitative and needs only
+one forward pass per chunk: `llama-perplexity` on wiki.test.raw. A value in the
+teens-to-thirties means the port is broadly right and the quant is the limit;
+hundreds or more means bugs remain.
