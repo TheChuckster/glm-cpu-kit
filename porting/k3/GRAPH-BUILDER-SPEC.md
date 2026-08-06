@@ -216,3 +216,67 @@ will fail — the memlock ulimit is 141 GB against an 861 GB model. Drop the fla
 
 Op-level fixtures for situ / attn_res / mla_output_gate / kda_gate live in
 `fixtures/`; `k3_ops_oracle.py --verify fixtures/` checks them.
+
+---
+
+## KDA gate: two details that invalidate the oracle's docstring
+
+Read out of mainline's builder, and both change the arithmetic.
+
+### 1. `ssm_a` ships pre-transformed
+
+The GGUF's `ssm_a` is **not** `A_log`. The converter folds it, so the stored
+value is `-exp(A_log)`, i.e. `exp(A_log) == -ssm_a`. `k3_ops_oracle.py`'s
+`kda_gate()` takes raw `A_log` and computes `exp(A_log)` itself — correct as a
+transcription of Moonshot's Python, wrong as a description of the GGUF. Anything
+validating the C against that fixture must feed it `A_log`, not `ssm_a`.
+
+### 2. `gate_lower_bound` is not a clamp — it selects a different activation
+
+```
+unset (Kimi-Linear):  g = -exp(A_log) * softplus(f_b(f_a(x)) + dt_bias)
+set   (K3, -5.0):     g = lower_bound * sigmoid(exp(A_log) * (f_b(f_a(x)) + dt_bias))
+```
+
+Reading `-5.0` as a floor and clamping to it produces a completely different
+gate. In code, with `A = ssm_a = -exp(A_log)` reshaped `[1, n_head, 1]`:
+
+```c
+g = mul_mat(ssm_f_b, mul_mat(ssm_f_a, cur));
+g = add(g, ssm_dt_b);
+g = reshape_3d(g, head_dim, n_head, n_tokens);
+g = mul(g, A);                       // broadcast per-head over head_dim
+g = sigmoid(scale(g, -1.0f));        // the double negation gives sigmoid(+exp(A_log)*...)
+g = scale(g, gate_lower_bound);      // -5.0
+```
+
+`A` broadcasts a **per-head** scalar across the 128 channels, while the values it
+multiplies are per-channel — which is exactly why the gate reaching the
+recurrence is full-rank even though `ssm_a` is `[96]`.
+
+### 3. The gate layout differs between ik and mainline — permute required
+
+```
+mainline g: [head_dim, n_head,  n_seq_tokens, n_seqs]     ne0 = channel
+ik       g: [n_tokens, head_dim, n_head,      n_seqs]     ne0 = TOKEN
+```
+
+ik's assert is `g->ne[0] == n_tokens && (g->ne[1] == 1 || g->ne[1] == S_v)`.
+So the builder must permute mainline's layout before calling
+`build_fused_delta_net`. Getting this wrong reads gate values transposed —
+runs fine, silently wrong.
+
+### 4. Q and K are L2-normalised
+
+`ggml_l2_norm(Q, eps)` and the same for K, **not** rms_norm. ik's delta_net
+kernel also normalises internally (`q_norm_inv`/`k_norm_inv`), so check whether
+that would double-normalise before wiring both.
+
+---
+
+## MLA output gate
+
+From the reference: computed from the **layer input** (post-`attn_norm` `cur`),
+`sigmoid`, multiplied into the attention output *before* `wo`. Tensor is
+`attn_gate [n_embd, n_head*v_mla]`; the `n_embd` input width is the giveaway that
+it is not gating on the attention output.
