@@ -856,3 +856,46 @@ schedule interacting with 93 layers, the MoE, or an accumulation effect.
 Seven bugs were found and fixed along the way. The residual gap survives all of
 the above, which is genuinely useful information: it is not in any single
 component, and it is not any of the things that were cheap to check.
+
+### AttnRes is essential and working
+
+| | PPL (4 chunks, n_ctx=512) |
+|---|---|
+| with AttnRes | **16.49** |
+| plain residual add | 21,277 |
+
+Three orders of magnitude. The hand-rolled AttnRes — the component with no ik
+precedent, built from primitives because `ggml_hc_pre` turned out to be a
+different op — is carrying the model. Earlier this was only judged by eyeballing
+generated text; this is the quantitative version, and it clears it.
+
+## Summary of state
+
+Everything checkable has been checked and passes:
+
+- four op compositions, exact against the oracle
+- the delta-net kernel's per-channel gate, exact by self-consistency
+- the `ssm_a` convention, settled by measurement (6x)
+- KDA, MLA, output-head and AttnRes structures, line-by-line against the reference
+- both attention families and AttnRes, each shown essential by mute-and-measure
+- state contamination, MLA cache/mask, curve shape and quant, all ruled out
+
+Seven bugs found and fixed. PPL went 56.18 → 23.86 (8 chunks) and output went
+from `,,,…,…` to grammatical English.
+
+**The residual gap survives all of it.** That is the honest position: the defect
+is not in any component that can be isolated by composition testing,
+self-consistency, source diffing, or ablation — all four techniques are now
+exhausted.
+
+One caveat worth stating plainly about the target. The reference 1.55 was
+measured at `n_ctx=8192` on a `Q2_K` conversion by a different converter, and
+this port's own 8192 run gives 34.07, so the honest gap is ~22x on the closest
+comparison available rather than the ~36x a naive 56-vs-1.55 reading suggests.
+It is still far too large to attribute to quantisation.
+
+The remaining technique is layer-by-layer intermediate comparison: instrument the
+`cb` callback on this build and on `~/llama.cpp-k3`, run ONE forward pass on each
+(feasible even at mainline's speed, unlike generating tokens), and find the first
+tensor that diverges. That localises the defect directly instead of inferring it,
+and it is the correct next investment.
