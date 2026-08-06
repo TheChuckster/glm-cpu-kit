@@ -455,3 +455,51 @@ per data point, not an interactive one. Two consequences:
 - Prefer the op fixtures (`k3_ops_oracle.py`) over model-level diffing.
 - If a model-level diff is needed, do it at **one token**, dumping intermediate
   tensors via the `cb` callback on both engines, not by comparing generated text.
+
+### Fourth bug: the KDA output gate was SiLU
+
+`delta_net::build_gated_output` applies `silu(z) * normed`. K3 applies
+`sigmoid(z) * normed`. Since `silu(z) = z*sigmoid(z)`, reusing that helper
+multiplied **69 of the 93 layers** by an extra factor of `z`.
+
+Self-inflicted, and worth recording as a process lesson: the first version of the
+KDA tail was hand-written with `sigmoid`, and replacing it with "the existing
+helper that does the same thing" silently changed the activation. The helper is
+correct for Qwen3-Next; it is simply not K3's gate. Reuse in this port has to be
+checked op-by-op, not by shape compatibility — every substitution so far that
+type-checked and ran has been wrong in a different way.
+
+The reference, for the record:
+
+```c
+ggml_tensor * normed = build_norm(o, layer.ssm_o_norm, nullptr, LLM_NORM_RMS, il);
+ggml_tensor * gated  = ggml_mul(ctx0, normed, ggml_sigmoid(ctx0, g2));
+gated = ggml_cont_2d(ctx0, gated, d_inner, n_tokens);
+cur   = ggml_mul_mat(ctx0, layer.wo, gated);
+```
+
+Fixing it changed the output, so the graph is sensitive there — but the result is
+still incoherent, so at least one more defect remains.
+
+### Verified correct (checked against ik's own code, not assumed)
+
+- **beta**: ik's `build_beta_gate` returns it RAW at `[num_v_heads, 1, n_tok, 1]`,
+  no sigmoid — the kernel does it. Matches what the builder passes.
+- **gate arithmetic**: ik's own Qwen3-Next gate is `softplus(alpha + dt) * ssm_a`,
+  which only makes sense if `ssm_a` is already `-exp(A_log)`. So K3's
+  `sigmoid(scale(mul(g, ssm_a), -1)) * lower_bound` is the right translation.
+- **gate layout end-to-end**: `[S_v, H_v, n_tok, n_seqs]` → detected per-channel →
+  `permute(1,2,0,3)` → `[n_tok, S_v, H_v, n_seqs]`, which is what the kernel's
+  `g_head_offset + t + col*n_tokens` indexing expects. Traced by hand.
+- **KQ_mask**: `build_inp_KQ_mask()` is exactly what `build_deepseek2` uses.
+- **MLA concat order**: ik puts rope FIRST in both Q and the cache row; mainline
+  puts nope/lora first. Either is fine because Q and K agree, and the V view is
+  taken at the matching offset.
+- **wv_b expansion shapes**: traced through the flash-attn output to `[128, 96, n_tok]`.
+
+### The reference is not a usable oracle at all
+
+`~/llama.cpp-k3` has now run **69+ minutes** on 40 tokens without finishing.
+Mainline has no fused-MoE kernels, so every token reads 16 experts x 92 layers
+uncompressed. Treat it as unavailable: the op fixtures and hand-tracing are the
+tools here.
