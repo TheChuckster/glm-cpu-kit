@@ -31,6 +31,12 @@ interleaved across both sockets.
 | `glm-model` | list / download / switch / track which model is served | 6a |
 | `validate-model.sh` | prove a new quant loads, stays coherent, keeps reasoning out of `content`, and can call a tool — on a spare port | 6b |
 
+**Every model here got ~10% faster generation** by requantizing only its
+non-expert tensors to Q6_K (GLM 10.68 -> 11.78, DS4 23.82 -> 25.89, K3
+3.67 -> 4.08 tok/s), with perplexity unchanged inside its error bar in all three
+cases. Registered as the `-q6attn` rows; the recipe and its two traps are
+[`ADDING-A-MODEL.md`](ADDING-A-MODEL.md) §7.
+
 `porting/k3/bytes_per_token.py` answers "how fast *should* this model be?" from
 the GGUF alone — exact bytes read per generated token, split into always-read and
 routed-expert. Token generation is bandwidth-bound, so that number over the box's

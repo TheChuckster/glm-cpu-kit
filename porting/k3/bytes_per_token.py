@@ -122,6 +122,7 @@ def main():
 
     routed = always = 0
     by_type = {}
+    always_by_type = {}
     for path in args:
         for name, tt, nbytes in tensors(path):
             tname = GGML_TYPES.get(tt, (0, 1, f"type{tt}"))[2]
@@ -135,6 +136,10 @@ def main():
             e = by_type.setdefault(tname, [0, 0])
             e[0] += 1
             e[1] += nbytes
+            if "_exps" not in name:
+                a = always_by_type.setdefault(tname, [0, 0])
+                a[0] += 1
+                a[1] += nbytes
 
     total = routed + always
     frac = n_used / n_exp if n_exp else 1.0
@@ -151,6 +156,12 @@ def main():
     print("\nby quant type:")
     for t, (cnt, b) in sorted(by_type.items(), key=lambda kv: -kv[1][1]):
         print(f"  {t:<9} {cnt:5d} tensors {b/G:9.2f} GiB")
+    # The actionable view: always-read bytes are paid on EVERY token, so this is
+    # the list of what to requantize, ordered by what it would buy.
+    print("\nalways-read by quant type (this is the requant target list):")
+    for t, (cnt, b) in sorted(always_by_type.items(), key=lambda kv: -kv[1][1]):
+        print(f"  {t:<9} {cnt:5d} tensors {b/G:9.2f} GiB   {100*b/per_tok:5.1f}% of a token")
+
     print("\nimplied bandwidth at N tok/s:")
     for tps in (2, 3, 3.67, 5, 10):
         print(f"  {tps:5.2f} tok/s -> {per_tok*tps/1e9:7.1f} GB/s")

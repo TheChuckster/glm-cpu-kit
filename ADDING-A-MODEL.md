@@ -111,6 +111,76 @@ comment beside the route. A route that hides them gets used by mistake.
 
 ---
 
+## 7. Requantize the part nobody optimises (worth ~10% TG, on every model)
+
+Published quants spend their care on experts, because experts are the file. But
+a token only reads the experts it activates, and everything else in full — so on
+this box the always-read remainder is **58.6% of a GLM token, 68.5% of a
+DeepSeek-V4 token, 81% of a Kimi K3 one**, and all three publishers ship it at
+Q8_0. Run `porting/k3/bytes_per_token.py` on any GGUF to see the split.
+
+Requantizing just that part to Q6_K, with every routed expert copied through
+untouched:
+
+```sh
+llama-quantize --allow-requantize --keep-f32 --keep-split \
+    --keep-pattern "_exps\." IN.gguf OUT.gguf Q6_K 64
+```
+
+Measured, each against its own baseline, same flags, back to back:
+
+| | TG before | TG after | PPL before | PPL after |
+|---|---|---|---|---|
+| GLM-5.2 | 10.68 | **11.78** (+10.3%) | 1.3750 +/-0.037 | 1.3803 +/-0.037 |
+| DeepSeek-V4 | 23.82 | **25.89** (+8.7%) | 2.4020 +/-0.114 | 2.4312 +/-0.117 |
+| Kimi K3 | 3.67 | **4.08** (+11.2%) | 1.3240 +/-0.031 | 1.3144 +/-0.029 |
+
+Every perplexity move is inside its error bar. Prompt processing does not
+change. Minutes of work per model, and the experts are memcpy'd rather than
+requantized, so a 800 GiB model takes about five minutes.
+
+Three things to know before running it:
+
+- **`--keep-f32` is not optional.** A tensor left at F32 in an already-quantized
+  model is F32 on purpose. K3's `ssm_conv1d_*` are 4 columns wide, cannot take a
+  k-quant, and the fallback path turns them into Q8_0 — `ggml_ssm_conv` then
+  aborts at the first token. GLM's 79 `indexer.proj` tensors choose which tokens
+  DSA attention sees, and quantizing those would not have crashed anything; it
+  would just have gotten quietly worse. Both are tiny: all 79 of GLM's save
+  47 MiB against a 32.58 GiB token.
+- **Check the dry run for F32 conversions** even so:
+  `--dry-run ... | grep "type =    f32, converting"` should print nothing.
+- **You only get about 60% of the arithmetic.** Bytes/token predicted 1.16x for
+  K3 and it returned 1.11x, predicted 1.18x for DS4 and returned 1.09x. Q6_K
+  costs more CPU per byte to dequantize than Q8_0, and that eats into the
+  bandwidth saved. Predict with the byte count, then measure.
+
+Register the result as a NEW row rather than replacing anything — the originals
+stay downloaded and one `glm-model use` away. A locally-built variant needs its
+`.complete` marker written by hand, since there is no upstream to size-check
+against: `stat -c %s *.gguf | paste -sd+ | bc > .complete`.
+
+## 8. Per-model flags are per-model: check, do not assume
+
+`-rtr` (run-time repack) is the sharpest example measured here:
+
+| | PP | TG |
+|---|---|---|
+| DeepSeek-V4 | **+15%** | **+4%** |
+| GLM-5.2 | -4% | +0.5% |
+| Kimi K3 | **-16%** | 0% |
+
+Same flag, same box, same day: a solid win, a wash, and a serious regression.
+It lives in the registry row's `opts`, never in `serve-glm.sh`.
+
+Two things tested here and NOT worth adopting, recorded so they are not
+retried: `--no-mmap` to get transparent huge pages behind the weights (TG 28.09
+-> 27.74, and `AnonHugePages` never rose — with `defrag=[madvise]` the kernel
+will not eagerly back a 145 GB anonymous region), and raising thread count above
+64 (TG is flat from 32 to 96 threads and falls off a cliff at 128).
+
+---
+
 ## The failure mode this box punishes
 
 Every serious bug found across both ports was **silent**: no crash, no assert,
