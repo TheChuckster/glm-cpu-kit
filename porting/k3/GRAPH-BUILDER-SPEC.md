@@ -815,3 +815,44 @@ both engines and finding the first divergence. That requires the reference to be
 runnable at one-token scale, which it is (a single forward pass, not 40 tokens),
 so it is feasible even at mainline's speed. That is the recommended next move,
 and it is a different kind of work from everything above.
+
+### Neither attention family is broken
+
+`KIMI_K3_MUTE_KDA` / `KIMI_K3_MUTE_MLA` build each layer as normal — so
+`inp_s_seq_qnext` and the caches stay referenced and the graph allocates — then
+zero that family's contribution to the residual. (The earlier *skip* switches
+aborted precisely because they left the input tensor unreferenced.)
+
+| | PPL (4 chunks, n_ctx=512) |
+|---|---|
+| baseline | **16.49** |
+| KDA muted (69 layers) | 44,956 |
+| MLA muted (24 layers) | 244.8 |
+
+The logic here is that a family producing noise would be *worse than nothing*:
+muting it would improve perplexity. Neither does. Muting KDA is catastrophic
+(2,700x) and muting MLA is 15x worse, so both are carrying substantial correct
+signal, roughly in proportion to their layer counts.
+
+That is a real constraint on what is left. The defect is not a broken attention
+family; it is something subtler, distributed, or outside both — the AttnRes
+schedule interacting with 93 layers, the MoE, or an accumulation effect.
+
+### Everything verified so far, and by what method
+
+| component | method | result |
+|---|---|---|
+| situ, attn_res, mla_gate, kda_gate | numpy vs oracle | exact |
+| delta-net kernel, per-channel gate | self-consistency (equal channels ≡ per-head) | exact, 0.000e+00 |
+| `ssm_a` convention | measurement (23.86 vs 148.75) | folded `-exp(A_log)` |
+| KDA / MLA / output-head structure | line-by-line vs reference | match |
+| AttnRes banking rule | line-by-line vs reference | match |
+| `build_output` norm type | source | RMS, correct |
+| KDA and MLA families | mute-and-measure | both contributing |
+| state contamination | forced reset | bit-identical, ruled out |
+| MLA cache/mask | context-length scaling | ruled out |
+| quant degradation | reference used a *worse* quant | ruled out |
+
+Seven bugs were found and fixed along the way. The residual gap survives all of
+the above, which is genuinely useful information: it is not in any single
+component, and it is not any of the things that were cheap to check.
