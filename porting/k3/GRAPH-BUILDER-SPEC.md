@@ -1132,3 +1132,53 @@ what they compute.
 9. **`expert_gating_func` unread — softmax instead of sigmoid (92 layers)**
 
 Every one silent: no crash, no assert, full speed.
+
+---
+
+## Remaining work, precisely specified
+
+The port is numerically correct (PPL 1.32) and serves through
+`glm-model use kimi-k3`. Two things are left, both well-bounded.
+
+### 1. Chat parser — blocks agentic use
+
+K3's template uses `<|open|>`, `<|sep|>`, `<|close|>`, `<|end_of_msg|>` (and
+`<|kimi_image_placeholder|>` for the vision path). ik has no parser for that
+family, so it falls through to a generic one and the markers land in `content`:
+
+```
+content: think<|sep|><|open|>response<|sep|>Paris<|close|>response<|sep|><|close|>message<|sep|>
+```
+
+The answer is correct and `reasoning_content` is populated properly — this is
+purely a wrapper problem, but an agent harness will choke on it.
+
+**Where the fix goes:** `common/chat.cpp` around line 2520, where templates are
+detected by marker strings and dispatched to a parser. The Kimi-K2 case
+immediately above is the model to copy:
+
+```c
+if (src.find("<|tool_calls_section_begin|>") != std::string::npos &&
+    src.find("<|tool_call_begin|>")          != std::string::npos) {
+    return common_chat_params_init_kimi_k2(tmpl, params);
+}
+```
+
+A K3 case keys on `<|open|>` + `<|sep|>` + `<|close|>` together (all three, since
+`<|sep|>` alone is not distinctive) and extracts the text between
+`<|open|>response<|sep|>` and the matching `<|close|>`. Mainline carries an
+equivalent parser for this family — see llama.cpp #26398 for the DSV4 one — so
+there is a reference to port rather than a grammar to reverse-engineer.
+
+### 2. Fused kernel — the 3.6 tok/s
+
+`iqk_fused_delta_net` cannot express a per-channel gate in its signature, so it
+declines and 69 of 93 layers run the scalar reference path. That is the entire
+speed story. Teaching the fused kernel a full-rank gate is the optimisation, and
+the correctness bar for it already exists: `test_delta_net_gate.c` will catch a
+per-channel implementation that does not reduce to the per-head case.
+
+Note the scalar path is now known to be *correct* but was effectively dead code
+in ik before this port — the strided-view bug lived there undisturbed. Anyone
+extending the fused kernel should keep the scalar path as the reference oracle
+rather than deleting it.
