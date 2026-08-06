@@ -1017,3 +1017,52 @@ The two engines use different dump prefixes (`ggml_debug:` in ik,
 scripts need the prefix parameterised. `/models/.ds4-run/ref-raw.log` already
 holds a complete reference pass and does not need regenerating — it costs ~14
 minutes to reproduce.
+
+## FOUND: expert selection diverges at layer 1
+
+`ffn_moe_topk-1`, the 16 selected expert IDs at the first MoE layer, where the
+two engines still agree on the residual to within 1%:
+
+```
+          this port                      reference
+token 0   498, 767, 679, ... 210,656,485   498, 764, 545, ... 537,232,688
+token 1   767, 679, 788, ... 210,656,592   373, 167, 585, ... 369,351,546
+token 2   767, 788, 679, ... 485,656,210   644, 246, 676, ... 721,349,228
+```
+
+By the criterion set before running this: divergence at layer 1 means **routing
+is the cause**, not a downstream consequence of drift. Every layer after this
+inherits a different expert set, which is why the residual divergence compounds
+from layer 6 onward rather than appearing suddenly.
+
+### The second signal is more diagnostic than the first
+
+Look at how *this port's* selections behave across tokens: tokens 1 and 2 pick
+almost the same experts (767, 679, 788 recurring, plus 210/656/485 in the tail),
+while the reference's three tokens share almost nothing. Token-to-token
+stability like that is the signature of a **token-independent term dominating
+the selection score** — i.e. `exp_probs_b` swamping the actual router logits.
+
+Note also that token 0's top-1 agrees (498) and rank 2 nearly agrees (767 vs
+764). So the logits are not garbage; they are being *outranked*.
+
+### Where to look
+
+The mechanism was already verified as correct (bias applied to selection only,
+`LLM_ARCH_LLAMA4` override not applicable), so the fault is in the operands, not
+the formula. Candidates, in order:
+
+1. **Scale mismatch between `probs` and `exp_probs_b`.** ik computes
+   `probs = sigmoid(logits)` in (0,1) then adds the raw bias. If K3's bias is
+   stored on a different scale than ik assumes, it dominates. Compare
+   `ffn_moe_probs-1` and `ffn_moe_probs_biased-1` values against the reference —
+   both are already dumped by both engines.
+2. **`ffn_moe_logits-1` itself.** Already captured in
+   `/models/.ds4-run/mine-routing.raw` and `ref-raw.log`; diff them directly. If
+   the logits agree and only the biased probs diverge, it is (1).
+3. The routed-down input handed to the router. The builder passes the *normed*
+   full-width tensor, matching the reference's `identity`, but this is worth
+   confirming against the dump rather than by reading.
+
+This is the first hypothesis in the entire debugging effort that both explains
+the magnitude of the gap and predicts a specific, already-captured observable.
