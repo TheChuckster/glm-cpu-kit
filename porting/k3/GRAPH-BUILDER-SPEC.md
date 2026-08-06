@@ -1284,3 +1284,47 @@ model resumes inside a section (the Ministral parser at `common/chat.cpp:880`
 uses it with a *complete* tag, which is a different case), and ideally exercise
 the rule against a captured string offline before putting it in front of a served
 model.
+
+## The fused and scalar delta-net kernels read the gate TRANSPOSED
+
+Found while scoping the speed work, and it retroactively explains the contiguity
+bug. The two paths index `g_data` differently:
+
+```c
+// scalar, ggml.c   - token-fastest: [n_tokens, ..., n_heads]
+g_data[batch*(n_tokens*n_heads) + head*n_tokens + t]
+
+// fused, iqk_mul_mat.cpp:1481 and :1601 - head-fastest: [n_heads, n_tokens]
+g_data[g_batch_offset + t*n_heads + head_idx]
+```
+
+`build_fused_delta_net` permutes `g` into `[n_tokens, 1|S_v, H_v, n_seqs]`, but
+`ggml_permute` returns a **view** — the underlying buffer keeps its original
+head-fastest layout. So:
+
+- the **fused** kernel reads the raw buffer head-fastest, which is correct for an
+  unmaterialised view;
+- the **scalar** path reads token-fastest, which is only correct once the view has
+  been made contiguous.
+
+That is exactly the bug fixed earlier by adding `ggml_cont` on the per-channel
+path, and it is why the scalar path had been silently wrong in ik without anyone
+noticing: the fused kernel handles every per-head gate, so the scalar path was
+effectively dead code.
+
+**Consequences for the speed work.** Adding a per-channel gate to
+`iqk_fused_delta_net` is not just a matter of an extra loop:
+
+1. It must index head-fastest with a channel stride, matching the *unmaterialised*
+   view — not the layout the scalar path expects.
+2. Once it accepts per-channel gates, `build_fused_delta_net`'s `ggml_cont` on
+   that path becomes wrong for the fused route and right for the scalar one, so
+   the cont has to move behind whichever path is actually taken.
+3. `test_delta_net_gate.c` remains the correctness bar and will catch a
+   per-channel implementation that does not reduce to the per-head case — but
+   note it calls `ggml_delta_net` directly with contiguous inputs, so it exercises
+   the scalar path. Extending it to cover the fused route means feeding it a
+   permuted view, which is worth doing first.
+
+Keep the scalar path as the reference oracle rather than deleting it once the
+fused one handles K3.
