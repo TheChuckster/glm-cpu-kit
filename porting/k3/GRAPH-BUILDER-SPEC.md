@@ -1368,3 +1368,33 @@ return reasoning << RESP_OPEN << p.content(p.until(RESP_CLOSE));
 Before trying it live again, exercise the rule against the captured string
 offline — the earlier attempt went straight to a served model, which is the one
 shortcut in this whole effort that was not paid for.
+
+### Setting up the offline parser test — partial, three things learned
+
+Attempted the offline harness before touching the served model again. It did not
+compile, but the three failures are each worth recording since they are what the
+next attempt needs:
+
+1. **The test target is disabled.** `tests/CMakeLists.txt:185` has
+   `llama_build_and_test(test-chat-peg-parser.cpp peg-parser/simple-tokenize.cpp)`
+   **commented out**, so `test-chat-peg-parser` is not among the build targets.
+   Uncommenting it is enough to get it building.
+2. **`p.sequence({...})` takes parsers, not strings.** Raw `std::string` literals
+   cannot be mixed into the initializer list the way they can with `+` and `<<`
+   in a parser expression; wrap them (`p.literal(...)`) or build with the
+   operators instead.
+3. **`ctx.result()` does not exist.** The existing cases obtain the parsed
+   `common_chat_msg` some other way — read the block around
+   `tests/test-chat-peg-parser.cpp:463-475`, which is the shortest complete
+   example of parse-then-inspect.
+
+The rule itself is unchanged from the diagnosis above: no `p.prefix`, start at
+`<|sep|>`, and the captured string to test against is
+
+```
+<|sep|>REASONING<|close|>think<|sep|><|open|>response<|sep|>ANSWER<|close|>response<|sep|><|close|>message<|sep|>
+```
+
+Nothing here touched the serving path: only a test target was built, and it
+failed to compile, so `build-k3/bin/llama-server` is untouched and K3 kept
+serving throughout.
