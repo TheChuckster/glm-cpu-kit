@@ -1328,3 +1328,43 @@ effectively dead code.
 
 Keep the scalar path as the reference oracle rather than deleting it once the
 fused one handles K3.
+
+### Why parser attempt 1 failed: `p.prefix` semantics
+
+Read without touching the served model. `common/chat-peg-parser.cpp:833`:
+
+```c
+common_peg_parser common_chat_peg_builder::prefix(const std::string & s, const std::string & delimiter) {
+    if (s.empty())         return eps();
+    if (delimiter.empty()) return literal(s);
+    auto pos = s.rfind(delimiter);
+    ...
+    return literal(s.substr(0, pos));      // <-- everything BEFORE the delimiter
+}
+```
+
+It returns a literal matching the part of the generation prompt that precedes the
+delimiter — it exists so that a model which *re-echoes* its generation prompt can
+have that echo consumed. It matches nothing only when the prompt **ends** with the
+delimiter, giving `substr(0, 0)`.
+
+That is the Ministral case (`p.prefix(generation_prompt, "[THINK]")` where the
+prompt ends in `[THINK]`), and it is **not** K3's. K3's generation prompt is a
+multi-part section structure ending in `<|open|>think`, so `rfind` lands
+mid-string and the rule demanded the model emit all the preceding prompt text —
+which it never does. The top-level rule failed and everything fell through to the
+raw string, exactly matching the observed symptom.
+
+**The fix for attempt 2:** drop `p.prefix` entirely. K3 does not echo its prompt;
+its first emitted token is `<|sep|>`, so the rule should simply start there:
+
+```cpp
+auto reasoning = extract_reasoning
+    ? p.optional("<|sep|>" + p.reasoning(p.until(THINK_CLOSE)) + THINK_CLOSE)
+    : p.eps();
+return reasoning << RESP_OPEN << p.content(p.until(RESP_CLOSE));
+```
+
+Before trying it live again, exercise the rule against the captured string
+offline — the earlier attempt went straight to a served model, which is the one
+shortcut in this whole effort that was not paid for.
