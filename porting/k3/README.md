@@ -25,9 +25,14 @@ Status:
 The original estimate here was written before ik landed DeepSeek-V4. That work
 changed the shape of the port substantially:
 
-- **AttnRes needs no new op.** ik now has `GGML_OP_HC_PRE` / `GGML_OP_HC_POST`
-  (`ggml/include/ggml.h:712`). Mainline's K3 builder calls `ggml_dsv4_hc_pre` for
-  exactly this weighted sum. It is a call, not an implementation.
+- **AttnRes does NOT map onto ik's `hc_pre` — this claim was wrong.** ik gained
+  `GGML_OP_HC_PRE` from DeepSeek-V4 and mainline's K3 builder calls
+  `ggml_dsv4_hc_pre`, so this originally read "a call, not an implementation".
+  They are different ops sharing a name fragment: ik's takes `scale[3]`,
+  `bias[S*S+2S]` and runs Sinkhorn iterations, mainline's is a plain weighted sum
+  over `ne1`. Feeding an AttnRes stack to ik's would assert. Build the sum from
+  primitives instead — there are at most 8 checkpoints, so it is nearly free.
+  See `GRAPH-BUILDER-SPEC.md`.
 - **Every primitive K3 needs already exists in ik**: `softplus`, `l2_norm`,
   `sigmoid`, `tanh`, `sum_rows`, `soft_max`, `ssm_conv`, `delta_net`, `hc_pre`,
   `hc_post`, `concat`, `scale`. Mainline's PR touches **no ggml files at all**.
