@@ -411,3 +411,47 @@ hunting elsewhere.
 
 The cheapest next move is a logit diff against `~/llama.cpp-k3` on a one-token
 prompt, layer by layer, rather than more reasoning from shapes.
+
+### Debug log: three real bugs fixed, output still wrong
+
+All found by re-reading the code against ik's conventions rather than by
+bisecting, and all of the same species — nothing crashes, nothing asserts.
+
+1. **The recurrent state was never reset.** The builder passed a constant
+   `false` for `reset_state_local`. ik derives it from the batch
+   (`batch.pos[0] == 0`). Output unchanged in practice, because the buffer
+   happened to be zeroed — but it would have corrupted the second sequence.
+2. **`inp_out_ids` narrowed inside the last layer.** Handing it to the final
+   attention made `cur` one row while `prefix_sum` still had `n_tokens`, and
+   `ggml_add` *broadcasts* rather than failing, since `n_tokens % 1 == 0`. Every
+   prompt pass silently corrupted the last residual. Single-token decode was
+   unaffected (`inp_out_ids` is null there), which is what hid it. Narrow once
+   at the end, after the final AttnRes mix.
+3. **The dense FFN added the residual twice.** `llm_build_ffn`'s `add_input`
+   adds the block input to its own output; Qwen3-Next passes `true` because it
+   lets the helper do the residual. K3 adds `prefix_sum` itself, so `true` meant
+   layer 0's input landed twice. **This one changed the output**, confirming the
+   graph is sensitive to it.
+
+### Also ruled out
+
+- **Expert gating enum.** ik's `LLM_EXPERT_GATING_FUNC_SIGMOID == 2`, matching
+  the GGUF's `expert_gating_func = 2`. No mismatch.
+- **`ssm_a` sign convention — inconclusive, not wrong.** The tensor is all
+  negative (`-0.59, -1.18, -0.63, ...`), which is consistent with BOTH
+  `-exp(A_log)` (mainline's stated folding) and a raw `A_log` that happens to be
+  negative. Either way the gate keeps the same form and a sane decay range, so
+  this is a quality-level difference at worst, not the dominant bug.
+- **Expert tensor shapes.** `ffn_gate_exps [3584, 3072, 896]` and
+  `ffn_down_exps [3072, 3584, 896]` match the GGUF exactly.
+
+### The reference control is impractical as a fast oracle
+
+`~/llama.cpp-k3` on the same quant ran **56+ minutes without finishing** 40
+tokens. It is mainline, so no fused-MoE kernels, on 861 GB with DS4 co-resident.
+A layer-by-layer logit diff against it is therefore an overnight-scale operation
+per data point, not an interactive one. Two consequences:
+
+- Prefer the op fixtures (`k3_ops_oracle.py`) over model-level diffing.
+- If a model-level diff is needed, do it at **one token**, dumping intermediate
+  tensors via the `cb` callback on both engines, not by comparing generated text.
