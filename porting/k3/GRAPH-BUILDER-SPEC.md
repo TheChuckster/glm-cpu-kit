@@ -559,3 +559,31 @@ The honest next step is a perplexity number, which is quantitative and needs onl
 one forward pass per chunk: `llama-perplexity` on wiki.test.raw. A value in the
 teens-to-thirties means the port is broadly right and the quant is the limit;
 hundreds or more means bugs remain.
+
+## Perplexity: 56.18 — working, but not clean
+
+```
+llama-perplexity -c 512 -b 512 -t 64 -fa 1 -mla 3 --chunks 8
+[1]23.58 [2]32.17 [3]36.99 [4]44.95 [5]46.67 [6]49.81 [7]54.17 [8]56.18
+Final estimate: PPL = 56.1774 +/- 3.83870
+PP throughput: 34.58 tok/s over 4096 tokens
+```
+
+A finite, converging perplexity is itself a result: a model with a structurally
+broken layer produces hundreds or NaN, not 56. Combined with grammatical output,
+that says the port is broadly correct.
+
+But 56 is high, and **the per-chunk curve rises monotonically** (23.6 → 56.2)
+rather than fluctuating around a mean. That shape is the thing to chase next: it
+is what state contamination across chunks looks like. `llama-perplexity` may not
+restart positions per chunk, in which case the KDA recurrent state carries over
+and degrades — `reset_state` fires on `batch.pos[0] == 0`, which would then only
+be true for the very first chunk.
+
+Cheap way to tell them apart: run the identical perplexity command against
+DeepSeek-V4 (known-good on this box). If DS4's curve also climbs, it is the
+harness or the data; if DS4's is flat, K3 is carrying state it should not.
+
+Note also PP here is 34.58 tok/s against 12 tok/s in `llama-cli`, because
+perplexity batches 512 tokens at a time — worth remembering before drawing
+conclusions about speed from the CLI numbers.
