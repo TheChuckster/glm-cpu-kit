@@ -11,9 +11,10 @@
 # READ THIS FIRST - K3 is the slowest model on the box, and the number that
 # hurts is not the one you would expect:
 #
-#   ~39 tok/s prompt processing, ~3.7 tok/s generation. opencode's system
+#   ~40 tok/s prompt processing, ~4.3 tok/s generation. opencode's system
 #   prompt plus tool definitions runs well over 10K tokens, so EXPECT ROUGHLY
-#   FIVE MINUTES BEFORE THE FIRST TOKEN of a fresh session, every session.
+#   FOUR MINUTES BEFORE THE FIRST TOKEN of a fresh session, every session.
+#   (Measured end to end: 225s for a one-word reply on a cold session.)
 #   Nothing is hung. It looks exactly like a hang, and an HTTP client with a
 #   default timeout will give up before the model answers - which is what
 #   "kimi-opencode doesn't work" turned out to be.
@@ -68,8 +69,8 @@ fi
 # Say this out loud every time. A five-minute silence before the first token is
 # indistinguishable from a hang, and treating it as one is the single most
 # likely way to conclude - wrongly - that this script is broken.
-echo "kimi-k3: ~39 tok/s prompt processing. A fresh session sends 10K+ tokens of" >&2
-echo "         system prompt and tools, so the FIRST reply takes ~5 minutes." >&2
+echo "kimi-k3: ~40 tok/s prompt processing. A fresh session sends 10K+ tokens of" >&2
+echo "         system prompt and tools, so the FIRST reply takes ~4 minutes." >&2
 echo "         It is not hung. Watch it work:  ssh chuckdancer 'sudo journalctl -fu glm-server'" >&2
 echo >&2
 
