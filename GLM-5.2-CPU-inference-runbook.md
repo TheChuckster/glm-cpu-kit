@@ -619,6 +619,53 @@ So the 3.7 tok/s is the MoE path, not the gate — 16 of 896 experts active acro
 92 layers. That is a separate investigation, and no part of it was ever measured
 by the claim this section used to make.
 
+### What K3 does at agent-scale context, and where it stops
+
+Benchmarks that stop at N_KV=512 say nothing about a coding agent, which opens
+with 10K+ tokens of system prompt and tools. K3 degrades gently rather than
+falling off a cliff — `llama-sweep-bench -c 16384`:
+
+| context | PP tok/s | TG tok/s |
+|---|---|---|
+| 0 | 40.25 | 4.31 |
+| 2048 | 38.36 | 4.25 |
+| 4096 | 36.91 | 4.20 |
+| 8192 | 34.18 | 4.08 |
+| 12288 | 32.04 | 4.03 |
+
+-20% prompt processing and -6.5% generation across 12K. So a fresh opencode
+session is ~4 minutes to first token, and it does not get dramatically worse as
+the session grows.
+
+### The ceiling, and why it is the ceiling
+
+K3 reads 56.40 GiB per token and achieves **260 GB/s** doing it. GLM-5.2 on the
+same box achieves **354 GB/s**, which is the best this hardware has been observed
+to do, so K3 sits at 74% of a demonstrated ceiling rather than a theoretical one.
+
+Everything that could close that gap has been tried and did not:
+
+- `-rtr` repacks tensors to SIMD-friendly `_R4` layouts. No TG change (and -16% PP).
+- `-muge` merges the up/gate expert matmuls, halving their count. No change.
+- `-mqkv`, `--no-mmap`, thread counts from 2 to 128. No change, or worse.
+
+Those are the two candidate explanations — layout and scheduling — and both came
+back flat, which points at IQ2_XS decode cost being inherent per byte rather than
+fixable by rearranging work. The test for *that* would be requantizing the
+experts to one of ik's own `IQ2_K` types, which exist precisely because they
+decode faster on CPU than mainline's `IQ2_XS`.
+
+**That path is closed, for a specific reason worth recording.** Requantizing
+2-bit weights without an importance matrix degrades them badly, and no K3
+imatrix is published — not by unsloth (135 files, none), not by bartowski or
+mradermacher (no K3 repo at all). unsloth's own quant references
+`Kimi-K3-GGUF/imatrix_unsloth.gguf` in its metadata, which is a path on their
+build machine. Generating one from scratch means forward passes over a
+calibration set with a 2.8T-parameter model.
+
+So K3 is at its practical ceiling **on this quant**. The way past it is a better
+quant, not a better kernel or a better flag.
+
 ### K3 always reasons, and spends the budget before it answers
 
 K3 emits its whole `<|open|>think<|sep|>` section before the response section
