@@ -53,13 +53,17 @@ about a third of GLM's footprint and roughly a third of its bytes-per-token.
 Runbook §6b covers why the usual quant ladder does not apply to it, why it needs
 its own engine build, and what is still open upstream for tool calling.
 
-`kimi-k3` / `kimi-k3-ik` are registered but show as `pending`: no trusted quant
-is published yet, and ik_llama.cpp has no `kimi-k3` architecture. K3 also can't
-fit at 4-bit — Moonshot ships its experts already `mxfp4` and the native release
-is 1,561 GB against this box's 1,133 GB, so anything that fits is a
-requantisation down to ~2–3 bpw and will likely land *below* GLM-5.2 Q4. Run
-`glm-model upstream` to see whether unsloth/ubergarm have shipped. Runbook §6a
-has the full analysis, including what an ik port would take.
+**Kimi K3 works, on a forked engine.** ik_llama.cpp has no `kimi-k3`
+architecture and ikawrakow declined to add one ([ik #2203](https://github.com/ikawrakow/ik_llama.cpp/issues/2203)),
+so the port lives on [`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp)
+branch `kimi-k3`, built into `build-k3` and selected by the registry's `engine`
+field. Perplexity 1.32 against a 1.55 reference; ~3.6 tok/s, because K3's
+per-channel KDA gate cannot use the fused AVX-512 kernel so 69 of 93 layers take
+the scalar path. Runbook §6c and [`porting/k3/`](porting/k3/) have the full
+account, including the eleven silent bugs it took to get there.
+
+`kimi-k3-ik` stays `pending` — ubergarm has published no K3 quant, so that row is
+still a guess about filenames. Run `glm-model upstream` to check.
 
 **Per-model flags.** Field 9 (`opts`) of a registry row is appended last to the
 server command line. It exists because "turn thinking off" is not one flag:
