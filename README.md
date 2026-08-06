@@ -7,6 +7,11 @@ Start with [`GLM-5.2-CPU-inference-runbook.md`](GLM-5.2-CPU-inference-runbook.md
 step-by-step with the reasoning behind each choice. This README is just the file map and the
 list of things you have to edit.
 
+Adding another model to a box that is already serving one?
+[`ADDING-A-MODEL.md`](ADDING-A-MODEL.md) is the repeatable procedure, generalised
+from adding DeepSeek-V4-Flash and Kimi K3 — including why every change must be
+additive, and the two times a shared default broke serving anyway.
+
 The reference target is a dual-socket box (for example 2x EPYC 9B45). NUMA handling (runbook
 section 4) is the main thing that differs from a single socket: get the model's memory
 interleaved across both sockets.
