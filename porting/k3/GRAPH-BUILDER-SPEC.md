@@ -1398,3 +1398,41 @@ The rule itself is unchanged from the diagnosis above: no `p.prefix`, start at
 Nothing here touched the serving path: only a test target was built, and it
 failed to compile, so `build-k3/bin/llama-server` is untouched and K3 kept
 serving throughout.
+
+
+## Parser: DONE
+
+Landed on attempt three. `content` now holds only the answer:
+
+```
+content   : 'Tokyo'
+reasoning : 'The user is asking a simple factual question: the capital of Japan...'
+```
+
+and a longer code answer comes back as clean markdown with no markers at all.
+
+**What made the difference was the fixture, not the rule.** Attempts one and two
+failed on a fixture captured from the post-processed `content` field, which has
+already had the message opener stripped — so it tested the parser against a
+string the parser never sees. Attempt two passed 3/3 offline and still
+crash-looped the server. The working fixture came from the **crash message**,
+which shows the untouched input:
+
+```
+<|open|>message role="assistant"<|sep|><|open|>think<|sep|> R <|close|>think<|sep|>
+<|open|>response<|sep|> ANSWER <|close|>response<|sep|><|close|>message<|sep|>
+```
+
+The model emits its own message opener — so the original `p.prefix` diagnosis was
+wrong twice over: `prefix()` exists precisely to consume a re-echoed prompt, and
+removing it was the wrong correction. The final rule wraps the opener in its own
+`p.optional` so a turn rendered without it still parses.
+
+Also note `p.optional` takes a parser: a bare `std::string` only works inside an
+expression where another operand is already a parser, so a lone marker needs
+`p.literal(...)`.
+
+The offline harness was still the right call — it caught the compile errors and
+the rule shape for free, and the target had to be un-commented in
+`tests/CMakeLists.txt` to exist at all. The lesson is narrower than "test
+offline": **an offline test is only as good as where its fixture came from.**
