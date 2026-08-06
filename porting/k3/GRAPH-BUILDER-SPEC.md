@@ -653,3 +653,42 @@ counts, the most valuable next experiments are the ones that isolate a *family*:
   would scale differently with context length than one in the KDA recurrence.
 - Run the op fixtures through the real ik ops. That is what they exist for, and
   it is the only check here that does not need an 861 GB load per iteration.
+
+### Context-length scaling: the defect is mostly length-independent
+
+| | n_ctx=512 | n_ctx=8192 | reference (n_ctx=8192) |
+|---|---|---|---|
+| PPL | 56.18 | **34.07** | **1.55** |
+
+Going to the reference's own context length recovers some of the gap (56 → 34)
+but leaves ~22x. Two things follow:
+
+- **Not primarily the MLA cache or mask.** A defect there — a mis-sized cache
+  view, a wrong mask, positions applied incorrectly — would scale strongly with
+  context length. This barely does.
+- **So it lives in per-token computation**, which is where the search should now
+  concentrate: the KDA layers (69 of 93, and by far the most novel code here),
+  the latent MoE, AttnRes, or situ.
+
+The residual length sensitivity that *does* exist (56 → 34) is consistent with
+ordinary context benefit rather than a bug signature — a healthy model improves
+with more context too.
+
+### Ranked suspects, given everything now known
+
+1. **KDA.** 69 of 93 layers, entirely new code, and the component whose scalar
+   execution path had never been exercised in ik before this port (see the
+   contiguity bug). The gate arithmetic, the conv fusion and the state handling
+   have each been hand-verified but never checked numerically.
+2. **AttnRes.** Hand-written against an op ik does not have. Disabling it makes
+   output worse, so it is doing something right, but "better than nothing" is a
+   long way from correct.
+3. **Latent MoE.** The three-width structure is unusual and the router runs at a
+   different width from the experts.
+4. **situ.** Simplest of the four and used everywhere, so an error would be
+   pervasive — but it is four lines and reads correctly.
+
+The one check that does not cost an 861 GB load per iteration is running
+`fixtures/*.f32` through the real ik ops and diffing against the oracle. Given
+four candidates and ~15 minutes per model-level experiment, that harness is now
+clearly worth building before more guessing.
