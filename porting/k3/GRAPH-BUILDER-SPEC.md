@@ -276,7 +276,22 @@ that would double-normalise before wiring both.
 
 ## MLA output gate
 
-From the reference: computed from the **layer input** (post-`attn_norm` `cur`),
-`sigmoid`, multiplied into the attention output *before* `wo`. Tensor is
-`attn_gate [n_embd, n_head*v_mla]`; the `n_embd` input width is the giveaway that
-it is not gating on the attention output.
+Confirmed against the reference: `g = sigmoid(mul_mat(attn_gate, cur))` where
+`cur` is the **normed** layer input, applied to the attention output, and only
+then the output projection. So `wo` must NOT be handed to the attention helper -
+it is applied after the gate.
+
+## MLA layer, confirmed details
+
+- **No RoPE.** The nope/rope split still exists structurally (192 = 128 nope + 64
+  rope) and `k_pe`/`q_pe` are still sliced out and concatenated, but no rotation
+  is applied — the converter asserts `mla_use_nope`. Do not add a rope call just
+  because the GGUF carries rope keys.
+- Absorbed path (what K3 ships, since `wk_b`/`wv_b` are present):
+  `q_nope` is permuted, multiplied by `wk_b`, permuted back, then concatenated
+  with `q_pe` to form Q. K is `concat(kv_cmpr_3d, k_pe)` and V is `kv_cmpr_3d`
+  alone, with `wv_b` passed to the attention helper as the value-expansion.
+- `kv_a_norm` is applied to the compressed KV **after** slicing off `k_pe`.
+- ik's equivalent machinery lives in `src/graphs/build_deepseek2.cpp` and
+  `build_deepseek4.cpp`; the shapes above map onto it, but ik's `build_attn`
+  signature differs from mainline's and is what the port has to target.
