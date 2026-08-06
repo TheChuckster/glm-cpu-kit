@@ -572,6 +572,74 @@ Nothing in the serving path passes `-rtr`, so this only bites if you add it by h
 
 ---
 
+## 6c. Kimi K3: when the engine does not support the model at all
+
+Everything so far assumed ik could load the model. K3 is the case where it could
+not — no `kimi-k3` architecture existed, and ikawrakow declined to add one on
+[ik #2203](https://github.com/ikawrakow/ik_llama.cpp/issues/2203): *"seriously
+beyond my hardware limits. Not sure I want to just blindly copy the mainline K3
+PR."* That is a hardware and review-confidence objection, not a design one, and
+the answer to it is a port validated on hardware he does not have.
+
+So this box runs K3 on a **fork**:
+[`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp)
+branch `kimi-k3`, built into `build-k3`, selected by the registry's `engine`
+field. Full derivation, every dead end, and the remaining work are in
+[`porting/k3/GRAPH-BUILDER-SPEC.md`](porting/k3/GRAPH-BUILDER-SPEC.md).
+
+**Where it landed:** wikitext perplexity **1.32** (n_ctx 512) against a
+**1.55** reference measured at 8192 on a worse quant, answering correctly on
+facts, code and arithmetic, at **3.6 tok/s**.
+
+### The one number that explains the speed
+
+3.6 tok/s against DeepSeek-V4's 23 is not the model being large. K3's KDA gate is
+**per-channel** (`use_full_rank_gate`), and ik's fused AVX-512 delta-net kernel
+cannot express that in its signature, so it declines and 69 of the 93 layers fall
+back to the scalar reference path. Teaching the fused kernel a full-rank gate is
+the whole optimisation, and `porting/k3/test_delta_net_gate.c` is already its
+correctness bar.
+
+### What this cost, and the lesson worth carrying
+
+Eleven bugs, **every one silent** — no crash, no assert, full speed, plausible
+output. That is the defining property of this work: the model ran end to end
+while being numerically wrong, and each fix moved perplexity without ever
+producing an error message.
+
+The decisive one was a single unread hparam. `expert_gating_func` defaults to
+`SOFTMAX`; K3 declares `SIGMOID`. Softmax over **896** experts yields
+probabilities near 1/896, which the ~0.03 router bias then swamps — so expert
+selection became almost token-independent and the model routed to nearly the same
+experts for every token.
+
+It was found by **comparing two engines' actual execution** on one prompt
+(`llama-eval-callback` on both, diffed layer by layer), not by inspecting either
+in isolation. Every component had already been verified against its own
+specification — ops against a numerical oracle, the kernel by self-consistency,
+structures line-by-line against the reference — and all of them passed, because
+the fault was in *configuration* upstream of them, making correct components
+compute the wrong thing.
+
+**The general rule:** when every part checks out and the whole is still wrong,
+stop verifying parts. Diff a working implementation's execution against yours.
+
+### Serving it
+
+`glm-model use kimi-k3` works, and the selection survives reboot. Two caveats,
+both recorded in the registry row so they show up before use rather than after:
+
+- The template's structural markers (`<|open|>`, `<|sep|>`, `<|close|>`) leak into
+  `content`. The answer is correct and `reasoning_content` is clean, but anything
+  parsing `content` must strip them. ik has no parser for this template family;
+  one attempt is documented, including why it failed.
+- `--cache-type-v f16` is forced on that row. `serve-glm.sh` sets `q8_0` for both
+  caches and ik asserts `n_embd_head_v(0) % block_size == 0`; K3 reports
+  `value_length = 74`, which is meaningless for an MLA model but still trips the
+  assert. Only surfaced by actually serving it — every CLI test omitted the flag.
+
+---
+
 ## 7. The server launch script
 
 Create `~/serve-glm.sh`. The key flags and the reasoning behind each:
