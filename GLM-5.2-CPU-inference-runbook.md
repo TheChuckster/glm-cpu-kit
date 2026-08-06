@@ -683,6 +683,60 @@ dead end. And the quantizer **refuses** 2-bit without one ("The result will be
 garbage, so bailing out"), which is a good check; `--ignore-imatrix-rules` does
 not get you past it for IQ2_XS, which asserts inside `ggml_quantize_chunk`.
 
+### Tool calls, and two things that silently stopped them
+
+K3 could not emit a tool call through the OpenAI API at all: the parser handled
+reasoning and content and had no tool support, so a request with tools returned
+`finish_reason: stop`, no `tool_calls`, and empty content after burning the whole
+budget. Fixed in the fork (`c10d1e2`); it works now, single- and
+multi-argument, with correctly typed values.
+
+K3 does not emit JSON. It nests the same tags it uses for everything else, one
+tag per **argument**, with the value as the tag body:
+
+```
+<|open|>tools<|sep|>
+  <|open|>call tool="get_weather" index="1"<|sep|>
+    <|open|>argument key="city" type="string"<|sep|>Oslo<|close|>argument<|sep|>
+  <|close|>call<|sep|>
+<|close|>tools<|sep|>
+```
+
+Two non-obvious things were needed, and both failed *silently* — a parse that
+does not match does not report anything, it just drops the call:
+
+- **The response section is optional.** K3 usually emits an empty one before the
+  tool block, but goes straight from think to tools on a pure tool call.
+- **`--repeat-penalty 1.0`, in the row's `opts`.** `serve-glm.sh` sets 1.1
+  globally, which was right for GLM's looping. Structured tag output is
+  inherently repetitive, so penalising the second `<|open|>argument key="` made
+  the model **derail into unrelated text** — it started answering about the 2014
+  250cc MotoGP season when asked for a weather forecast. One argument worked and
+  two did not, which is what made it look like a parser bug. Third time a shared
+  default in `serve-glm.sh` has broken a model.
+
+### `thinking_effort` — K3's template defaults it to `max`
+
+Worth knowing, and not documented anywhere obvious. K3's chat template renders a
+system message carrying a `thinking_effort` value, and the default is **`max`**:
+
+```
+`thinking_effort` guides on how much to think in your thinking channel...
+supported values include `low`, `medium`, `high`, and `max`.
+Now the system is invoked with `thinking_effort=max`.
+```
+
+It is settable per request via `chat_template_kwargs: {"thinking_effort": "low"}`,
+and confirmed to reach the prompt (check with the `/apply-template` endpoint).
+It explains why K3 spends 1700+ characters reasoning about the capital of
+Iceland.
+
+**Adherence is variable, so do not treat it as a throughput setting.** Measured
+on one fixed question: `low` produced 9127 characters of reasoning and `high`
+produced 2781. It clearly does something — a tool call that burned 2000 tokens at
+`max` completed in 23 seconds at `low` — but it is a hint the model may ignore,
+not a budget it respects.
+
 ### K3 always reasons, and spends the budget before it answers
 
 K3 emits its whole `<|open|>think<|sep|>` section before the response section

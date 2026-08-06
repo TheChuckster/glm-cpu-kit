@@ -102,6 +102,11 @@ buys almost no speed, while requantising the 7.2% of the file nobody optimises
 would be worth ~1.4x. `porting/k3/bytes_per_token.py` computes this for any GGUF
 and is worth running before assuming a model is slow.
 
+**Tool calls work on K3** as of fork `c10d1e2` — it emits them as nested
+`<|open|>argument key=...<|sep|>` tags rather than JSON, and needed a parser plus
+`--repeat-penalty 1.0` (the global 1.1 penalises structured tag output badly
+enough to derail the model mid-call). Runbook §6c.
+
 `kimi-k3-ik` stays `pending` — ubergarm has published no K3 quant, so that row is
 still a guess about filenames. Run `glm-model upstream` to check.
 
