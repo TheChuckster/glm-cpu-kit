@@ -1066,3 +1066,69 @@ the formula. Candidates, in order:
 
 This is the first hypothesis in the entire debugging effort that both explains
 the magnitude of the gap and predicts a specific, already-captured observable.
+
+---
+
+# SOLVED: PPL 23.86 -> 1.32
+
+`hparams.expert_gating_func` **defaults to `LLM_EXPERT_GATING_FUNC_SOFTMAX`**,
+and the K3 hparams loader never read the GGUF key. All 92 MoE layers routed with
+softmax instead of the sigmoid K3 declares (`expert_gating_func = 2`).
+
+```
+mine:      ffn_moe_probs-1 = SOFT_MAX(logits)  ->  0.0013, 0.0009, 0.0015
+reference: ffn_moe_probs-1 = SIGMOID(logits)   ->  0.1367, 0.1045, 0.1574
+```
+
+The damage was worse than a wrong activation. Softmax over **896** experts gives
+probabilities near 1/896 ~ 0.001, while `exp_probs_b` holds values near 0.03 —
+so `selection_probs = probs + bias` was dominated by the **token-independent**
+bias. Expert selection barely varied per token, which is exactly the signature
+visible in the `ffn_moe_topk` dumps two sections above: this port picked
+767/679/788 for consecutive tokens where the reference picked entirely different
+sets.
+
+| | PPL |
+|---|---|
+| before | 23.86 |
+| **after** | **1.3192 +/- 0.030** |
+| reference (`Q2_K`, n_ctx 8192) | 1.5499 |
+
+Below the reference, at a shorter context and with a better quant
+(`UD-Q2_K_XL`), which is the ordering one would expect. The per-chunk curve now
+**descends** (1.35 -> 1.32) like DS4's, instead of climbing.
+
+## How it was found, and what that says about the method
+
+The eval-callback diff. The router logits matched the reference to ~0.001 — so
+every input was right — but the very next op was `SOFT_MAX` here against
+`SIGMOID` there, sitting side by side in the two dumps.
+
+Worth being precise about why the earlier checks all passed. Every one of them
+verified a *component against its own specification*: the ops matched the
+oracle, the kernel was self-consistent, the structures matched the reference
+line by line, both attention families were essential. This bug lived in
+**hparam loading**, upstream of all of it, and it made a correct component
+compute the wrong thing. No amount of component verification finds that.
+
+What did find it was comparing two engines' *actual execution* on the same
+input. That is a different class of evidence, and in hindsight it should have
+come earlier — it was recommended for several cycles while cheaper avenues were
+exhausted first. The cheaper avenues did find seven real bugs, so the ordering
+was not wrong, but the lesson stands: when every component verifies and the
+whole is still wrong, the fault is in how the components are configured, not in
+what they compute.
+
+## Full bug list
+
+1. `LLAMA_MAX_EXPERTS` 512 blocked loading at all
+2. `ggml_delta_net` could not express a per-channel gate
+3. Strided views reaching the scalar delta-net path (garbage -> English)
+4. KDA output gate used SiLU instead of sigmoid (69 layers)
+5. `ggml_add` broadcast silently corrupting every prompt pass
+6. Dense FFN added the residual twice
+7. Recurrent state never reset
+8. `ffn_routed_norm` on the expert input instead of the output (92 layers)
+9. **`expert_gating_func` unread — softmax instead of sigmoid (92 layers)**
+
+Every one silent: no crash, no assert, full speed.
