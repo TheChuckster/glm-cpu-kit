@@ -655,16 +655,33 @@ fixable by rearranging work. The test for *that* would be requantizing the
 experts to one of ik's own `IQ2_K` types, which exist precisely because they
 decode faster on CPU than mainline's `IQ2_XS`.
 
-**That path is closed, for a specific reason worth recording.** Requantizing
-2-bit weights without an importance matrix degrades them badly, and no K3
-imatrix is published — not by unsloth (135 files, none), not by bartowski or
-mradermacher (no K3 repo at all). unsloth's own quant references
-`Kimi-K3-GGUF/imatrix_unsloth.gguf` in its metadata, which is a path on their
-build machine. Generating one from scratch means forward passes over a
-calibration set with a 2.8T-parameter model.
+**Tested, and the premise was backwards.** Rather than requantize 800 GiB of K3
+on a hunch, the question was settled on DeepSeek-V4, where a full cycle is 40
+minutes: build the same model twice with its experts at `IQ2_XS` and at `IQ2_K`,
+identical in every other respect, and compare. (Quality is irrelevant to a decode
+probe; both were built at ~81 GB from a locally generated 150-chunk imatrix.)
 
-So K3 is at its practical ceiling **on this quant**. The way past it is a better
-quant, not a better kernel or a better flag.
+| DS4 expert type | PP @512 | TG @512 |
+|---|---|---|
+| **IQ2_XS** | **356.13** | **29.93** |
+| IQ2_K | 264.27 | 22.78 |
+
+**IQ2_XS is 35% faster to decode on prompt processing and 31% faster on
+generation.** ik's own `IQ2_K` — the type the whole idea rested on — is
+substantially *slower*. Requantizing K3's experts into it would have cost a
+quarter of its throughput, after hours of work and a lossy 2-bit round trip.
+
+So unsloth's choice of `IQ2_XS` is already the fast one, and K3's experts are on
+the best 2-bit format available here. That closes the last lever: K3 is at its
+practical ceiling on this quant, and the way past it is a *better quant* — one
+with fewer always-read bytes — not a better kernel, flag, or expert format.
+
+Two things worth keeping from the attempt. `llama-imatrix` is cheap: 150 chunks
+over 76,800 tokens took 11 minutes on DeepSeek-V4, so "no published imatrix" is
+not the blocker it looks like — it is an afternoon on a big model, not a
+dead end. And the quantizer **refuses** 2-bit without one ("The result will be
+garbage, so bailing out"), which is a good check; `--ignore-imatrix-rules` does
+not get you past it for IQ2_XS, which asserts inside `ggml_quantize_chunk`.
 
 ### K3 always reasons, and spends the budget before it answers
 

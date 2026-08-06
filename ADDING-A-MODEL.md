@@ -224,6 +224,11 @@ Tested here and NOT worth adopting, recorded so nobody retries them:
   and 4.29-4.32 TG against a 39.49 / 4.30 baseline. Both are fusions rather than
   approximations and cost nothing to try, but neither moves this workload.
 - **Four-bit non-expert weights** — see the ladder above. Real perplexity cost.
+- **Requantizing routed experts to ik's `IQ2_K`.** The premise was that ik's own
+  quant types decode faster on CPU than mainline's `IQ*_XS`. Measured on
+  DeepSeek-V4 (same model twice, experts at `IQ2_XS` vs `IQ2_K`, ~81 GB each):
+  IQ2_XS wins by **35% on PP and 31% on TG**. It is backwards. Publishers'
+  `IQ2_XS` experts are already the fast choice.
 
 The pattern across all of them: on a bandwidth-bound workload, only two things
 have ever moved the number — reading fewer bytes, and not paying too much CPU per
