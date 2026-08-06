@@ -1168,6 +1168,25 @@ A K3 case keys on `<|open|>` + `<|sep|>` + `<|close|>` together (all three, sinc
 `<|sep|>` alone is not distinctive) and extracts the text between
 `<|open|>response<|sep|>` and the matching `<|close|>`.
 
+**The output grammar, decoded.** Observed emission for a one-word answer:
+
+```
+think<|sep|><|open|>response<|sep|>Paris<|close|>response<|sep|><|close|>message<|sep|>
+```
+
+which parses as a nestable section format:
+
+```
+<|open|>NAME<|sep|>  CONTENT  <|close|>NAME<|sep|>
+```
+
+Sections seen: `response` (the visible answer) nested inside `message`, with a
+leading `think` section. So the parser extracts the body of the `response`
+section and discards the rest. ik's parsers are built with
+`build_chat_peg_parser(...)` — see `common_chat_params_init_kimi_k2` at
+`common/chat.cpp:1338` for a worked example, including how `preserved_tokens`,
+`thinking_start_tag` / `thinking_end_tag` and the PEG builder fit together.
+
 Two things checked so the fix does not chase the wrong layer. `<|end_of_msg|>`
 **is** correctly registered as an EOG token (163586), so generation stops where
 it should — this is not a stopping problem. And the
