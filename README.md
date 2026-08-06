@@ -31,6 +31,14 @@ interleaved across both sockets.
 | `glm-model` | list / download / switch / track which model is served | 6a |
 | `validate-model.sh` | prove a new quant loads, stays coherent, keeps reasoning out of `content`, and can call a tool — on a spare port | 6b |
 
+**Speculative decoding is on, and it is close to free money for agent work.**
+`--spec-type ngram-mod` drafts from n-grams already in the context and verifies
+a run of them in one pass — lossless, and near-free on a bandwidth-bound box.
+GLM does a code edit at **23-30 tok/s against a 12.4 baseline** (+89% to +143%)
+and generic prose at exactly 12.40, i.e. no cost when it cannot fire. It does
+nothing for K3 or DeepSeek-V4, which always reason, and reasoning prose repeats
+nothing. See [`ADDING-A-MODEL.md`](ADDING-A-MODEL.md) §8.
+
 **Every model here got ~17% faster generation** by requantizing only its
 non-expert tensors to Q5_K (GLM 10.68 -> 12.43, DS4 23.82 -> 27.75, K3
 3.67 -> 4.30 tok/s), with perplexity unchanged inside its error bar in all three

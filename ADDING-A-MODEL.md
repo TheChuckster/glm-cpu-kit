@@ -188,7 +188,49 @@ stay downloaded and one `glm-model use` away. A locally-built variant needs its
 `.complete` marker written by hand, since there is no upstream to size-check
 against: `stat -c %s *.gguf | paste -sd+ | bc > .complete`.
 
-## 8. Per-model flags are per-model: check, do not assume
+## 8. Speculative decoding: free, and enormous on the right workload
+
+`--spec-type ngram-mod:n_max=16,n_min=2` drafts tokens by matching n-grams
+already in the context and lets the model verify a run of them in one pass.
+Two properties make it unusually attractive here:
+
+- **It is lossless.** Only tokens the target model would have produced are
+  accepted, so output is unchanged. This is not a quality trade.
+- **Verification is nearly free on this box.** Generation is bandwidth-bound, so
+  checking 16 drafted tokens costs about what generating one costs. Every
+  accepted token is close to pure profit.
+
+Measured on GLM-5.2, same server, same config, two workloads:
+
+| | tok/s |
+|---|---|
+| generic prose (no n-gram overlap) | **12.40** — its exact baseline |
+| a code edit ("output this function, rename it") | **23.48, then 30.19** |
+
+That is **+89% to +143% on the workload a coding agent actually runs**, and
+*exactly zero cost* when nothing repeats. The control is the point: prose comes
+back at the baseline to three digits, so the gain is attributable to speculation
+and nothing else.
+
+**It does nothing for a reasoning model, and the reason generalises.** Kimi K3
+and DeepSeek-V4 always think before answering, and reasoning prose repeats
+nothing in the context, so nothing gets drafted — K3 measured 4.17-4.38 against
+a 4.30 baseline, i.e. noise in both directions. It is still worth enabling
+(it costs nothing and fires during the answer phase), but the win belongs to
+models with thinking off.
+
+Beware a measurement artifact here. `llama-spec-bench -f prompt.txt` feeds the
+prompt as a **raw completion**, with no chat template, so the model simply
+continues the text — echoing the input, at 93% draft acceptance, for a headline
+7.13 vs 4.28. That number is real and completely unrepresentative: through the
+server, with the chat template applied, the same model and prompt gain nothing.
+Measure speculation through the actual serving path or not at all.
+
+`n_max` has a clear optimum and it is not "bigger is better": 16-20 is the peak
+(7.13-7.21 in the raw harness), 32 falls to 5.85, and 64 collapses to 4.26 as
+acceptance drops to 12% and the wasted verification outweighs the wins.
+
+## 9. Per-model flags are per-model: check, do not assume
 
 `-rtr` (run-time repack) is the sharpest example measured here:
 

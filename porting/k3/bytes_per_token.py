@@ -16,7 +16,7 @@ header). Pass all shards; the tensor table lives in each.
 
     bytes_per_token.py /models/Kimi-K3-UD-Q2_K_XL/*.gguf --used 16 --experts 896
 """
-import struct, sys
+import re, struct, sys
 
 U8, I8, U16, I16, U32, I32, F32, BOOL, STR, ARR, U64, I64, F64 = range(13)
 _FMT = {U8: "<B", I8: "<b", U16: "<H", I16: "<h", U32: "<I", I32: "<i",
@@ -123,6 +123,7 @@ def main():
     routed = always = 0
     by_type = {}
     always_by_type = {}
+    always_names = []
     for path in args:
         for name, tt, nbytes in tensors(path):
             tname = GGML_TYPES.get(tt, (0, 1, f"type{tt}"))[2]
@@ -140,6 +141,7 @@ def main():
                 a = always_by_type.setdefault(tname, [0, 0])
                 a[0] += 1
                 a[1] += nbytes
+                always_names.append((name, nbytes))
 
     total = routed + always
     frac = n_used / n_exp if n_exp else 1.0
@@ -156,6 +158,18 @@ def main():
     print("\nby quant type:")
     for t, (cnt, b) in sorted(by_type.items(), key=lambda kv: -kv[1][1]):
         print(f"  {t:<9} {cnt:5d} tensors {b/G:9.2f} GiB")
+    # Which FAMILY the always-read bytes are in, since that is what a mixed
+    # recipe targets: attention tolerates low precision much worse than FFN
+    # weights do, so knowing the split says whether a mixed recipe is worth it.
+    print("\nalways-read by tensor family:")
+    fam = {}
+    for name, nbytes in always_names:
+        key = re.sub(r"^blk\.\d+\.", "", name)
+        key = re.sub(r"\.weight$|\.bias$", "", key)
+        e = fam.setdefault(key, [0, 0]); e[0] += 1; e[1] += nbytes
+    for t, (cnt, b) in sorted(fam.items(), key=lambda kv: -kv[1][1])[:14]:
+        print(f"  {t:<26} {cnt:5d} {b/G:8.2f} GiB  {100*b/per_tok:5.1f}% of a token")
+
     # The actionable view: always-read bytes are paid on EVERY token, so this is
     # the list of what to requantize, ordered by what it would buy.
     print("\nalways-read by quant type (this is the requant target list):")
