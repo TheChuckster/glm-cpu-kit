@@ -899,3 +899,32 @@ The remaining technique is layer-by-layer intermediate comparison: instrument th
 (feasible even at mainline's speed, unlike generating tokens), and find the first
 tensor that diverges. That localises the defect directly instead of inferring it,
 and it is the correct next investment.
+
+### Residual-stream profile: the banking schedule fires correctly
+
+`llama-eval-callback` dumps intermediate tensor values for one forward pass, so
+the residual magnitude can be read across all 93 layers with no reference engine
+required. First element of `l_out-N`:
+
+```
+L0  0.014   L6  0.525   L12 0.033 <-   L18 0.170   L24 0.0007 <-  L30 0.341   L36 0.0011 <-
+L1  0.010   L7  0.584   L13 0.087      L19 0.013   L25 0.0031     L31 0.304   L37 0.0083
+L2  0.058   L8  0.747   L14 0.970      L20 0.240   L26 0.0034     L32 0.325   L38 0.061
+...         L10 3.217   ...            L23 1.863   ...            L35 2.107   L39 0.080
+```
+
+A clean sawtooth: the stream accumulates for twelve layers, then collapses at
+**12, 24, 36** — exactly `il % attn_res_block_size == 0`. That is the banking
+rule working as the reference specifies ("on checkpoint layers it is banked into
+res_stack and restarts from the attention output alone"), confirmed dynamically
+rather than by reading the code. The schedule, the modulus and the restart
+semantics are all correct.
+
+It also shows `state_reset-0` in the graph, independently confirming the
+recurrent state is cleared at sequence start.
+
+So this diagnostic did not find the defect either — but it is the right tool and
+costs one forward pass. The natural extension is to run the identical dump on
+`~/llama.cpp-k3` and diff the two profiles layer by layer; the first layer whose
+magnitude diverges is where to look. That is now a mechanical comparison rather
+than an open-ended hunt, and it is the one avenue left.
