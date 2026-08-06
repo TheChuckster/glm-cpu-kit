@@ -589,16 +589,35 @@ field. Full derivation, every dead end, and the remaining work are in
 
 **Where it landed:** wikitext perplexity **1.32** (n_ctx 512) against a
 **1.55** reference measured at 8192 on a worse quant, answering correctly on
-facts, code and arithmetic, at **3.6 tok/s**.
+facts, code and arithmetic, at **39 tok/s prompt processing and 3.7 tok/s
+generation**.
 
-### The one number that explains the speed
+### The speed, and a wrong explanation worth keeping
 
-3.6 tok/s against DeepSeek-V4's 23 is not the model being large. K3's KDA gate is
-**per-channel** (`use_full_rank_gate`), and ik's fused AVX-512 delta-net kernel
-cannot express that in its signature, so it declines and 69 of the 93 layers fall
-back to the scalar reference path. Teaching the fused kernel a full-rank gate is
-the whole optimisation, and `porting/k3/test_delta_net_gate.c` is already its
-correctness bar.
+K3's KDA gate is **per-channel** (`use_full_rank_gate`), which ik's fused AVX-512
+delta-net kernel originally could not express — it declined, and 69 of the 93
+layers fell back to the scalar reference path. This runbook used to say that was
+"the one number that explains the speed". **It was not**, and the correction is
+more useful than the original claim.
+
+Teaching the fused kernel a full-rank gate (fork commit `86057247`) was measured
+A/B, same binary, only the dispatch guard differing:
+
+| | scalar path | fused path |
+|---|---|---|
+| prompt processing | 30.1 tok/s | **38.9 tok/s** |
+| token generation | 3.65 tok/s | **3.67 tok/s** |
+| perplexity (8 chunks, n_ctx 512) | 1.3192 +/- 0.030 | 1.3240 +/- 0.031 |
+
+**+29% on prompt processing, nothing at all on generation.** The reason is
+structural: the delta-net recurrence is sequential over tokens, so its cost
+scales with how many tokens are in flight. A 512-token ubatch does 512 steps of
+it per layer; generating one token does one. Against the ~15 GB of expert
+weights a single token already reads, one step is a rounding error.
+
+So the 3.7 tok/s is the MoE path, not the gate — 16 of 896 experts active across
+92 layers. That is a separate investigation, and no part of it was ever measured
+by the claim this section used to make.
 
 ### What this cost, and the lesson worth carrying
 

@@ -8,17 +8,23 @@
 #   ./kimi-opencode.sh --continue       # resume the last session in this dir
 #   ./kimi-opencode.sh run "message"    # headless one-shot
 #
-# READ THIS FIRST - K3 is the slowest and roughest model on the box:
+# READ THIS FIRST - K3 is the slowest model on the box, and the number that
+# hurts is not the one you would expect:
 #
-#   ~3.6 tok/s. K3's per-channel KDA gate cannot use ik's fused AVX-512
-#   delta-net kernel, so 69 of its 93 layers run the scalar path. DeepSeek-V4
-#   does ~23 tok/s; if you want to get work done rather than exercise K3
-#   specifically, use ./glm-opencode.sh with deepseek-v4-flash-0731.
+#   ~39 tok/s prompt processing, ~3.7 tok/s generation. opencode's system
+#   prompt plus tool definitions runs well over 10K tokens, so EXPECT ROUGHLY
+#   FIVE MINUTES BEFORE THE FIRST TOKEN of a fresh session, every session.
+#   Nothing is hung. It looks exactly like a hang, and an HTTP client with a
+#   default timeout will give up before the model answers - which is what
+#   "kimi-opencode doesn't work" turned out to be.
 #
-#   The chat template's structural markers (<|open|>, <|sep|>, <|close|>) leak
-#   into the response text. ik has no parser for K3's template family, so the
-#   answer arrives wrapped in section markers. It is correct, but a coding agent
-#   will trip over them. See glm-cpu-kit/porting/k3/GRAPH-BUILDER-SPEC.md.
+#   DeepSeek-V4 does ~377 PP / ~23 TG. If you want to get work done rather than
+#   exercise K3 specifically, use ./glm-opencode.sh with deepseek-v4-flash-0731.
+#
+#   Output itself is clean: the chat parser for K3's <|open|>/<|sep|>/<|close|>
+#   template landed, reasoning goes to reasoning_content, and no structural
+#   markers reach content. (Earlier versions of this script warned that they
+#   did. They no longer do.)
 #
 # K3 must be the resident model - only one is, and they are 155-860 GB mlocked:
 #   ssh chuckdancer 'sudo glm-model use kimi-k3'   # ~30s once page-cached
@@ -51,6 +57,14 @@ if [ -n "$SERVED" ] && [ "$SERVED" != "kimi-k3" ]; then
   echo "         Switch with: ssh chuckdancer 'sudo glm-model use kimi-k3'" >&2
   echo >&2
 fi
+
+# Say this out loud every time. A five-minute silence before the first token is
+# indistinguishable from a hang, and treating it as one is the single most
+# likely way to conclude - wrongly - that this script is broken.
+echo "kimi-k3: ~39 tok/s prompt processing. A fresh session sends 10K+ tokens of" >&2
+echo "         system prompt and tools, so the FIRST reply takes ~5 minutes." >&2
+echo "         It is not hung. Watch it work:  ssh chuckdancer 'sudo journalctl -fu glm-server'" >&2
+echo >&2
 
 exec env \
   XDG_CONFIG_HOME="$CFG_HOME" \

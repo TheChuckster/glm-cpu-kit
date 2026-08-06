@@ -122,3 +122,16 @@ the code read correctly.
 Budget for that. Prefer checks that produce a *number* — perplexity against a
 published reference is the single most useful one, and it is what finally
 distinguished "this quant is bad" from "this port is wrong".
+
+**The same applies to performance, and it is easier to get wrong.** K3 generated
+at 3.6 tok/s while 69 of its 93 layers ran a scalar fallback, so the fallback got
+written down as the cause — in the README, in the runbook, and in a warning the
+harness script printed to users. It was never measured. Teaching the fused kernel
+K3's gate turned out to be worth +29% on prompt processing and *nothing* on
+generation, because the delta-net recurrence is sequential over tokens: a
+512-token batch runs 512 steps of it, a generated token runs one.
+
+An A/B is cheap — build the two variants, keep everything else identical, run
+`llama-sweep-bench` twice. Twenty minutes. Do it before writing a cause down,
+because a plausible attribution propagates into documentation and then gets
+believed.

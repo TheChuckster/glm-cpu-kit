@@ -1240,18 +1240,74 @@ structural and need parsing, not tokenizer surgery. Mainline carries an
 equivalent parser for this family — see llama.cpp #26398 for the DSV4 one — so
 there is a reference to port rather than a grammar to reverse-engineer.
 
-### 2. Fused kernel — the 3.6 tok/s
+### 2. Fused kernel — DONE, and the premise was wrong
 
-`iqk_fused_delta_net` cannot express a per-channel gate in its signature, so it
-declines and 69 of 93 layers run the scalar reference path. That is the entire
-speed story. Teaching the fused kernel a full-rank gate is the optimisation, and
-the correctness bar for it already exists: `test_delta_net_gate.c` will catch a
-per-channel implementation that does not reduce to the per-head case.
+`iqk_fused_delta_net` could not express a per-channel gate in its signature, so
+it declined and 69 of 93 layers ran the scalar reference path. This section used
+to call that "the entire speed story."
 
-Note the scalar path is now known to be *correct* but was effectively dead code
-in ik before this port — the strided-view bug lived there undisturbed. Anyone
-extending the fused kernel should keep the scalar path as the reference oracle
-rather than deleting it.
+It taught the fused kernel a full-rank gate (`86057247`) and measured A/B — same
+binary, same model, same flags, only the dispatch guard in `ggml.c` differing:
+
+| | scalar | fused |
+|---|---|---|
+| PP @ N_KV=0 | 30.33 | **39.21** |
+| PP @ N_KV=512 | 29.82 | **38.61** |
+| PP over 1024 tokens | 30.07 | **38.91** |
+| TG @ N_KV=0 | 3.66 | 3.68 |
+| TG over 256 runs | 3.65 | 3.67 |
+| PPL (8 chunks, n_ctx 512) | 1.3192 +/- 0.030 | 1.3240 +/- 0.031 |
+
+**+29% prompt processing. Nothing on generation.** The "entire speed story" claim
+was false, and it was false for a reason worth writing down: the delta-net
+recurrence is *sequential over tokens*, so its cost scales with how many tokens
+are in flight. A 512-token ubatch runs 512 steps of it per layer; generating one
+token runs one. Set against the ~15 GB of expert weights a single token already
+reads (16 of 896 experts, 92 layers), one step is a rounding error.
+
+The 3.7 tok/s is the MoE path. Nothing here measured it.
+
+**How the claim got made.** It was an inference — the scalar path is obviously
+slower, 69 layers is obviously most of them, and the number was obviously bad —
+written down as a cause without a measurement. It survived into the README, the
+runbook and `kimi-opencode.sh`'s user-facing warning. The A/B that refuted it
+took twenty minutes and could have been run at any point. Same failure mode as
+the eleven silent bugs, one level up: plausible, self-consistent, unverified.
+
+PPL moved 1.3192 -> 1.3240, which is inside the error bar and is *expected* — the
+fused kernel accumulates in a different order. It is also the proof the fused
+path is actually being taken: `ggml.c`'s scalar math is untouched, so had the
+dispatch not switched, the result would have been bit-identical.
+
+Note the scalar path is *correct* but was effectively dead code in ik before this
+port — the strided-view bug lived there undisturbed. It is now the reference
+oracle for the fused kernel rather than a live path; keep it.
+
+#### What the test could not have caught
+
+`test_delta_net_gate.c` as originally written would have passed a broken kernel.
+Two gaps, both fixed:
+
+- Its gate was **constant across channels**, so a transposed or mis-strided read
+  landed on the same number. It now also runs a gate that varies per
+  (token, channel, head) against the recurrence written out longhand.
+- Its head_dim was **8**, and `iqk_fused_delta_net` only accepts 64 and 128 — so
+  it never reached the fused kernel at all. `HEAD_DIM` is now a compile-time knob;
+  run it at 8, 64 and 128 to cover both implementations.
+
+#### A real inconsistency in ik, found by the test
+
+The fused and portable paths disagree on how a **per-head** gate and beta are
+laid out, and neither is wrong on its own terms. `build_fused_delta_net` permutes
+them *without* `ggml_cont` for the per-head case, so the fused kernel gets a view
+and reads the underlying pre-permute buffer — head-fastest. `ggml.c`'s portable
+path reads the same pointer token-fastest. On x86 the per-head case never reaches
+that path, so nothing has ever noticed.
+
+Only the per-channel case is `ggml_cont`'d, and both paths read *it*
+token-fastest, which is why K3 was unaffected. The test now feeds each path the
+layout it expects and says why; anyone who deletes that fixup because it looks
+like a hack will get three failures that are not their fault.
 
 ### Parser attempt 1: written, tested, reverted
 

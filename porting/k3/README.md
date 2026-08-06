@@ -222,9 +222,11 @@ cannot be factored out of `v_prime`/`out_val`. Decay is indexed by the **column*
 Verified numerically before trusting it: the per-head path is bit-identical
 before and after the refactor (max diff 1.7e-17, so no Qwen3-Next regression),
 the per-channel path matches an independent matrix-form reference exactly, and a
-per-channel gate with all channels equal reproduces the per-head result. The
-fused AVX-512 kernel cannot express a per-channel gate in its signature, so it is
-skipped for full-rank gates and the scalar path runs.
+per-channel gate with all channels equal reproduces the per-head result.
+
+The fused AVX-512 kernel originally could not express a per-channel gate in its
+signature, so full-rank gates were skipped and the scalar path ran. It handles
+them now (`86057247`): +29% prompt processing, no change to generation.
 
 ### Not an op, but easy to get wrong: latent MoE
 

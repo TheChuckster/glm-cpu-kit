@@ -62,10 +62,13 @@ its own engine build, and what is still open upstream for tool calling.
 architecture and ikawrakow declined to add one ([ik #2203](https://github.com/ikawrakow/ik_llama.cpp/issues/2203)),
 so the port lives on [`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp)
 branch `kimi-k3`, built into `build-k3` and selected by the registry's `engine`
-field. Perplexity 1.32 against a 1.55 reference; ~3.6 tok/s, because K3's
-per-channel KDA gate cannot use the fused AVX-512 kernel so 69 of 93 layers take
-the scalar path. Runbook §6c and [`porting/k3/`](porting/k3/) have the full
-account, including the eleven silent bugs it took to get there.
+field. Perplexity 1.32 against a 1.55 reference; **39 tok/s prompt processing,
+3.7 tok/s generation**. The fused AVX-512 delta-net kernel now handles K3's
+per-channel KDA gate (it used to decline, dropping 69 of 93 layers to the scalar
+path) — worth +29% on prompt processing and, measured A/B, *nothing* on
+generation. Runbook §6c and [`porting/k3/`](porting/k3/) have the full account,
+including the eleven silent bugs it took to get there and why attributing the
+generation speed to that kernel was wrong.
 
 `kimi-k3-ik` stays `pending` — ubergarm has published no K3 quant, so that row is
 still a guess about filenames. Run `glm-model upstream` to check.
@@ -104,7 +107,7 @@ the selected variant, and is the only reliable check.
 | Script | Backend | Speed | Use for |
 |---|---|---|---|
 | `glm-opencode.sh` + `opencode.json` | LOCAL CPU server (direct) | ~10 tok/s | **private** / sensitive / audit |
-| `kimi-opencode.sh` | LOCAL, Kimi K3 on the forked engine | ~3.6 tok/s | K3 specifically — see the caveats in the script |
+| `kimi-opencode.sh` | LOCAL, Kimi K3 on the forked engine | ~3.7 tok/s | K3 specifically — see the caveats in the script |
 | `glm-opencode-together.sh` | Together AI cloud | ~200-350 tok/s | fast everyday coding |
 | `glm-opencode-cloud.sh` | any OpenAI-compatible provider (env) | varies | OpenRouter / DeepInfra / Z.ai / Surplus / etc. |
 | `litellm-config.yaml` + `proxy.sh` + `glm.sh` | Claude Code via litellm | - | only if you must use Claude Code (fragile) |
