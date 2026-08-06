@@ -31,6 +31,12 @@ interleaved across both sockets.
 | `glm-model` | list / download / switch / track which model is served | 6a |
 | `validate-model.sh` | prove a new quant loads, stays coherent, keeps reasoning out of `content`, and can call a tool — on a spare port | 6b |
 
+`porting/k3/bytes_per_token.py` answers "how fast *should* this model be?" from
+the GGUF alone — exact bytes read per generated token, split into always-read and
+routed-expert. Token generation is bandwidth-bound, so that number over the box's
+~350 GB/s ceiling is the speed limit, and comparing it against measured tok/s says
+whether a model is slow or just large.
+
 **Switching models.** `glm-model` picks which registered variant
 `glm-server.service` serves:
 
@@ -66,9 +72,19 @@ field. Perplexity 1.32 against a 1.55 reference; **39 tok/s prompt processing,
 3.7 tok/s generation**. The fused AVX-512 delta-net kernel now handles K3's
 per-channel KDA gate (it used to decline, dropping 69 of 93 layers to the scalar
 path) — worth +29% on prompt processing and, measured A/B, *nothing* on
-generation. Runbook §6c and [`porting/k3/`](porting/k3/) have the full account,
-including the eleven silent bugs it took to get there and why attributing the
-generation speed to that kernel was wrong.
+generation. Generation is at the memory wall: K3 reads **71.2 GiB per token** and
+gets 281 GB/s doing it, against 350 GB/s for GLM and a 460.8 GB/s theoretical
+peak — normal efficiency, just 2.2x more bytes. Runbook §6c and
+[`porting/k3/`](porting/k3/) have the full account, including the eleven silent
+bugs it took to get there and why attributing the generation speed to that kernel
+was wrong.
+
+**The surprise is which bytes.** K3 is 92.8% routed experts by file size, but
+only 16 of 896 are active, so experts are just 19% of what a token reads — the
+other 81% is non-expert weights the recipe ships at Q8_0. So a smaller K3 quant
+buys almost no speed, while requantising the 7.2% of the file nobody optimises
+would be worth ~1.4x. `porting/k3/bytes_per_token.py` computes this for any GGUF
+and is worth running before assuming a model is slow.
 
 `kimi-k3-ik` stays `pending` — ubergarm has published no K3 quant, so that row is
 still a guess about filenames. Run `glm-model upstream` to check.

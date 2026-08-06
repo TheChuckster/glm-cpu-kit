@@ -1267,6 +1267,18 @@ reads (16 of 896 experts, 92 layers), one step is a rounding error.
 
 The 3.7 tok/s is the MoE path. Nothing here measured it.
 
+**Since measured** (runbook §6c, "Why 3.7 tok/s, settled"): it is the memory
+wall, and not the MoE path either. K3 reads **71.22 GiB per generated token** at
+**280.7 GB/s** on a 460.8 GB/s box — between GLM's 349.8 and DS4's 259.0, i.e.
+ordinary. TG is 3.67 at 32 threads, 3.67 at 64, 3.66 at 96; doubling the cores
+buys nothing. `bytes_per_token.py` in this directory computes the number from any
+GGUF.
+
+The split is the surprise: experts are 92.8% of the *file* and 19% of what a
+token *reads*, because 16 of 896 are active. The other 81% is non-expert weight
+at Q8_0. So a smaller K3 quant would barely help, and requantising the 7.2% of
+the file nobody optimises is worth ~1.4x.
+
 **How the claim got made.** It was an inference — the scalar path is obviously
 slower, 69 layers is obviously most of them, and the number was obviously bad —
 written down as a cause without a measurement. It survived into the README, the

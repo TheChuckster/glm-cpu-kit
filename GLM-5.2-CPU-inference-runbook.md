@@ -619,6 +619,65 @@ So the 3.7 tok/s is the MoE path, not the gate — 16 of 896 experts active acro
 92 layers. That is a separate investigation, and no part of it was ever measured
 by the claim this section used to make.
 
+### Why 3.7 tok/s, settled
+
+The kernel work above raised prompt processing and left generation exactly where
+it was, which made "what actually limits generation?" worth answering properly
+instead of guessing a third time. It is answerable in closed form, because
+generation is memory-bound: **tok/s = bandwidth / bytes-read-per-token**, and
+both terms are measurable.
+
+`porting/k3/bytes_per_token.py` computes the second term exactly from the GGUF
+tensor table. A routed expert tensor is only read for the experts a token picks,
+so it counts for `n_expert_used/n_expert`; everything else is read in full.
+
+| | bytes/token | measured TG | effective |
+|---|---|---|---|
+| GLM-5.2 UD-Q4_K_XL | 32.58 GiB | ~10 tok/s | 349.8 GB/s |
+| **Kimi K3 UD-Q2_K_XL** | **71.22 GiB** | **3.67 tok/s** | **280.7 GB/s** |
+| DeepSeek-V4 MXFP4 | 10.49 GiB | 23 tok/s | 259.0 GB/s |
+
+This box is one EPYC 9575F with 12 channels of DDR5-4800 — 460.8 GB/s
+theoretical. All three models land between 56% and 76% of it, which is ordinary
+STREAM efficiency, and K3 sits in the middle. **K3 is not slow. It is reading
+2.2x what GLM reads per token and getting normal bandwidth for it.** The thread
+sweep says the same thing from the other side: TG is 3.67 at 32 threads, 3.67 at
+64, 3.66 at 96. Doubling the cores buys nothing, which is what a bandwidth wall
+looks like and what no kernel can move.
+
+### The one lever that would work, and how much it is worth
+
+The interesting number is not the total, it is the split:
+
+| | always-read | routed experts |
+|---|---|---|
+| K3 | **57.93 GiB (81%)** | 13.29 GiB (19%) |
+| GLM | 19.59 GiB (60%) | 12.99 GiB (40%) |
+| DS4 | 7.28 GiB (69%) | 3.21 GiB (31%) |
+
+K3 is **92.8% experts by file size** and they account for **19% of what a token
+reads**. 16 active of 896 is a 1.8% activation rate, so the dense part dominates
+completely — and unsloth's recipe puts all of it at **Q8_0**, 8.5 bpw, 55.5 GiB
+of the 57.93.
+
+Two consequences, both counterintuitive:
+
+- **Going down the quant ladder buys K3 almost no speed.** A smaller K3 quant
+  shrinks the experts, which are 19% of the traffic. Halving them saves 6.6 GiB of
+  71.22 — under 10%, for a real quality cost. The REAP variants (pruned experts)
+  do not help generation either, for the same reason.
+- **The win is in the 7.2% of the file nobody optimises.** Non-expert weights at
+  GLM-like density (~5.5 bpw) instead of 8.5 would cut 57.93 GiB to ~37.5,
+  putting a token at ~50.8 GiB and, at the same 281 GB/s, **~5.1 tok/s — a 1.4x
+  speedup** for a quant change that touches no expert.
+
+Not done here: `llama-quantize` has no same-type passthrough, so a `--custom-q`
+run would dequantize and requantize all 700 GiB of experts — hours of work and a
+lossy round trip, to change tensors it was not asked to change. A same-type copy
+shortcut in `src/llama-quantize.cpp` would make this a 30-minute job on the
+non-expert tensors alone. That is the next real optimisation, and it is a quant
+recipe question, not a kernel one.
+
 ### What this cost, and the lesson worth carrying
 
 Eleven bugs, **every one silent** — no crash, no assert, full speed, plausible
