@@ -620,3 +620,36 @@ reference perplexity number for this exact quant — from the mainline PR thread
 (`fairydreaming` ran one) or from a machine where mainline is fast enough to
 finish. Comparing against *any* trustworthy number for `UD-Q2_K_XL` separates
 "this is what 2.5 bpw K3 is" from "there is still a bug".
+
+### The reference number: PPL should be ~1.5, not 56
+
+`fairydreaming` on mainline PR #26185 (2026-08-01), Kimi-K3-Q2_K, same wikitext:
+
+```
+llama-perplexity -c 8192 -b 8192 -ub 8192 -fit off -fa 1
+[1]1.2461,[2]1.2755,[3]1.5372,[4]1.4771,[5]1.4036,[6]1.3488,[7]1.5159,...
+Final estimate: PPL = 1.5499 +/- 0.00478
+```
+
+**This settles it: the port still has a defect.** 56.18 against a reference 1.55
+is a ~36x gap. Context size does not explain it — DS4 on this box at the same
+`n_ctx=512` gives 2.41, so short context is not what inflates a healthy model to
+56. Nor does the quant: `UD-Q2_K_XL` is if anything a *better* quant than the
+plain `Q2_K` measured above.
+
+It also retires the curve-shape lead entirely. **The reference curve climbs too**
+(1.2461 → 1.5499). Monotonic climb is normal for this model on this data, which
+is consistent with the forced-reset experiment finding nothing. The *value* is
+wrong, not the shape — a much better-posed target.
+
+So the model is running, generating English, and numerically wrong by a wide
+margin. Something is degrading it heavily without breaking it. Given the layer
+counts, the most valuable next experiments are the ones that isolate a *family*:
+
+- Get a per-layer-type signal. The earlier skip-switch attempt aborted because
+  zeroing the KDA layers left `inp_s_seq_qnext` unreferenced; keep a dummy
+  consumer alive and it becomes usable.
+- Compare `n_ctx=512` vs a larger context. A defect in the MLA cache or mask
+  would scale differently with context length than one in the KDA recurrence.
+- Run the op fixtures through the real ik ops. That is what they exist for, and
+  it is the only check here that does not need an 861 GB load per iteration.
