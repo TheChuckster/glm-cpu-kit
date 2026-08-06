@@ -124,20 +124,48 @@ untouched:
 
 ```sh
 llama-quantize --allow-requantize --keep-f32 --keep-split \
-    --keep-pattern "_exps\." IN.gguf OUT.gguf Q6_K 64
+    --keep-pattern "_exps\." IN.gguf OUT.gguf Q5_K 64
 ```
 
 Measured, each against its own baseline, same flags, back to back:
 
 | | TG before | TG after | PPL before | PPL after |
 |---|---|---|---|---|
-| GLM-5.2 | 10.68 | **11.78** (+10.3%) | 1.3750 +/-0.037 | 1.3803 +/-0.037 |
-| DeepSeek-V4 | 23.82 | **25.89** (+8.7%) | 2.4020 +/-0.114 | 2.4312 +/-0.117 |
-| Kimi K3 | 3.67 | **4.08** (+11.2%) | 1.3240 +/-0.031 | 1.3144 +/-0.029 |
+| GLM-5.2 | 10.68 | **12.43** (+16.4%) | 1.3750 +/-0.037 | 1.3953 +/-0.038 |
+| DeepSeek-V4 | 23.82 | **27.75** (+16.5%) | 2.4020 +/-0.114 | 2.3884 +/-0.112 |
+| Kimi K3 | 3.67 | **4.30** (+17.2%) | 1.3240 +/-0.031 | 1.3253 +/-0.030 |
 
-Every perplexity move is inside its error bar. Prompt processing does not
-change. Minutes of work per model, and the experts are memcpy'd rather than
-requantized, so a 800 GiB model takes about five minutes.
+Every perplexity move is inside its error bar — DeepSeek-V4's is nominally
+*better* than its Q8_0 original. Prompt processing improves slightly too. Minutes
+of work per model: the experts are memcpy'd rather than requantized, so an
+800 GiB model takes about five minutes.
+
+### Q5_K, specifically — the type matters more than the bit count suggests
+
+The whole ladder, on DeepSeek-V4, same recipe with only the target type varying:
+
+| non-expert type | PP @512 | TG @512 | PPL (baseline 2.4020) |
+|---|---|---|---|
+| Q8_0 (untouched) | 323.2 | 23.82 | 2.4020 +/-0.114 |
+| Q6_K | 320.3 | 25.89 | 2.4312 +/-0.117 |
+| Q6_0 | 321.4 | 26.35 | - |
+| **Q5_K** | 331.4 | **27.75** | **2.3884** +/-0.112 |
+| IQ5_K | **339.9** | 27.53 | 2.4376 +/-0.115 |
+| IQ4_K | 346.0 | 29.36 | 2.5545 +/-0.126 |
+| Q4_K | 333.0 | 29.45 | 2.6438 +/-0.135 |
+
+Two things fall out of this that are not obvious from bits-per-weight:
+
+- **Q6_K is the wrong stop.** It is *bigger* than Q5_K and *slower*, and its
+  perplexity is worse. Fewer bytes is not the only axis — dequantization cost per
+  byte matters, and Q6_K's superblock format costs more per byte than Q8_0 does,
+  which is why Q6_K also cost a little prompt processing while Q5_K gains some.
+- **Five bits is free, four is not.** The jump to IQ4_K/Q4_K buys ~6% more TG for
+  a perplexity shift of +0.15 to +0.24 — a systematic move, unlike everything at
+  5 bits and above, which scatters inside the error bars. Stop at Q5_K.
+
+IQ5_K is the alternative if prompt processing matters more than generation: +2.6%
+PP over Q5_K for slightly worse TG and perplexity.
 
 Three things to know before running it:
 
@@ -150,10 +178,10 @@ Three things to know before running it:
   47 MiB against a 32.58 GiB token.
 - **Check the dry run for F32 conversions** even so:
   `--dry-run ... | grep "type =    f32, converting"` should print nothing.
-- **You only get about 60% of the arithmetic.** Bytes/token predicted 1.16x for
-  K3 and it returned 1.11x, predicted 1.18x for DS4 and returned 1.09x. Q6_K
-  costs more CPU per byte to dequantize than Q8_0, and that eats into the
-  bandwidth saved. Predict with the byte count, then measure.
+- **You only get part of the arithmetic.** K3's byte count predicted 1.26x and it
+  returned 1.17x. Dequantization is not free, so bytes saved is an upper bound,
+  not a forecast. Predict with the byte count to decide whether it is worth
+  trying; then measure to find out what you got.
 
 Register the result as a NEW row rather than replacing anything — the originals
 stay downloaded and one `glm-model use` away. A locally-built variant needs its

@@ -677,16 +677,18 @@ Two consequences, both counterintuitive:
   71.22 — under 10%, for a real quality cost. The REAP variants (pruned experts)
   do not help generation either, for the same reason.
 - **The win is in the 7.2% of the file nobody optimises.** Non-expert weights at
-  GLM-like density (~5.5 bpw) instead of 8.5 would cut 57.93 GiB to ~37.5,
-  putting a token at ~50.8 GiB and, at the same 281 GB/s, **~5.1 tok/s — a 1.4x
-  speedup** for a quant change that touches no expert.
+  5.5 bpw instead of 8.5 cuts 57.93 GiB to 43.1, putting a token at 56.4 GiB.
 
-Not done here: `llama-quantize` has no same-type passthrough, so a `--custom-q`
-run would dequantize and requantize all 700 GiB of experts — hours of work and a
-lossy round trip, to change tensors it was not asked to change. A same-type copy
-shortcut in `src/llama-quantize.cpp` would make this a 30-minute job on the
-non-expert tensors alone. That is the next real optimisation, and it is a quant
-recipe question, not a kernel one.
+**Done, and it worked.** `llama-quantize` had no way to express "requantize only
+the non-experts" — there is no same-type passthrough, so any `--custom-q` run
+would dequantize and requantize all 700 GiB of experts to reproduce what was
+already there. Two flags in the fork fix that: `--keep-pattern` copies matching
+tensors verbatim, `--keep-f32` leaves alone the tensors a publisher deliberately
+left at F32. K3's non-expert weights at Q5_K took generation from 3.67 to **4.30
+tok/s** and prompt processing to **40.0**, at perplexity 1.3253 +/- 0.030 — i.e.
+unchanged. The same recipe is worth ~16% on GLM and DeepSeek-V4; see
+[`ADDING-A-MODEL.md`](ADDING-A-MODEL.md) §7 for the full quant-type ladder and
+why Q6_K is the wrong stop.
 
 ### What this cost, and the lesson worth carrying
 
