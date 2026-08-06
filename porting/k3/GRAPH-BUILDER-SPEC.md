@@ -767,3 +767,51 @@ Components still not diffed line-by-line against the reference:
 - `build_kda_layer` (the conv fusion, the state, the ordering around the gate)
 - `build_mla_layer` (the absorbed path)
 - the layer loop's interaction with `n_layer_dense_lead` and the final output head
+
+### The delta-net kernel is verified correct
+
+`test_delta_net_gate.c` is self-validating and needs no oracle: a per-channel
+gate whose channels all hold the same value is mathematically identical to a
+per-head gate holding that value, so the two paths must agree.
+
+```
+g = -0.25   max|per_head - per_channel| = 0.000e+00   ok
+g = -1.00   max|per_head - per_channel| = 0.000e+00   ok
+g = -3.00   max|per_head - per_channel| = 0.000e+00   ok
+```
+
+Exact agreement. This exercises the real C kernel — the decay-first refactor, the
+per-channel indexing, the `g_chan_stride` arithmetic — which neither hand-tracing
+nor the numpy composition checks reached. Milliseconds, no model load.
+
+### `ssm_a` is the pre-folded `-exp(A_log)`, measured
+
+Both readings produce an all-negative tensor, so the shipped values could never
+settle it, and unsloth built this GGUF with their own fork rather than the
+mainline converter whose comment documents the folding. Measured instead:
+
+| reading | chunk 1 | PPL |
+|---|---|---|
+| `ssm_a == -exp(A_log)` (current) | 7.97 | **23.86** |
+| `ssm_a == raw A_log` | 56.72 | 148.75 |
+
+The folded reading is right by a factor of six.
+
+### Where this leaves the remaining gap
+
+Verified correct, each by a method that could have failed: the four op
+compositions (numpy vs oracle), the delta-net kernel including the per-channel
+gate (self-consistency, exact), the `ssm_a` convention (measurement), the
+AttnRes banking rule, the KDA/MLA/output-head structures, and `build_output`'s
+norm type (all line-by-line against the reference).
+
+Ruled out with evidence: state contamination, the curve shape, quant
+degradation, and the MLA cache/mask.
+
+So the residual ~15x is not in any component checked so far, and the techniques
+that found seven bugs are now exhausted. The next honest step is
+intermediate-tensor comparison — dumping the `cb` callback layer by layer on
+both engines and finding the first divergence. That requires the reference to be
+runnable at one-token scale, which it is (a single forward pass, not 40 tokens),
+so it is feasible even at mainline's speed. That is the recommended next move,
+and it is a different kind of work from everything above.
