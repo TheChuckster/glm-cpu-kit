@@ -199,7 +199,17 @@ against: `stat -c %s *.gguf | paste -sd+ | bc > .complete`.
 | Kimi K3 | **-16%** | 0% |
 
 Same flag, same box, same day: a solid win, a wash, and a serious regression.
-It lives in the registry row's `opts`, never in `serve-glm.sh`.
+It lives in the registry row's `opts`, never in `serve-glm.sh`. Re-measured on
+the Q5_K rebuild rather than assumed to carry over — it still holds there
+(DeepSeek-V4 331.4 -> 364.6 PP, 27.75 -> 28.56 TG).
+
+Where the three models ended up, against where they started:
+
+| | PP before | PP after | TG before | TG after |
+|---|---|---|---|---|
+| DeepSeek-V4 | 323.2 | **364.6** | 23.82 | **28.56** |
+| GLM-5.2 | 130.4 | 133.7 | 10.68 | **12.43** |
+| Kimi K3 | 30.07 | **40.02** | 3.65 | **4.30** |
 
 Tested here and NOT worth adopting, recorded so nobody retries them:
 
