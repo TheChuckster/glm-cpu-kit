@@ -692,3 +692,45 @@ The one check that does not cost an 861 GB load per iteration is running
 `fixtures/*.f32` through the real ik ops and diffing against the oracle. Given
 four candidates and ~15 minutes per model-level experiment, that harness is now
 clearly worth building before more guessing.
+
+### All four op compositions verified against the oracle
+
+`verify_compositions.py` replays each builder's exact ggml op sequence in numpy
+and diffs it against `k3_ops_oracle.py`. Seconds, no model load:
+
+```
+situ               max|diff| = 1.79e-07   ok
+attn_res           max|diff| = 1.19e-07   ok
+mla_output_gate    max|diff| = 1.19e-07   ok
+kda_gate           max|diff| = 4.77e-07   ok
+```
+
+All four match to float32 precision, which settles several things that had only
+been argued from shapes:
+
+- **situ** is right, including which branch gets the `beta` clip and which gets
+  `linear_beta`.
+- **attn_res** is right: the RMSNorm carries no weight, the score vector is the
+  pre-folded one, and the weighted sum runs over the RAW tensors.
+- **The KDA gate is right**, including the `ssm_a == -exp(A_log)` convention and
+  the per-head broadcast over 128 channels. The `scale(-1)` double negation
+  reproduces the oracle exactly, so that reading was correct.
+- **The MLA output gate** is a plain sigmoid product, as used.
+
+So the defect is **not** in the four new ops. What that leaves, all of it
+integration rather than arithmetic:
+
+1. **The KDA recurrence integration** — the conv fusion into `build_qkv`'s layout,
+   the state read/write, and whether the per-channel gate survives the trip
+   through `ggml_delta_net` into the scalar kernel. The gate *math* is now proven;
+   its *delivery* is not.
+2. **The AttnRes banking rule.** `verify_compositions.py` tests the mix, not the
+   loop-level `banked ? cur : add(prefix_sum, cur)` decision or the every-12-layers
+   checkpoint schedule. That logic is verified only by reading.
+3. **The latent MoE plumbing** — the three-width down/norm/experts/up path and the
+   shared experts consuming the block input.
+4. **The MLA absorbed path** — `wk_b`/`wv_b` and the cache row layout.
+
+Given how many bugs in this port have been delivery-not-arithmetic (the strided
+views, the `ggml_add` broadcast, the SiLU-for-sigmoid substitution), (1) and (2)
+are where to look next.
