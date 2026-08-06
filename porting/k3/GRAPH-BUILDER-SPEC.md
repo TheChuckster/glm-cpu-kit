@@ -329,14 +329,25 @@ V = kv_cmpr_3d                              -> [512, 1, n_tok]
 
 with `wv_b` `[512, 128, 96]` doing the value expansion afterwards.
 
-**The open question is the KV cache.** `llm_build_kv(ctx, lctx, kv_self, gf, wo,
-wo_b, k_states, v_states, q_states, KQ_mask, n_tokens, kv_head, n_kv, kq_scale,
-cb, il)` writes K/V into a cache sized from `n_embd_k_gqa`/`n_embd_v_gqa`. K3's
-GGUF reports `attention.key_length = 576` and `attention.value_length = 74`, and
-that 74 matches neither the 512 latent nor the 128 per-head value width — it
-needs resolving before the cache will be the right shape. Note also that
-`head_count_kv` is the per-layer 0/1 array, so anything deriving KV geometry from
-it per layer needs checking for the KDA layers, where it is 0.
+### The KV cache: use ik's `-mla` path, not `llm_build_kv`
 
-Until that is settled the MLA layer aborts explicitly rather than writing into a
-mis-sized cache.
+`attention.value_length = 74` is **junk** — it matches neither the 512 latent nor
+the 128 per-head value width, and the standard MLA convention would put 512
+there. It is never read, because K3 does not use a conventional K/V cache at all.
+
+Mainline's builder selects `build_inp_mem_hybrid_k()` when `hparams.is_mla()`,
+i.e. a **K-only** cache: the 576-wide compressed KV (`kv_lora_rank` 512 + rope
+64) is cached once per token and V is taken from the same rows, with `wv_b`
+expanding it at use. There is no separate V cache to size, which is exactly why
+`value_length` was free to be nonsense.
+
+So the target in ik is the `mla_attn >= 1` path that `build_deepseek2_*` already
+uses, which caches the compressed form in `kv_l` — **not** `llm_build_kv`, which
+would try to allocate an `n_embd_v_gqa`-wide V cache from that bogus 74.
+
+Note also that `head_count_kv` is the per-layer 0/1 array, so anything deriving
+KV geometry from it per layer sees 0 on the 69 KDA layers; the cache must only be
+allocated for the 24 attention layers.
+
+Until that path is wired the MLA layer aborts explicitly rather than filling a
+mis-sized cache and producing quiet garbage.
