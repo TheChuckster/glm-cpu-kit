@@ -1252,3 +1252,35 @@ Note the scalar path is now known to be *correct* but was effectively dead code
 in ik before this port — the strided-view bug lived there undisturbed. Anyone
 extending the fused kernel should keep the scalar path as the reference oracle
 rather than deleting it.
+
+### Parser attempt 1: written, tested, reverted
+
+The sketch above was implemented (`common_chat_params_init_kimi_k3` plus
+detection keyed on `<|open|>`/`<|sep|>`/`<|close|>`) and tested on the live
+server. It compiled, and detection fired — but the rule did not parse:
+
+```
+content  : 'The user asks a simple factual question... Answer: Tokyo<|close|>think<|sep|><|open|>response<|sep|>Tokyo<|'
+reasoning: (none)
+```
+
+Reasoning ended up in `content` and `reasoning_content` was empty — **worse than
+the generic fallback**, which at least separates reasoning correctly. Reverted
+(commit `576c137d`) and the previous behaviour verified restored.
+
+The likely culprit is `p.prefix(inputs.generation_prompt, "<|open|>think")`.
+K3 resumes mid-section, so the prefix handling is doing something other than what
+the sketch assumes, and when the top-level rule fails the whole parse falls
+through.
+
+**The lesson, which is the useful part:** having the correct grammar is not
+sufficient. Every other component in this port was validated against an oracle,
+a self-consistency property, or a reference implementation before being trusted;
+this parser was written from the grammar and tested only end-to-end, which is the
+one place in the whole effort that shortcut was taken — and it regressed.
+
+Whoever picks this up should first establish how `p.prefix` behaves when the
+model resumes inside a section (the Ministral parser at `common/chat.cpp:880`
+uses it with a *complete* tag, which is a different case), and ideally exercise
+the rule against a captured string offline before putting it in front of a served
+model.
