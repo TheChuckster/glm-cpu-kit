@@ -928,3 +928,51 @@ costs one forward pass. The natural extension is to run the identical dump on
 `~/llama.cpp-k3` and diff the two profiles layer by layer; the first layer whose
 magnitude diverges is where to look. That is now a mechanical comparison rather
 than an open-ended hunt, and it is the one avenue left.
+
+### Layer-by-layer diff against the reference: gradual divergence, no broken layer
+
+Both engines dumped with `llama-eval-callback` on the same prompt. Note the
+reference prefixes its lines `common_debug_cb_eval:` where ik uses `ggml_debug:`;
+the tensor names (`l_out-N`) are identical. First element of `l_out-N`:
+
+| layer | this port | reference | |
+|---|---|---|---|
+| 0 | 0.0144 | 0.0142 | agree |
+| 2 | 0.0582 | 0.0581 | agree |
+| 3 | 0.0418 | 0.0409 | agree (MLA layer) |
+| 5 | 0.2205 | 0.2154 | agree |
+| 6 | 0.5247 | 0.4461 | ~18% |
+| 7 | 0.5844 | 0.2748 | **2x** |
+| 9 | 0.788 | 0.6201 | diverged |
+| 10 | 3.2172 | 3.14 | (re-converges) |
+| 12 | 0.0331 | 0.0662 | 2x |
+
+**This changes the diagnosis.** The two engines agree closely through the first
+several layers — including layer 3, a full-attention layer — and then drift
+apart progressively. There is no layer where the value jumps by orders of
+magnitude, which is what a structurally wrong layer would produce and what every
+hypothesis so far assumed.
+
+That is consistent with a small systematic difference compounding with depth
+rather than one broken component, and it fits everything else already
+established: each component verifies in isolation, both attention families are
+essential, AttnRes is essential, and the ops are exact against the oracle.
+
+The strongest candidate for "small difference, large downstream effect" in this
+architecture is **expert selection**. With 896 experts and top-16 routing, a tiny
+numerical difference in the router logits changes *which* experts fire, and a
+different expert set produces a genuinely different output rather than a slightly
+perturbed one. That compounds across 92 MoE layers and would not show up in any
+single-component check.
+
+Worth testing next, in order:
+1. Dump the selected expert IDs per layer on both engines and diff them. If the
+   sets diverge early, routing is the mechanism.
+2. Check whether `exp_probs_b` is applied for SELECTION only (the noaux_tc
+   scheme) rather than also scaling the weights, and whether ik's
+   `llm_build_moe_ffn` does the same as mainline's `build_moe_ffn` on that point.
+3. Compare `ffn_moe_logits` values directly - they are already named in the dump.
+
+Caveat on method: this compares a single element per tensor, which is noisy.
+Comparing an L2 norm per layer would be sounder, and is a small change to the
+extraction.
