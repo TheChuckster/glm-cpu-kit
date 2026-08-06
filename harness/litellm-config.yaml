@@ -70,11 +70,9 @@ model_list:
       timeout: 21600
       stream_timeout: 21600
 
-  # kimi-k3 / kimi-k3-ik are registered in glm-variants.conf but not servable
-  # yet (no trusted quant published, and ik_llama.cpp has no kimi-k3 arch).
-  # Add them here once `glm-model upstream` shows a quant has landed AND the
-  # engine can load it - not before, or a client will silently get whichever
-  # model actually is resident.
+  # kimi-k3 is routed further down - it IS servable now, on a forked engine.
+  # kimi-k3-ik stays unrouted: ubergarm has published no K3 quant, so that row
+  # is still a guess about what they will name the files.
 
   # DeepSeek-V4-Flash-0731 - same server, same one-resident-model caveat.
   # 284B total but only ~13B active and natively fp4, so ~155 GB resident and
