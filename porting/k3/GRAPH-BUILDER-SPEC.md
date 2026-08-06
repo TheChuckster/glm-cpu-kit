@@ -587,3 +587,36 @@ harness or the data; if DS4's is flat, K3 is carrying state it should not.
 Note also PP here is 34.58 tok/s against 12 tok/s in `llama-cli`, because
 perplexity batches 512 tokens at a time — worth remembering before drawing
 conclusions about speed from the CLI numbers.
+
+### The DS4 control, and what it rules out
+
+Same harness, same file, same command — the only difference is the model:
+
+| chunk | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| **DS4** (no recurrent state) | 3.88 | 4.73 | 3.11 | 2.79 | 2.65 | 2.54 | 2.48 | **2.41** |
+| **K3** (69 KDA layers) | 23.58 | 32.17 | 36.99 | 44.95 | 46.67 | 49.81 | 54.17 | **56.18** |
+
+DS4 converges downward, which is the normal shape for a running mean. K3 climbs
+monotonically, meaning each successive chunk is worse than the average so far.
+
+**State contamination is ruled out.** Forcing `reset_state` on every batch
+produced a **bit-identical** result — 56.1774, same per-chunk values — so the
+state was already being cleared correctly at chunk boundaries. The climb is
+intrinsic to the model on this data, not leakage.
+
+That leaves two live explanations, still unseparated:
+
+1. **The quant.** `UD-Q2_K_XL` is ~2.5 bpw over weights Moonshot QAT'd at
+   4.25 bpw. This repo predicted before any code was written that it would land
+   below GLM-5.2 Q4, and pwilkin on the mainline PR reported K3 "doesn't quant so
+   well". A model degraded that far would plausibly do disproportionately badly
+   on harder text, which is what a climbing curve looks like.
+2. **A remaining defect** that hurts more on some content than others.
+
+PPL 56 against DS4's 2.41 is a wide enough gap that I would not call the port
+finished on the strength of "it generates English". The way to settle it is a
+reference perplexity number for this exact quant — from the mainline PR thread
+(`fairydreaming` ran one) or from a machine where mainline is fast enough to
+finish. Comparing against *any* trustworthy number for `UD-Q2_K_XL` separates
+"this is what 2.5 bpw K3 is" from "there is still a bug".
