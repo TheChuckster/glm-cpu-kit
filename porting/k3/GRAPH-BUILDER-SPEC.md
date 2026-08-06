@@ -192,7 +192,16 @@ y     = mul_mat(ffn_routed_up, y)                              # 3584 -> 7168
 out   = y + shared_experts_situ(cur)                           # shared see the ORIGINAL cur
 ```
 
-Note `ffn_routed_norm` sits **between** the down-projection and the experts.
+**CORRECTION — this was wrong, and it cost 92 layers.** `ffn_routed_norm` does
+NOT sit between the down-projection and the experts. It normalises the expert
+**output**:
+
+```
+down (7168 -> 3584)  ->  experts  ->  ffn_routed_norm  ->  up (3584 -> 7168)
+```
+
+Implementing the misreading above put the norm on the expert *input*. Fixing it
+took perplexity from 56.18 to **23.86**.
 The shared experts run at full width (`[n_embd, 6144]`, 6144 = 2 × 3072) and take
 the block input, not the down-projected tensor.
 
@@ -734,3 +743,27 @@ integration rather than arithmetic:
 Given how many bugs in this port have been delivery-not-arithmetic (the strided
 views, the `ggml_add` broadcast, the SiLU-for-sigmoid substitution), (1) and (2)
 are where to look next.
+
+### PPL 56.18 -> 23.86: ffn_routed_norm was on the wrong side of the experts
+
+| | chunk 1 | final (8 chunks, n_ctx=512) |
+|---|---|---|
+| before | 23.58 | 56.18 |
+| after | **7.97** | **23.86** |
+| reference (n_ctx=8192) | 1.25 | 1.55 |
+
+Still ~15x off, so more remains — but this confirms the method. Both of the last
+two real bugs (the SiLU-for-sigmoid gate, and this) were found by reading the
+reference implementation line by line and diffing it against the builder, not by
+reasoning about shapes or by model-level bisection.
+
+Worth being explicit about the failure mode, since it recurred: **the notes in
+this file were themselves wrong**, and the code faithfully implemented the wrong
+note. Deriving a claim once and then trusting it is how that happens. Anything
+here not backed by a diff against the reference or a passing fixture should be
+treated as a hypothesis.
+
+Components still not diffed line-by-line against the reference:
+- `build_kda_layer` (the conv fusion, the state, the ordering around the gate)
+- `build_mla_layer` (the absorbed path)
+- the layer loop's interaction with `n_layer_dense_lead` and the final output head
