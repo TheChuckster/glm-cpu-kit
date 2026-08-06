@@ -1168,7 +1168,50 @@ A K3 case keys on `<|open|>` + `<|sep|>` + `<|close|>` together (all three, sinc
 `<|sep|>` alone is not distinctive) and extracts the text between
 `<|open|>response<|sep|>` and the matching `<|close|>`.
 
-**The output grammar, decoded.** Observed emission for a one-word answer:
+**The RAW model output, captured with `--reasoning-format none`** (the decisive
+measurement — the post-processed string was ambiguous about where sections start):
+
+```
+<|sep|>The user just said "Say hi." ... <|close|>think<|sep|><|open|>response<|sep|>ANSWER<|close|>...
+```
+
+It begins at `<|sep|>`, not `<|open|>`, because the chat template ends with
+`<|open|>think` as the generation prompt — so the model resumes mid-section. The
+full emission is therefore:
+
+```
+<|sep|> REASONING <|close|>think<|sep|> <|open|>response<|sep|> ANSWER <|close|>response<|sep|><|close|>message<|sep|>
+        ^^^^^^^^^                                              ^^^^^^
+        reasoning_content                                      content
+```
+
+That is everything needed to write the parser. Sketch, following
+`common_chat_params_init_kimi_k2` (`common/chat.cpp:1338`) and the PEG API used
+at `:880-925`:
+
+```cpp
+data.thinking_start_tag = "<|open|>think<|sep|>";
+data.thinking_end_tag   = "<|close|>think<|sep|>";
+data.preserved_tokens   = { "<|open|>", "<|sep|>", "<|close|>", "<|end_of_msg|>" };
+
+auto parser = build_chat_peg_parser([&](common_chat_peg_builder & p) {
+    auto generation_prompt = p.prefix(inputs.generation_prompt, "<|open|>think");
+    auto reasoning = extract_reasoning
+        ? p.optional("<|sep|>" + p.reasoning(p.until("<|close|>think<|sep|>")) + "<|close|>think<|sep|>")
+        : p.eps();
+    return generation_prompt + (reasoning << "<|open|>response<|sep|>"
+                                          << p.content(p.until("<|close|>")));
+});
+```
+
+Detection goes in the dispatch chain around `common/chat.cpp:2520`, keyed on
+`<|open|>` + `<|sep|>` + `<|close|>` together. Note `llama-cli -p` does raw
+completion rather than chat, so it is the wrong tool for capturing this — use the
+server with `--reasoning-format none`, which is what produced the string above.
+
+---
+
+**The post-processed emission**, for reference (what the deepseek extractor leaves):
 
 ```
 think<|sep|><|open|>response<|sep|>Paris<|close|>response<|sep|><|close|>message<|sep|>
