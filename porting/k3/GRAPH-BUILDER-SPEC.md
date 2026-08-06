@@ -976,3 +976,44 @@ Worth testing next, in order:
 Caveat on method: this compares a single element per tensor, which is noisy.
 Comparing an L2 norm per layer would be sounder, and is a small change to the
 extraction.
+
+### Expert-selection mechanism matches (bias is selection-only)
+
+ik's `llm_build_moe_ffn` implements the noaux_tc scheme the same way mainline
+does — the router bias affects **which** experts are chosen, not how their
+outputs are weighted:
+
+```c
+ggml_tensor * selection_probs = probs;
+if (exp_probs_b != nullptr) {
+    selection_probs = ggml_add(ctx, probs, exp_probs_b);
+    cb(selection_probs, "ffn_moe_probs_biased", il);   // same name as the reference
+}
+if (lctx.model.arch == LLM_ARCH_LLAMA4) {              // does NOT apply to K3
+    selection_probs = logits;
+}
+```
+
+So the mechanism is right. What has **not** been compared is the *outcome*: the
+actual expert IDs selected per layer. The reference dump exposes these directly
+as `ffn_moe_topk-N`, alongside `ffn_moe_probs`, `ffn_moe_probs_biased`,
+`ffn_moe_weights` and `ffn_moe_weights_norm` — a complete picture of routing at
+every layer, already captured in `/models/.ds4-run/ref-raw.log`.
+
+**That is the next concrete step, and it is now cheap**: re-run this port's dump
+capturing `ffn_moe_topk`, and diff the selected expert IDs against the reference
+layer by layer. If they agree at layer 1 and diverge later, routing is following
+the upstream drift rather than causing it. If they disagree at layer 1 — the
+first MoE layer, where both engines still agree on the residual to within 1% —
+then routing is the cause, and the gradual divergence downstream is its
+consequence.
+
+That is a genuine fork in the diagnosis, and one dump answers it.
+
+### Method note for whoever picks this up
+
+The two engines use different dump prefixes (`ggml_debug:` in ik,
+`common_debug_cb_eval:` in mainline) but identical tensor names, so extraction
+scripts need the prefix parameterised. `/models/.ds4-run/ref-raw.log` already
+holds a complete reference pass and does not need regenerating — it costs ~14
+minutes to reproduce.
