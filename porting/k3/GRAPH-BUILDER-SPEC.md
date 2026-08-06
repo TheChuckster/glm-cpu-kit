@@ -295,3 +295,48 @@ it is applied after the gate.
 - ik's equivalent machinery lives in `src/graphs/build_deepseek2.cpp` and
   `build_deepseek4.cpp`; the shapes above map onto it, but ik's `build_attn`
   signature differs from mainline's and is what the port has to target.
+
+---
+
+## MLA in ik: what the remaining work actually is
+
+ik's reusable MLA path is `llm_build_context::build_deepseek2_layer_attention`
+(`src/graphs/build_deepseek2.cpp`), non-TP counterpart of
+`build_deepseek2_tp_attention`. It cannot be called as-is for K3, for three
+reasons, each of which has to be handled:
+
+1. **It derives widths from `hparams.n_embd_head_k(0)`**, which for K3 is 576 —
+   the compressed MQA width — not the 192 the projections use. K3 needs the
+   `n_embd_head_k_mla` / `n_embd_head_v_mla` fields added in this port.
+2. **It applies RoPE** from `inp_pos` / `rope_cache`. K3 is nope-only.
+3. **It applies `wo` inside.** K3 has to gate the attention output first, so the
+   projection must happen after.
+
+**The absorbed path is forced, not chosen.** `wk_b` ships as
+`[n_embd_head_qk_nope, kv_lora_rank, n_head]` = `[128, 512, 96]`, and
+`ggml_mul_mat(a, b)` needs `a->ne[0] == b->ne[0]`. So `wk_b` can only multiply
+something 128 wide — i.e. `q_nope` — giving the absorbed form. Producing
+`k_nope` from `kv_cmpr` (512 wide) instead would need the transpose, which ik
+only materialises as `wk_b_pp` in `llm_prepare_mla`. Hence:
+
+```
+q_nope    [128, n_head, n_tok] -> permute -> [128, n_tok, n_head]
+q_absorbed = mul_mat(wk_b, q_nope)          -> [512, n_tok, n_head] -> permute back
+Q = concat(q_absorbed, q_pe, 0)             -> [576, n_head, n_tok]
+K = concat(kv_cmpr_3d, k_pe, 0)             -> [576, 1, n_tok]     (MQA: one head)
+V = kv_cmpr_3d                              -> [512, 1, n_tok]
+```
+
+with `wv_b` `[512, 128, 96]` doing the value expansion afterwards.
+
+**The open question is the KV cache.** `llm_build_kv(ctx, lctx, kv_self, gf, wo,
+wo_b, k_states, v_states, q_states, KQ_mask, n_tokens, kv_head, n_kv, kq_scale,
+cb, il)` writes K/V into a cache sized from `n_embd_k_gqa`/`n_embd_v_gqa`. K3's
+GGUF reports `attention.key_length = 576` and `attention.value_length = 74`, and
+that 74 matches neither the 512 latent nor the 128 per-head value width — it
+needs resolving before the cache will be the right shape. Note also that
+`head_count_kv` is the per-layer 0/1 array, so anything deriving KV geometry from
+it per layer needs checking for the KDA layers, where it is 0.
+
+Until that is settled the MLA layer aborts explicitly rather than writing into a
+mis-sized cache.
