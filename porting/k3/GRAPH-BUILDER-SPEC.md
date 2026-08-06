@@ -1166,7 +1166,15 @@ if (src.find("<|tool_calls_section_begin|>") != std::string::npos &&
 
 A K3 case keys on `<|open|>` + `<|sep|>` + `<|close|>` together (all three, since
 `<|sep|>` alone is not distinctive) and extracts the text between
-`<|open|>response<|sep|>` and the matching `<|close|>`. Mainline carries an
+`<|open|>response<|sep|>` and the matching `<|close|>`.
+
+Two things checked so the fix does not chase the wrong layer. `<|end_of_msg|>`
+**is** correctly registered as an EOG token (163586), so generation stops where
+it should — this is not a stopping problem. And the
+`special_eos_id is not in special_eog_ids` warning at load also appears on
+mainline in fairydreaming's run of this model, so it is a quirk of the K3 GGUF
+rather than anything this port introduced. The remaining markers are purely
+structural and need parsing, not tokenizer surgery. Mainline carries an
 equivalent parser for this family — see llama.cpp #26398 for the DSV4 one — so
 there is a reference to port rather than a grammar to reverse-engineer.
 
