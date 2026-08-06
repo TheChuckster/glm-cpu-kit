@@ -731,11 +731,26 @@ and confirmed to reach the prompt (check with the `/apply-template` endpoint).
 It explains why K3 spends 1700+ characters reasoning about the capital of
 Iceland.
 
-**Adherence is variable, so do not treat it as a throughput setting.** Measured
-on one fixed question: `low` produced 9127 characters of reasoning and `high`
-produced 2781. It clearly does something — a tool call that burned 2000 tokens at
-`max` completed in 23 seconds at `low` — but it is a hint the model may ignore,
-not a budget it respects.
+**At the default `max`, K3 is not usable with tools at all.** A one-argument
+weather call was given 6000 tokens and produced **22,423 characters of reasoning
+and no tool call** — it simply reasons until the budget runs out. At `low` the
+identical request answers in 151 characters of reasoning. That is not a tuning
+preference, it is the difference between working and not, so
+`--chat-template-kwargs '{"thinking_effort": "low"}'` is in the registry row.
+
+Two traps in doing that:
+
+- **Only `low`, `high` and `max` are accepted.** The template validates against
+  exactly that list and raises otherwise — but the system message it renders *to
+  the model* says "supported values include `low`, `medium`, `high`, and `max`".
+  Passing `medium` returns a 500 from a Jinja exception.
+- **Quote it the way GLM's row does**, `'{"thinking_effort": "low"}'`. Written
+  without the single quotes the opts field word-splits, llama-server receives
+  `{thinking_effort:low}`, and the service crash-loops on a JSON parse error.
+
+Adherence is otherwise variable and it is *not* a throughput dial: on one fixed
+question `low` produced 9127 characters of reasoning where `high` produced 2781.
+Raise it per request for hard problems; do not rely on it to bound anything.
 
 ### K3 always reasons, and spends the budget before it answers
 
