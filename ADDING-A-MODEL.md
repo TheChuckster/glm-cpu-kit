@@ -351,6 +351,18 @@ reliably, and has perplexity 1.33. **Chat is reliable; agentic use is not.**
 DeepSeek-V4 at native MXFP4 is the model to reach for when tools matter — and it
 is also the fastest here.
 
+**And that is not fixable on this box, which is worth stating flatly** so nobody
+re-opens it. The obvious remedy is a higher-bpw K3, and unsloth publishes one —
+`UD-Q4_K_XL`. It is **1508.7 GB** against 1133 GB of RAM, and would not fit the
+1.4 TB of free disk either. There is nothing between it and `UD-Q2_K_XL`
+(861 GB); the only smaller options (`UD-IQ2_XXS` at 711 GB, `UD-IQ1_*`) are
+worse. Requantising the local file upward recovers nothing, because the
+information is already gone at 2 bits, and rebuilding from the original weights
+means 2.8T parameters of bf16.
+
+So `UD-Q2_K_XL` is the largest K3 this hardware can hold, and its
+structured-output unreliability comes with it. The next step up needs 1.5 TB.
+
 **Passing this is still not the same as the harness working.** K3 answers the
 full loop over the API and yet a `kimi-opencode run` asking it to read a file
 exited 0 after 838s having printed nothing, while the server logged 7067 prompt

@@ -102,6 +102,11 @@ buys almost no speed, while requantising the 7.2% of the file nobody optimises
 would be worth ~1.4x. `porting/k3/bytes_per_token.py` computes this for any GGUF
 and is worth running before assuming a model is slow.
 
+**K3 is capped at `UD-Q2_K_XL` here and that is final.** The higher-bpw
+`UD-Q4_K_XL` is 1508.7 GB against 1133 GB of RAM (and 1.4 TB of free disk), with
+nothing published in between. Its structured-output unreliability below is a
+property of 2.479 bpw and is not reachable by configuration.
+
 **Tool reliability differs sharply by model** — measured, same request five
 times: GLM **5/5**, DeepSeek-V4 **5/5**, Kimi K3 **3/5**. On K3's failures the
 model emits no call at all rather than a malformed one, and it correlates with
