@@ -71,8 +71,22 @@ head_dim other than 64 or 128 — gets **silently wrong Qwen3-Next results**, no
 crash. Only the per-channel case is `ggml_cont`'d, and both paths read that one
 token-fastest, which is why K3 is unaffected.
 
-Not fixed here, because the right fix depends on which layout you consider
-canonical, and that is your call.
+**Fixed on the branch**, once it became clear the question answers itself: the
+pointer both kernels receive is the pre-permute buffer, so head-fastest is what
+is *actually in it* and the portable path was simply reading it wrong. The
+per-channel case is `ggml_cont`'d and stays token-fastest on both paths.
+
+`test_delta_net_gate.c` is the evidence. It previously needed
+
+```c
+beta_ph[fused ? t*H + h : h*T + t]
+```
+
+— a fixup whose only purpose was to paper over the disagreement, added when the
+test first exposed it. It is now unconditional head-fastest and all three head
+dims pass: 8 (portable), 64 and 128 (fused). If you prefer the other convention
+the fix inverts trivially, but then `build_fused_delta_net` needs a `ggml_cont`
+it currently avoids for good reason.
 
 ### 2. Two quantizer bugs, also independent of K3
 

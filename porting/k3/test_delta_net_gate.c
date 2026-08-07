@@ -183,18 +183,18 @@ int main(void) {
 
     // A. per-channel with all channels equal must reduce to per-head.
     //
-    // The two paths disagree about how a PER-HEAD gate and beta are laid out,
-    // and it is not a bug in either: build_fused_delta_net permutes them
-    // WITHOUT ggml_cont for the per-head case, so the fused kernel is handed a
-    // view and reads the underlying pre-permute buffer, which is head-fastest.
-    // The portable path in ggml.c reads token-fastest instead. On x86 the
-    // per-head case never reaches that path, so nothing has ever noticed.
+    // A PER-HEAD gate and beta are head-fastest, on BOTH paths. That is not
+    // arbitrary: build_fused_delta_net permutes them without ggml_cont, so the
+    // pointer both kernels receive is the pre-permute buffer, and head-fastest
+    // is what is actually in it. ggml.c's portable path used to read it
+    // token-fastest - a silent transpose that only a non-x86 build or an
+    // unusual head_dim could reach, and this test is what found it.
     //
-    // Only the per-channel case is cont'd - and both paths read it
-    // token-fastest, which is why it needs no fixup here.
+    // A per-channel gate IS cont'd, and is token-fastest on both paths, which
+    // is why only the per-head case needs laying out here.
     static float beta_ph[T*H*NS];
     for (int h = 0; h < H; ++h) for (int t = 0; t < T; ++t) {
-        beta_ph[fused ? t*H + h : h*T + t] = beta[BETA_AT(h, t)];
+        beta_ph[t*H + h] = beta[BETA_AT(h, t)];
     }
 
     printf("A. reduction to the per-head case\n");
