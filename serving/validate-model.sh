@@ -258,12 +258,29 @@ try: d = json.load(open(sys.argv[1]))
 except Exception:
     print("  DEGENERATION: FAIL (no response)"); raise SystemExit
 m = d.get("choices", [{}])[0].get("message", {})
-text = (m.get("content") or "") + (m.get("reasoning_content") or "")
-# Repetition detector: any 60-char window recurring many times is a loop.
+content = m.get("content") or ""
+text = content + (m.get("reasoning_content") or "")
+
+# Two independent detectors, because degeneration does not have one shape.
+#
+# The repetition one alone is not enough and this was learned the hard way: on a
+# configuration known to be broken it passed twice, because that model's failure
+# was a counting sequence and unrelated prose rather than a verbatim loop.
+#
+# The decisive question is simply whether the model ANSWERED. The prompt asks
+# what 2+2 is after a wall of filler; a model holding the thread says 4 in a
+# sentence. Thousands of characters that never say 4 is a failure whatever its
+# shape.
 wins = collections.Counter(text[i:i+60] for i in range(0, max(0, len(text) - 60), 20))
 worst = wins.most_common(1)[0][1] if wins else 0
-print("  DEGENERATION:", "FAIL (a 60-char window repeats %dx - repetition loop)" % worst
-      if worst >= 5 else "PASS (no repetition loop, %d chars)" % len(text))
+answered = "4" in content
+verdict = []
+if worst >= 5:      verdict.append("a 60-char window repeats %dx" % worst)
+if not answered:    verdict.append("never answered (no '4' in content)")
+if len(text) > 4000 and not answered:
+                    verdict.append("%d chars for a one-sentence question" % len(text))
+print("  DEGENERATION:", "FAIL (%s)" % "; ".join(verdict) if verdict
+      else "PASS (answered, %d chars)" % len(text))
 PY
 
 say "=== done: $OUT/report.txt ==="

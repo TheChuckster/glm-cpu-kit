@@ -288,10 +288,14 @@ Two smaller lessons from how it was eventually found:
   model.** The single tool-call check already failed with speculation on. Nobody
   ran it, because adding a flag to a registry row does not feel like the kind of
   change that needs revalidating. It is.
-- **The degeneration check missed it**, and the tool checks caught it. Its prompt
-  was long filler with no tools, and K3 only degenerates on agent-shaped input —
-  long *and* carrying tool declarations. That check now sends tools. A check that
-  passes on a known-broken configuration is worth fixing the moment you notice.
+- **The degeneration check missed it — twice.** First its prompt was long filler
+  with no tools, so it never provoked the failure. Then, with tools added, it
+  still passed: the detector looked for verbatim repetition, and that run's
+  degeneration was a counting sequence and unrelated prose. It now also asks the
+  simplest possible question — **did the model answer at all?** The prompt ends
+  "what is 2+2?", so content without a `4` in it is a failure whatever shape the
+  noise takes. A check that passes on a configuration you have already proven
+  broken is telling you about the check, not the model.
 
 **The relationship that actually holds**, across every configuration tried: the
 call appears when the model finishes thinking in **under ~200 characters**, and
