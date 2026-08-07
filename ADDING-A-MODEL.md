@@ -260,31 +260,43 @@ kit had turned on**.
 Speculative decoding is supposed to be **lossless** — only tokens the target
 model would have produced are accepted — so it was never suspected.
 
-On Kimi K3 it is not lossless **unless the checkpoint mode is set correctly**:
+On Kimi K3 it was not lossless, and chasing that produced the most useful
+sequence of wrong answers in this whole document:
 
-| K3 | tool reliability | streaming |
-|---|---|---|
-| speculation, default ckpt mode | **0/5** | FAIL (0 deltas) |
-| speculation, `--spec-ckpt-mode cpu` | **5/5** | PASS (6 deltas) |
-| no speculation | 5/5 | PASS |
+| K3 | tool reliability |
+|---|---|
+| speculation on (as first shipped) | **0/5** |
+| speculation on, after the fork fix | **5/5** |
+| no speculation | 5/5 |
 
-**And with `cpu` it is also 46-68% faster than no speculation** (6.3-7.2 tok/s
-against 4.30 on a code task), so this was never a correctness-versus-speed
-trade — it was one flag away from both.
+**The cause was a defect in our own graph builder, not in ik and not in the
+quant.** `build_qkv` takes `per_step_ssm` and `per_step_conv` as trailing
+optional arguments; the K3 KDA path stopped one argument short, so both defaulted
+to `nullptr` and the recurrent state was never snapshotted per draft step. A
+rejected draft then had nothing to roll back to and carried the rejected tokens
+forward — fluent drift compounding into repetition loops.
 
-The cause is mechanical. K3 has **69 recurrent KDA layers**, and speculation must
-roll their state back when a draft is rejected. `--spec-ckpt-mode auto` resolves
-to `gpu-fallback` on anything that is not a full-GPU CUDA build — it copies
-architecture state "to a device buffer" on a box with no device — so recurrent
-state is never restored and the corruption compounds. GLM and DeepSeek-V4 have no
-recurrent layers, nothing to roll back, and are clean on the default.
+### How it was found is the transferable part
 
-**If a model has recurrent or hybrid attention, A/B `--spec-ckpt-mode cpu`
-before trusting speculation.** Note "A/B", not "set": Qwen3-Next-80B was
-downloaded and tested precisely to check whether the rule generalises, and it
-does **not** — that model is 5/5 with speculation on the default mode. So the
-trigger is narrower than "recurrent state", and the honest instruction is to
-measure rather than to assume the flag is needed.
+The chain of explanations, in order, each one confidently written down:
+
+1. K3 is slow because of the scalar delta-net kernel → **wrong**, kernel gave PP not TG
+2. K3's tool calls fail because 2.479 bpw loses structured-output discipline → **wrong**
+3. Speculation breaks K3, disable it → **wrong**, it is worth 46-68%
+4. `--spec-ckpt-mode auto` is an ik bug on CPU-only builds → **wrong**
+5. our builder never passed the per-step checkpoint tensors → **right**
+
+Step 4 is where it turned, and only because the report was tested before it was
+sent. Qwen3-Next-80B was downloaded specifically to confirm "recurrent models are
+affected on CPU builds" — and came back **5/5 with speculation on the default
+mode**. A recurrent model that was *fine* is what made the ik theory untenable
+and sent me to `llama-delta-net.cpp`, which had been passing those two tensors
+all along.
+
+Every wrong answer blamed something unfixable: the kernel, the quant, the
+technique, the upstream. That is the tell. **An explanation that ends "and
+therefore nothing can be done" deserves one more test, not a paragraph in the
+README.**
 
 With it on, K3 degenerates into repetition — 8000 tokens of one paragraph on an
 agent prompt — and never emits the call. With it off, `kimi-opencode` chains
