@@ -8,28 +8,28 @@
 #   ./kimi-opencode.sh --continue       # resume the last session in this dir
 #   ./kimi-opencode.sh run "message"    # headless one-shot
 #
-# READ THIS FIRST - THIS SCRIPT DOES NOT PRODUCE USABLE AGENT SESSIONS, and the
-# reason is the model, not the plumbing. Measured, on a trivial "read util.py and
-# say what it does" task:
+# THIS WORKS. It did not for most of its life, and the header used to say so at
+# length - "does not produce usable agent sessions", blaming the 2.479 bpw quant.
+# That was wrong. Measured on a trivial "read util.py and say what it does" task:
 #
-#   DeepSeek-V4  41s, invoked the tool, correct answer
-#   GLM-5.2      67s, chained Glob then Read, correct answer
-#   Kimi K3      1464s, generated 8000 tokens of repeating text about HOME
-#                MEDICAL VISITS, and answered nothing
+#   DeepSeek-V4  41s,  invoked the tool, correct answer
+#   GLM-5.2      67s,  chained Glob then Read, correct answer
+#   Kimi K3      234s, chained Glob then Read, correct answer
 #
-# K3 at UD-Q2_K_XL degenerates, and it degenerates worse the longer the prompt.
-# On a ~185-token chat prompt it happens maybe half the time; on opencode's
-# ~7000-token system prompt it happened every time tried. The server is fine -
-# the same box answers "capital of Sweden" correctly in seconds - and so is the
-# parser, which is ported from mainline's K3 PR and passes its tests. The model
-# simply loses the thread.
+# K3 is the slowest of the three by a wide margin and that part has not changed.
+# What changed is that it now finishes: the fork's KDA path never passed
+# build_qkv's per-step checkpoint tensors, so speculative decoding had nothing to
+# roll back to on a rejected draft and the recurrent state drifted into
+# repetition loops - 8000 tokens about home medical visits instead of reading a
+# file. Wiring them took tool calls from 0/5 to 5/5.
 #
-# This is not fixable here. The next quant up, UD-Q4_K_XL, is 1508.7 GB against
-# 1133 GB of RAM. Use K3 for chat; use this for agent work:
+# Use DeepSeek-V4 when you want the work done quickly:
 #
 #     GLM_OPENCODE_MODEL=local/deepseek-v4-flash-0731 ./glm-opencode.sh
 #
-# The rest of this header is kept for the speed numbers, which are accurate:
+# Use K3 when you specifically want K3. Both are real options now.
+#
+# The rest of this header is the speed detail:
 #
 #   ~40 tok/s prompt processing, ~4.3 tok/s generation. opencode's system
 #   prompt plus tool definitions runs well over 10K tokens, so EXPECT ROUGHLY

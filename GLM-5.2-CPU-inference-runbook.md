@@ -724,7 +724,7 @@ dead end. And the quantizer **refuses** 2-bit without one ("The result will be
 garbage, so bailing out"), which is a good check; `--ignore-imatrix-rules` does
 not get you past it for IQ2_XS, which asserts inside `ggml_quantize_chunk`.
 
-### Why `kimi-opencode` produces nothing, settled
+### Why `kimi-opencode` produced nothing, and why it now works
 
 The original report was that the script "doesn't seem to be working". It took a
 long way round - it is not the harness, the server, or the parser. On a trivial
@@ -736,12 +736,20 @@ long way round - it is not the harness, the server, or the parser. On a trivial
 | GLM-5.2 | 67s, chained Glob then Read, correct |
 | **Kimi K3** | **1464s, 8000 tokens of repeating text about home medical visits** |
 
-K3 degenerates, and **it degenerates worse the longer the prompt**. On a
-~185-token chat prompt it happens roughly half the time; on opencode's
-~7000-token system prompt it happened on every attempt. The first time this was
-seen the script printed nothing at all, because the degenerate text landed in
-`reasoning_content` and was discarded — which is why it looked like a harness
-bug for so long.
+That table is historical. **K3 now completes the same task in 234 seconds**,
+chaining Glob and Read like the other two.
+
+The degeneration was real but the diagnosis was not: this was read as the
+2.479 bpw quant losing the thread on long prompts, and written up that way here
+more than once. The actual cause was in the fork's own graph builder — the KDA
+path never passed `build_qkv`'s `per_step_ssm`/`per_step_conv` arguments, so a
+rejected speculative draft had nothing to roll back to and the recurrent state
+carried the rejected tokens forward. Wiring them took tool calls from 0/5 to 5/5.
+
+The reason it looked like a harness bug for so long is worth keeping: the first
+time it was seen the script printed **nothing at all**, because the degenerate
+text landed in `reasoning_content` and was discarded. A failure that produces no
+output at all is indistinguishable from a failure to run.
 
 One irony worth noting: TG *rose* to 6.31 tok/s during the loop, well above K3's
 4.3 baseline, because the n-gram speculator is delighted by repeated text.
