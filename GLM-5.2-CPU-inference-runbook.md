@@ -413,10 +413,35 @@ prefill and ~2x the decode, and it barely decays** — 18% PP and 14% TG lost ac
 30K of context, where GLM's O(n²) prefill is what makes §10's "keep working context lean"
 advice necessary. A cold 30K-token agentic prompt prefills in ~95 s here.
 
-Threads (8K context): **64 is the right number** — 32 threads gives 280 PP / 22.1 TG,
-48 gives 340 / 23.7, 64 gives 348 / 21.4-23.6. §7's "sweep down for TG because bandwidth
-saturates before cores" does not pay off at only ~13B active; there is enough compute
-demand per byte that the extra cores still earn their keep.
+Threads: **64**, and the earlier version of this paragraph was measuring noise. It
+reported 48 threads beating 64 on TG (23.7 vs 21.4-23.6) which looked like an
+oddly artificial ceiling. Re-measured cleanly on the `-q5attn` build with
+`-rtr`, with nothing else resident:
+
+| threads | PP | TG |
+|---|---|---|
+| 32 | 260.8 | **32.11** |
+| 40 | 291.4 | 32.10 |
+| 48 | 313.5 | 31.87 |
+| 56 | 339.6 | 31.53 |
+| **64** | **360.5** | 31.45 |
+| 80 | 297.7 | 30.34 |
+| 96 | 322.9 | 30.23 |
+
+**TG is flat from 32 to 64** — a 2% decline across a doubling of cores, i.e.
+bandwidth saturates by 32 threads, exactly as §7 says it should. PP scales
+cleanly to 64 and falls off at 80+ where SMT contention starts. So 64 is right
+because of prefill, not because the extra cores help decode. There is no
+48-thread ceiling.
+
+**Two measurement traps this exposed, both worth avoiding.** Benchmarking a
+model while another one is resident and `--mlock`ed costs more than it looks:
+the same DS4 sweep run alongside K3's 788 GB read **TG 17.7 at 64 threads
+instead of 31.5**, and at 96 threads it collapsed to **0.43 tok/s** — a 41x
+cliff that looks like a scheduling bug and is memory pressure. And every number
+above 64 on a 64-core part is SMT, which helps prefill not at all and decode
+slightly negatively. Stop the server before benchmarking, and read anything
+above physical-core count with suspicion.
 
 Concurrency: leave `--parallel 1`. Decode is bandwidth-bound, so N streams split
 one budget rather than multiplying it — and ik
