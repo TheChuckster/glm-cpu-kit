@@ -230,7 +230,32 @@ Measure speculation through the actual serving path or not at all.
 (7.13-7.21 in the raw harness), 32 falls to 5.85, and 64 collapses to 4.26 as
 acceptance drops to 12% and the wasted verification outweighs the wins.
 
-## 9. Per-model flags are per-model: check, do not assume
+## 9. Prove the agentic loop, not just the tool call
+
+A model that returns one `tool_calls` response is not yet usable by an agent.
+The turn after it is the one that breaks: the assistant message has to be
+replayed **complete**, including `tool_calls` and `reasoning_content`, followed
+by a `role: "tool"` result. That shape is what ik #1605 was reported to 400 on,
+and for a model that always reasons it is unavoidable rather than optional.
+
+So test both halves. All three models on this box, on their `-q5attn` rebuilds:
+
+| | single call | replay + tool result |
+|---|---|---|
+| Kimi K3 | yes | yes — "The weather in Oslo is currently 3°C with light rain." |
+| DeepSeek-V4 | yes | yes |
+| GLM-5.2 | yes | yes |
+
+The replay path returns HTTP 200 on all three, so #1605 is not blocking here.
+
+**Passing this is still not the same as the harness working.** K3 answers the
+full loop over the API and yet a `kimi-opencode run` asking it to read a file
+exited 0 after 838s having printed nothing, while the server logged 7067 prompt
+and 2619 generated tokens — so the model ran and produced output the harness did
+not surface. Server-side correctness and harness integration are separate
+claims; do not infer one from the other.
+
+## 10. Per-model flags are per-model: check, do not assume
 
 `-rtr` (run-time repack) is the sharpest example measured here:
 
