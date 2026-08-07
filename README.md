@@ -84,8 +84,10 @@ its own engine build, and what is still open upstream for tool calling.
 architecture and ikawrakow declined to add one ([ik #2203](https://github.com/ikawrakow/ik_llama.cpp/issues/2203)),
 so the port lives on [`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp)
 branch `kimi-k3`, built into `build-k3` and selected by the registry's `engine`
-field. Perplexity 1.33 against a 1.55 reference; **40 tok/s prompt processing,
-4.3 tok/s generation** (from 30.1 / 3.65 when the port first ran). The fused AVX-512 delta-net kernel now handles K3's
+field. Perplexity 1.33 against a 1.55 reference; **40 tok/s prompt processing**
+and **4.3 tok/s generation, rising to 6.3-7.2 on repetitive or code-shaped
+output** where n-gram speculation fires (from 30.1 / 3.65 when the port first
+ran). Tool calls 5/5, and it drives a real agent loop. The fused AVX-512 delta-net kernel now handles K3's
 per-channel KDA gate (it used to decline, dropping 69 of 93 layers to the scalar
 path) — worth +29% on prompt processing and, measured A/B, *nothing* on
 generation. Generation is at the memory wall: K3 reads **71.2 GiB per token** and
@@ -116,10 +118,14 @@ which is the reproducible version of that claim rather than a remembered one:
 |---|---|---|---|---|---|---|---|
 | DeepSeek-V4 (`-rtr`, spec) | ✅ | ✅ | ✅ | 5/5 | ✅ 7 deltas | ✅ | ✅ |
 | GLM-5.2 (spec) | ✅ | ✅ | ✅ | 5/5 | ✅ 6 deltas | ✅ | ✅ |
-| Kimi K3 (no spec) | ✅ | ✅ | ✅ | 5/5 | ✅ 6 deltas | ✅ | ✅ |
-| *K3 with spec (rejected)* | ✅ | ✅ | ❌ | **0/5** | ❌ 0 deltas | ✅ | ✅ |
+| Kimi K3 (spec + `--spec-ckpt-mode cpu`) | ✅ | ✅ | ✅ | 5/5 | ✅ 6 deltas | ✅ | ✅ |
+| *K3 with spec, default ckpt mode (rejected)* | ✅ | ✅ | ❌ | **0/5** | ❌ 0 deltas | ✅ | ✅ |
 
-The last row is why the gate exists.
+The last row is why the gate exists — and the row above it is one flag away.
+`--spec-ckpt-mode auto` resolves to `gpu-fallback` on a CPU-only build and never
+restores the recurrent state of K3's 69 KDA layers when a draft is rejected. With
+`cpu` it is correct **and 46-68% faster** than no speculation. Any model with
+recurrent or hybrid attention needs that flag before speculation is safe.
 
 **All three models emit tool calls 5/5.** K3 only got there after
 `--spec-type ngram-mod` was removed from its row: speculative decoding is
