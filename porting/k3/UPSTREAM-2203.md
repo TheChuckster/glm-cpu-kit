@@ -11,8 +11,10 @@ much, file those separately — they stand alone:
 
 1. the per-head gate layout inconsistency in `ggml_delta_net` (silently wrong
    Qwen3-Next results on any non-x86 path) — **fixed on the branch, with a test**
-2. `--spec-type ngram-mod` is **not lossless** on K3: 0/5 tool calls with it, 5/5
-   without, and repetition loops in between. Not fixed — reported.
+2. `--spec-ckpt-mode auto` picks `gpu-fallback` on CPU-only builds and never
+   restores recurrent state on draft rejection — speculation silently produces
+   garbage on hybrid models. `cpu` fixes it *and* is 46-68% faster than no
+   speculation.
 3. `ssm_conv1d` prefix matching in the quantizer (produces a model that
    quantizes without error and aborts at the first token)
 4. the `n_attention_wv` assert, which no hybrid-attention model can satisfy
@@ -90,31 +92,34 @@ dims pass: 8 (portable), 64 and 128 (fused). If you prefer the other convention
 the fix inverts trivially, but then `build_fused_delta_net` needs a `ggml_cont`
 it currently avoids for good reason.
 
-### 2. `--spec-type ngram-mod` is not lossless on K3
+### 2. `--spec-ckpt-mode auto` corrupts recurrent models on CPU-only builds
 
-Speculative decoding promises identical output: only tokens the target model
-would have produced are accepted. On Kimi K3 that does not hold. Same build,
-same model, same sampling, one flag:
+Speculation destroys Kimi K3 on the default checkpoint mode, and works — and is
+*faster* — on `cpu`:
 
-| | tool calls emitted | streaming tool deltas |
-|---|---|---|
-| `--spec-type ngram-mod:n_max=16,n_min=2` | **0/5** | **0** |
-| no speculation | **5/5** | 6 |
+| K3, `--spec-type ngram-mod:n_max=16,n_min=2` | tool calls | streaming | TG |
+|---|---|---|---|
+| default (`--spec-ckpt-mode auto`) | **0/5** | **0 deltas** | — |
+| `--spec-ckpt-mode cpu` | **5/5** | 6 deltas | **6.3-7.2 tok/s** |
+| no speculation at all | 5/5 | 6 deltas | 4.30 tok/s |
 
-With it on the model degenerates into repetition — 8000 tokens of a single
-repeated paragraph on an agent-shaped prompt — and never emits the call. With it
-off the same prompt drives a coding agent through Glob and Read to a correct
-answer in 237 seconds.
+On the default it degenerates into repetition — 8000 tokens of one paragraph on
+an agent prompt — and never emits a call.
 
-Not observed on GLM-5.2 or DeepSeek-V4, both of which measure 5/5 with
-speculation enabled, so this looks specific to something about K3 — plausibly
-the long reasoning channel, where n-gram matches are both frequent and
-misleading. Worth saying plainly though: a technique that is lossless by
-construction returning different text is a correctness bug, not a tuning
-preference, and it cost a long time here precisely because it is the last thing
-anyone suspects.
+The mechanism looks straightforward. K3 has **69 recurrent KDA layers** whose
+state must be rolled back when a draft is rejected. `auto` documents itself as
+"per-step if CUDA full-GPU, **gpu-fallback otherwise**", and `gpu-fallback`
+copies architecture state "to a device buffer" — on a CPU-only build there is no
+device, so the recurrent state is never restored and the corruption compounds.
+GLM-5.2 and DeepSeek-V4 have no recurrent layers, nothing to roll back, and are
+clean on the default.
 
-Reproducible on this hardware; happy to run whatever would help narrow it.
+If that reading is right, the fix is for `auto` to resolve to `cpu` rather than
+`gpu-fallback` when no GPU backend is present, at least for models with
+recurrent state. As it stands, the default silently produces garbage for hybrid
+architectures on the configuration ik is most used in.
+
+Reproducible on this hardware; happy to run whatever would help confirm it.
 
 ### 3. Two quantizer bugs, also independent of K3
 
