@@ -10,7 +10,9 @@ lands**, and two are bug reports rather than features. If the whole thing is too
 much, file those separately — they stand alone:
 
 1. the per-head gate layout inconsistency in `ggml_delta_net` (silently wrong
-   Qwen3-Next results on any non-x86 path) — **fixed on the branch, with a test**
+   Qwen3-Next results on any non-x86 path) — **ready as a standalone PR**:
+   [`upstream/delta-net-gate-layout`](https://github.com/TheChuckster/ik_llama.cpp/tree/upstream/delta-net-gate-layout),
+   branched off `6038941`, 3 files, no K3 in it at all
 2. `ssm_conv1d` prefix matching in the quantizer (produces a model that
    quantizes without error and aborts at the first token)
 3. the `n_attention_wv` assert, which no hybrid-attention model can satisfy
@@ -83,6 +85,18 @@ token-fastest, which is why K3 is unaffected.
 pointer both kernels receive is the pre-permute buffer, so head-fastest is what
 is *actually in it* and the portable path was simply reading it wrong. The
 per-channel case is `ggml_cont`'d and stays token-fastest on both paths.
+
+**The test was verified to fail without the fix**, which is the part worth
+checking before sending anyone a patch. On the unfixed tree:
+
+```
+head_dim 8     max|kernel - reference| = 8.214e-02   FAILED
+head_dim 64    max|kernel - reference| = 5.588e-09   passed
+```
+
+and with the fix, 1.49e-08 / 5.59e-09 / 4.66e-09 across 8 / 64 / 128. The 64-dim
+column passing in both runs is the point restated: the fused kernel was always
+right, only the portable path was wrong, and only head_dim 8 can reach it.
 
 `tests/test-delta-net-gate.c` is the evidence. It previously needed
 
