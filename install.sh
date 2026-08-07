@@ -56,6 +56,24 @@ fi
 sudo install -m 0755 "$KITDIR/serving/glm-model" /usr/local/bin/glm-model
 echo "  installed /usr/local/bin/glm-model   (try: glm-model list)"
 
+# The registry ships rows whose `engine` field names a build tree this script
+# does NOT create. Say so here rather than let `glm-model use` fail with a
+# missing-binary error on a box that was just told installation succeeded.
+MISSING=""
+for eng in $(awk -F'|' '/^[a-z0-9-]+ *\|/ {gsub(/ /,"",$8); if ($8 != "") print $8}' \
+             "$KITDIR/serving/glm-variants.conf" | sort -u); do
+    [ -x "$HOME/ik_llama.cpp/$eng/bin/llama-server" ] || MISSING="$MISSING $eng"
+done
+if [ -n "$MISSING" ]; then
+    echo "  NOTE: these registry rows need engine trees that do not exist yet:$MISSING"
+    echo "        Rows with an empty engine field use ~/ik_llama.cpp/build, which this"
+    echo "        script built. The others are deliberate - a new architecture gets its"
+    echo "        own tree so bringing it up cannot disturb a working model. Build them"
+    echo "        with:  cmake -B <tree> -DGGML_NATIVE=ON && cmake --build <tree> -j"
+    echo "        Kimi K3 additionally needs the fork, since upstream ik has no kimi-k3"
+    echo "        architecture:  https://github.com/TheChuckster/ik_llama.cpp (kimi-k3)"
+fi
+
 say "5/7  install systemd service"
 SVC=/etc/systemd/system/glm-server.service
 sed -e "s|REPLACE_WITH_YOUR_USER|$USER_NAME|g" "$KITDIR/serving/glm-server.service" \

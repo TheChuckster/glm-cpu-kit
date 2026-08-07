@@ -225,7 +225,15 @@ always safe: louder, never hotter.
 
 Fastest path: mount fast storage at `/models`, then run `./install.sh`. It does deps, builds
 ik_llama.cpp (verifying VNNI), generates the API key, installs the model registry and the
-`glm-model` CLI, and installs the systemd service. Add
+`glm-model` CLI, and installs the systemd service.
+
+It builds **only** the default `build` tree, from upstream ik. Registry rows with a
+non-empty `engine` field (`build-ds4`, `build-k3`) need their trees built separately —
+that separation is the point, so a new architecture cannot disturb a working model — and
+`install.sh` now lists which ones are missing rather than letting `glm-model use` fail with
+a missing-binary error. Kimi K3 additionally needs
+[the fork](https://github.com/TheChuckster/ik_llama.cpp), since upstream ik has no
+`kimi-k3` architecture. Add
 `--download` to also pull the ~440 GB model. Then benchmark NUMA and thread counts and set up
 the harness.
 
