@@ -264,11 +264,34 @@ turn ended after thinking. The correlation is with reasoning length, and it is
 sharp: every run under ~200 characters of reasoning produced the call, and the
 long ones mostly did not.
 
-Things that did NOT fix it, all measured: `thinking_effort` (a soft hint the
-model ignores — the same request produced 151 characters of reasoning once and
-9377 another time), disabling prompt caching, `temperature` 0 and 0.2 (both
-*worse*, and they lengthen reasoning). `--reasoning-budget 128` plus
-`--reasoning-budget-message` is the best found and gets it to 3/5.
+**The relationship that actually holds**, across every configuration tried: the
+call appears when the model finishes thinking in **under ~200 characters**, and
+does not when it thinks long — whatever made it think long. Every lever below
+moves reasoning length around; none changes that relationship.
+
+Things that did NOT fix it, all measured:
+
+| lever | result |
+|---|---|
+| `thinking_effort=low` | soft hint; same request gave 151 chars once, 9377 another |
+| `cache_prompt: false` | no change |
+| `temperature` 0 / 0.2 | **worse**, and lengthens reasoning |
+| `--reasoning-budget 128` | 3/5, then 0/3 — the forced close *prevents* the call |
+| `--reasoning-budget 1024` | 1/3 |
+| grammar, `tool_choice=required` | **1/4** |
+| grammar, `tool_choice=auto` (lazy) | **0/4** |
+
+Two of those are worth internalising. **A reasoning budget that fires is not
+neutral** — interrupting the think section mid-thought reliably produced *no*
+call, while every success had the model closing its own think tag. And
+**constraining generation to a grammar made it strictly worse**, including the
+lazy grammar that only engages after a tool section has already started. That is
+the obvious fix, it is what the Kimi K2 parser does, and on K3 it cost the whole
+sample. The parser is deliberately left permissive as a result.
+
+The settled config is `--reasoning-budget 1024` (runaway protection, since
+unbounded thinking produced a 22,423-character reasoning block and a 24-minute
+request) plus `--repeat-penalty 1.0` and `thinking_effort=low`.
 
 The honest reading is that structured-output discipline is what a 2.479 bpw
 quant gives up first, while prose stays fine — K3 writes 2247 characters of
