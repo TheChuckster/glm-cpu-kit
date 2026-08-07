@@ -148,12 +148,24 @@ the state until the update. A per-channel decay does not factor out, so it is
 applied per column inside the accumulation loop — the state is read and written
 exactly as often as before.
 
-`porting/k3/test_delta_net_gate.c` is the correctness bar: a per-channel gate
-with all channels equal must reduce to the per-head result, and a gate varying
-per (token, channel, head) must match the recurrence written out longhand. It
-takes a `HEAD_DIM` knob because `iqk_fused_delta_net` only accepts 64 and 128 —
-at 8 it silently tests the portable path instead, which is how the layout bug in
-§1 surfaced.
+The correctness bar is **in-tree and runs under ctest**, at three head dims:
+
+```
+ctest -R delta-net-gate
+  test-delta-net-gate-8 .... Passed
+  test-delta-net-gate-64 ... Passed
+  test-delta-net-gate-128 .. Passed
+```
+
+It checks two properties: a per-channel gate whose channels all hold the same
+value must reduce to the per-head result, and a gate varying per (token,
+channel, head) must match the recurrence written out longhand. The first alone
+is not enough — with every channel equal, a transposed read lands on the same
+number.
+
+The three head dims are the point rather than thoroughness for its own sake:
+`iqk_fused_delta_net` only accepts 64 and 128, so **8 is the only way to reach
+the portable path at all**, and that is how the layout bug in §1 surfaced.
 
 ### Also in the branch
 
