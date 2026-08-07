@@ -298,6 +298,23 @@ technique, the upstream. That is the tell. **An explanation that ends "and
 therefore nothing can be done" deserves one more test, not a paragraph in the
 README.**
 
+### Build clean before you claim the fork works
+
+Every change to the fork in this project was compiled **incrementally**, which
+hides missing includes and stale objects — a tree that builds for you and for
+nobody else. Verified from scratch:
+
+```sh
+cmake -B build-clean -DGGML_NATIVE=ON -DLLAMA_BUILD_TESTS=ON
+cmake --build build-clean --target llama-server llama-quantize \
+      test-chat-peg-parser test-delta-net-gate-8 -j 48
+ctest --test-dir build-clean -R delta-net-gate
+```
+
+Clean build succeeded, delta-net gate 3/3 across head dims 8/64/128, chat peg
+parser 34 tests and 205 assertions with no failures. Cheap, and the alternative
+is finding out from whoever tries to use the branch.
+
 ### Keep a control model for any shared code path you touch
 
 `qwen3-next-ref` is registered for exactly this and is not a serving target.
