@@ -282,7 +282,7 @@ The chain of explanations, in order, each one confidently written down:
 
 1. K3 is slow because of the scalar delta-net kernel → **wrong**, kernel gave PP not TG
 2. K3's tool calls fail because 2.479 bpw loses structured-output discipline → **wrong**
-3. Speculation breaks K3, disable it → **wrong**, it is worth 46-68%
+3. Speculation breaks K3, disable it → **wrong**, it is worth up to +123%
 4. `--spec-ckpt-mode auto` is an ik bug on CPU-only builds → **wrong**
 5. our builder never passed the per-step checkpoint tensors → **right**
 

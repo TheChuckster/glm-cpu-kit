@@ -85,7 +85,7 @@ architecture and ikawrakow declined to add one ([ik #2203](https://github.com/ik
 so the port lives on [`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp)
 branch `kimi-k3`, built into `build-k3` and selected by the registry's `engine`
 field. Perplexity 1.33 against a 1.55 reference; **40 tok/s prompt processing**
-and **4.3 tok/s generation, rising to 6.3-7.2 on repetitive or code-shaped
+and **4.3 tok/s generation, rising to 7.5-9.6 on repetitive or code-shaped
 output** where n-gram speculation fires (from 30.1 / 3.65 when the port first
 ran). Tool calls 5/5, and it drives a real agent loop. The fused AVX-512 delta-net kernel now handles K3's
 per-channel KDA gate (it used to decline, dropping 69 of 93 layers to the scalar
