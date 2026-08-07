@@ -298,6 +298,28 @@ technique, the upstream. That is the tell. **An explanation that ends "and
 therefore nothing can be done" deserves one more test, not a paragraph in the
 README.**
 
+### The script you are reading may not be the one that runs
+
+`~/serve-glm.sh` on this box is a 24-line stub from July. The unit runs
+`/usr/local/bin/serve-glm.sh`, which is 154 lines and registry-aware. Reading the
+stub during an investigation produced a confident theory about flags that were
+"in the script but not on the command line" — they were not in the script that
+runs.
+
+`grep ExecStart /etc/systemd/system/glm-server.service` first, every time.
+
+### Deploy your own changes before claiming they work
+
+`serve-glm.sh`'s auto-detection was verified by extracting the functions and
+running them standalone, which proves the arithmetic and nothing else. The
+modified script had never actually started a server.
+
+Installed and restarted: `--threads 64` from `lscpu`, no `--numa` from `numactl`
+reporting one node, `--mlock` kept because 845 GB fits under the 1119 GB
+threshold — all three matching the hardcoded values they replaced. The unit's
+overrides are commented out so the detection is genuinely exercised rather than
+masked.
+
 ### Build clean before you claim the fork works
 
 Every change to the fork in this project was compiled **incrementally**, which
