@@ -248,6 +248,34 @@ So test both halves. All three models on this box, on their `-q5attn` rebuilds:
 
 The replay path returns HTTP 200 on all three, so #1605 is not blocking here.
 
+**Then measure it repeatedly, because it is not deterministic.** One success is
+not a working tool path. Same request, five times each:
+
+| | tool calls emitted | reasoning length |
+|---|---|---|
+| GLM-5.2 | **5/5** | (thinking off) |
+| DeepSeek-V4 | **5/5** | 45-69 chars, tight |
+| Kimi K3 | **3/5** | 53-9377 chars, wildly variable |
+
+K3 is the outlier and the parser is not the reason: it has unit tests, it
+handles single- and multi-argument calls, and the multi-turn replay works. On
+the failures the model simply **does not emit a call at all** — empty content,
+turn ended after thinking. The correlation is with reasoning length, and it is
+sharp: every run under ~200 characters of reasoning produced the call, and the
+long ones mostly did not.
+
+Things that did NOT fix it, all measured: `thinking_effort` (a soft hint the
+model ignores — the same request produced 151 characters of reasoning once and
+9377 another time), disabling prompt caching, `temperature` 0 and 0.2 (both
+*worse*, and they lengthen reasoning). `--reasoning-budget 128` plus
+`--reasoning-budget-message` is the best found and gets it to 3/5.
+
+The honest reading is that structured-output discipline is what a 2.479 bpw
+quant gives up first, while prose stays fine — K3 writes 2247 characters of
+correct, on-topic technical prose without a wobble, and its perplexity is 1.33.
+Chat is reliable; agentic use is not. DeepSeek-V4 at native MXFP4 is the model
+to reach for when tools matter.
+
 **Passing this is still not the same as the harness working.** K3 answers the
 full loop over the API and yet a `kimi-opencode run` asking it to read a file
 exited 0 after 838s having printed nothing, while the server logged 7067 prompt

@@ -102,6 +102,11 @@ buys almost no speed, while requantising the 7.2% of the file nobody optimises
 would be worth ~1.4x. `porting/k3/bytes_per_token.py` computes this for any GGUF
 and is worth running before assuming a model is slow.
 
+**Tool reliability differs sharply by model** — measured, same request five
+times: GLM **5/5**, DeepSeek-V4 **5/5**, Kimi K3 **3/5**. On K3's failures the
+model emits no call at all rather than a malformed one, and it correlates with
+reasoning length, not with the parser. Reach for DeepSeek-V4 when tools matter.
+
 **Tool calls work on K3** as of fork `c10d1e2` — it emits them as nested
 `<|open|>argument key=...<|sep|>` tags rather than JSON, and needed a parser plus
 `--repeat-penalty 1.0` (the global 1.1 penalises structured tag output badly
