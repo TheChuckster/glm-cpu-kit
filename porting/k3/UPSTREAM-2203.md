@@ -11,12 +11,12 @@ much, file those separately — they stand alone:
 
 1. the per-head gate layout inconsistency in `ggml_delta_net` (silently wrong
    Qwen3-Next results on any non-x86 path) — **ready as a standalone PR**:
-   [`upstream/delta-net-gate-layout`](https://github.com/TheChuckster/ik_llama.cpp/tree/upstream/delta-net-gate-layout),
-   branched off `6038941`, 3 files, no K3 in it at all
+   [`upstream/delta-net-gate-layout`](https://github.com/TheChuckster/ik_llama.cpp/tree/upstream/delta-net-gate-layout)
+   — **one commit on top of current `main`**, 3 files, no K3 in it at all
 2. `--keep-pattern` / `--keep-f32` for partial requantization, plus the
    `ssm_conv1d` prefix fix — **ready as a standalone PR**:
-   [`upstream/quantize-partial-requant`](https://github.com/TheChuckster/ik_llama.cpp/tree/upstream/quantize-partial-requant),
-   branched off `6038941`, four files, no K3 code in it
+   [`upstream/quantize-partial-requant`](https://github.com/TheChuckster/ik_llama.cpp/tree/upstream/quantize-partial-requant)
+   — **one commit on top of current `main`**, four files, no K3 code in it
 3. the `n_attention_wv` assert, which no hybrid-attention model can satisfy —
    **not** in either branch, because exempting an architecture requires that
    architecture to exist upstream. Mentioned in case you want it generalised.
@@ -43,6 +43,12 @@ blind: it was written independently first, and every place the two differed
 turned out to be a defect on this side.
 
 ---
+
+**All three branches rebase cleanly onto current `main` (`40dffce6`, 20 commits
+past where this work started), and were re-tested after rebasing rather than
+assumed** — the delta-net branch rebuilds and passes at head_dim 8, 64 and 128
+with error magnitudes identical to before. That includes `kimi-k3` itself, so
+the whole port is still current.
 
 ## Draft
 
@@ -135,9 +141,9 @@ than correctness.
 
 ### 3. Two quantizer features that made a 17% speedup expressible
 
-Branch: [`upstream/quantize-partial-requant`](https://github.com/TheChuckster/ik_llama.cpp/tree/upstream/quantize-partial-requant).
-Builds clean off `6038941`, and verified functionally on that branch rather than
-only on ours — a dry run against DeepSeek-V4 converts **596 non-expert tensors
+Branch: [`upstream/quantize-partial-requant`](https://github.com/TheChuckster/ik_llama.cpp/tree/upstream/quantize-partial-requant),
+rebased onto current `main` (`40dffce6`). Verified functionally on that branch
+rather than only on ours — a dry run against DeepSeek-V4 converts **596 non-expert tensors
 and 0 expert tensors**, which is the whole point of the flag.
 
 Not bugs, but worth offering. Published quants spend their care on experts,
