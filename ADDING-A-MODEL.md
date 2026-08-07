@@ -279,8 +279,12 @@ architecture state "to a device buffer" on a box with no device — so recurrent
 state is never restored and the corruption compounds. GLM and DeepSeek-V4 have no
 recurrent layers, nothing to roll back, and are clean on the default.
 
-**If a model has recurrent or hybrid attention, set `--spec-ckpt-mode cpu`
-before enabling speculation.**
+**If a model has recurrent or hybrid attention, A/B `--spec-ckpt-mode cpu`
+before trusting speculation.** Note "A/B", not "set": Qwen3-Next-80B was
+downloaded and tested precisely to check whether the rule generalises, and it
+does **not** — that model is 5/5 with speculation on the default mode. So the
+trigger is narrower than "recurrent state", and the honest instruction is to
+measure rather than to assume the flag is needed.
 
 With it on, K3 degenerates into repetition — 8000 tokens of one paragraph on an
 agent prompt — and never emits the call. With it off, `kimi-opencode` chains

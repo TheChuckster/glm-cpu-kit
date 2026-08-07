@@ -106,18 +106,32 @@ Speculation destroys Kimi K3 on the default checkpoint mode, and works — and i
 On the default it degenerates into repetition — 8000 tokens of one paragraph on
 an agent prompt — and never emits a call.
 
-The mechanism looks straightforward. K3 has **69 recurrent KDA layers** whose
-state must be rolled back when a draft is rejected. `auto` documents itself as
+The obvious explanation is recurrent state rollback: K3 has **69 KDA layers**
+whose state must be restored when a draft is rejected, `auto` documents itself as
 "per-step if CUDA full-GPU, **gpu-fallback otherwise**", and `gpu-fallback`
 copies architecture state "to a device buffer" — on a CPU-only build there is no
-device, so the recurrent state is never restored and the corruption compounds.
-GLM-5.2 and DeepSeek-V4 have no recurrent layers, nothing to roll back, and are
-clean on the default.
+device.
 
-If that reading is right, the fix is for `auto` to resolve to `cpu` rather than
-`gpu-fallback` when no GPU backend is present, at least for models with
-recurrent state. As it stands, the default silently produces garbage for hybrid
-architectures on the configuration ik is most used in.
+**That explanation is at best incomplete, and I tested it rather than shipping
+it.** Qwen3-Next-80B-A3B (`UD-Q4_K_XL`, ik's own supported `qwen3next` arch, 48
+linear-attention layers) was downloaded and run through the same probe on the
+same build:
+
+| | tool calls | coherence |
+|---|---|---|
+| Qwen3-Next, no speculation | 5/5 | PASS |
+| **Qwen3-Next, speculation, default ckpt mode** | **5/5** | **PASS** |
+
+So a recurrent model on the default checkpoint mode is fine, and "any model with
+recurrent state is affected" is **wrong**. Whatever the trigger is, it
+distinguishes K3 from Qwen3-Next. The candidates I can see: K3 is **hybrid** — 24
+MLA layers interleaved with 69 KDA ones, so a draft rejection has to roll back
+both an attention KV cache and recurrent state — where Qwen3-Next is uniformly
+linear. It is also possible the fault is in this port rather than in ik, and I
+would rather say so than have you find it.
+
+What is solid: on K3, `--spec-ckpt-mode cpu` turns 0/5 into 5/5 and is faster
+than no speculation at all, and Qwen3-Next is unaffected either way.
 
 Reproducible on this hardware; happy to run whatever would help confirm it.
 
