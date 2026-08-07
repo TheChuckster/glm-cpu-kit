@@ -5,15 +5,17 @@ back deliberately: posting is outward-facing and reviewed by nobody but the
 author of the port. Read it, change what you disagree with, then post it
 yourself.
 
-**Three of the four items below are useful to ik whether or not Kimi K3 ever
-lands**, and two are bug reports rather than features. If the whole thing is too
+**Four of the five items below are useful to ik whether or not Kimi K3 ever
+lands**, and three are bug reports rather than features. If the whole thing is too
 much, file those separately — they stand alone:
 
 1. the per-head gate layout inconsistency in `ggml_delta_net` (silently wrong
-   Qwen3-Next results on any non-x86 path)
-2. `ssm_conv1d` prefix matching in the quantizer (produces a model that
+   Qwen3-Next results on any non-x86 path) — **fixed on the branch, with a test**
+2. `--spec-type ngram-mod` is **not lossless** on K3: 0/5 tool calls with it, 5/5
+   without, and repetition loops in between. Not fixed — reported.
+3. `ssm_conv1d` prefix matching in the quantizer (produces a model that
    quantizes without error and aborts at the first token)
-3. the `n_attention_wv` assert, which no hybrid-attention model can satisfy
+4. the `n_attention_wv` assert, which no hybrid-attention model can satisfy
 
 The objection being answered is ikawrakow's own, and it is not a design
 objection:
@@ -88,7 +90,33 @@ dims pass: 8 (portable), 64 and 128 (fused). If you prefer the other convention
 the fix inverts trivially, but then `build_fused_delta_net` needs a `ggml_cont`
 it currently avoids for good reason.
 
-### 2. Two quantizer bugs, also independent of K3
+### 2. `--spec-type ngram-mod` is not lossless on K3
+
+Speculative decoding promises identical output: only tokens the target model
+would have produced are accepted. On Kimi K3 that does not hold. Same build,
+same model, same sampling, one flag:
+
+| | tool calls emitted | streaming tool deltas |
+|---|---|---|
+| `--spec-type ngram-mod:n_max=16,n_min=2` | **0/5** | **0** |
+| no speculation | **5/5** | 6 |
+
+With it on the model degenerates into repetition — 8000 tokens of a single
+repeated paragraph on an agent-shaped prompt — and never emits the call. With it
+off the same prompt drives a coding agent through Glob and Read to a correct
+answer in 237 seconds.
+
+Not observed on GLM-5.2 or DeepSeek-V4, both of which measure 5/5 with
+speculation enabled, so this looks specific to something about K3 — plausibly
+the long reasoning channel, where n-gram matches are both frequent and
+misleading. Worth saying plainly though: a technique that is lossless by
+construction returning different text is a correctness bug, not a tuning
+preference, and it cost a long time here precisely because it is the last thing
+anyone suspects.
+
+Reproducible on this hardware; happy to run whatever would help narrow it.
+
+### 3. Two quantizer bugs, also independent of K3
 
 **`ssm_conv1d` is matched as a literal, not a prefix.** The guard is
 `name.find("ssm_conv1d.weight")`. K3 has one conv per projection —
@@ -107,7 +135,7 @@ feeds the heuristic that spends extra bits on the first and last attention
 layers, so an arch exemption costs a slightly different bit allocation rather
 than correctness.
 
-### 3. Two quantizer features that made a 17% speedup expressible
+### 4. Two quantizer features that made a 17% speedup expressible
 
 Not bugs, but worth offering. Published quants spend their care on experts,
 because experts are the file — yet a token reads only the experts it activates
@@ -128,7 +156,7 @@ destroying and rebuilding the experts it was not asked to touch.
   `indexer.proj` tensors that choose which tokens attention sees and would have
   degraded silently.
 
-### 4. The per-channel KDA gate, which is what K3 actually needed
+### 5. The per-channel KDA gate, which is what K3 actually needed
 
 K3 sets `use_full_rank_gate`, so `A_log` is `[128]` — one decay per channel
 rather than the per-head scalar Qwen3-Next uses. The assert in `ggml.c` is
