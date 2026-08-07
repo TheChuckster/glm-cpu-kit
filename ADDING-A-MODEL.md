@@ -317,6 +317,14 @@ carried the fix and its explanation for weeks; the box had never received it.
 
 A fix that exists only in the repository is not deployed.
 
+**And a shared script verified against one model is verified against one model.**
+`serve-glm.sh` starts all of them; it was checked with K3 and then left. Restarted
+DeepSeek-V4 and GLM-5.2 under it as well — both came up with `--threads 64`
+auto-detected, `--mlock` kept, their own `opts` intact (`-rtr` and `--spec-type`
+for DS4), tool calls working, and `Result=success` on every teardown including
+the 845 GB one. Three model switches, **zero hard kills**, where the previous day
+had 58.
+
 ### The script you are reading may not be the one that runs
 
 `~/serve-glm.sh` on this box is a 24-line stub from July. The unit runs
