@@ -824,6 +824,30 @@ Adherence is otherwise variable and it is *not* a throughput dial: on one fixed
 question `low` produced 9127 characters of reasoning where `high` produced 2781.
 Raise it per request for hard problems; do not rely on it to bound anything.
 
+### Multi-turn: conversational state holds
+
+Single-turn correctness and the tool-replay shape were both verified, but neither
+says whether K3 carries a conversation. Seven turns, each later turn probing
+something established earlier:
+
+| turn | probe | prompt tokens | result |
+|---|---|---|---|
+| 4 | name given in turn 1 | 293 | recalled |
+| 5 | RAM figure given in turn 2 | 342 | recalled |
+| 7 | arithmetic from turn 3 | 435 | recalled |
+
+7/7, context growing 107 -> 435 tokens.
+
+**Latency does not track context here, it tracks reasoning.** Turn 6 — "name the
+capital of Norway", answered with the single word "Oslo" — took **20.6s**, while
+turn 7 with *more* context took 6.8s. Anyone benchmarking a conversation and
+watching the number climb should check what the model chose to think about before
+concluding the context is the problem.
+
+The honest limit of this test: 435 prompt tokens is a short conversation. An agent
+session runs to 10K+, and what is verified there is prefill throughput (32.0 PP /
+4.03 TG at 12K, above) rather than recall.
+
 ### Sustained load: 24 requests, no failures, no leak
 
 Everything else about K3 was measured in bursts between restarts, which says
