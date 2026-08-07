@@ -419,23 +419,30 @@ Leave it on auto.
 
 ### Where that leaves K3
 
-The official model card's sampling — temperature 1.0, top_p 0.95, no repetition
-penalty — is now what the row uses, and degeneration still occurs. The honest
-reading is that structured-output discipline is what a 2.479 bpw quant gives up
-first, while prose stays fine: K3 writes 2247 characters of correct, on-topic
-technical prose without a wobble, answers factual and arithmetic questions
-reliably, and has perplexity 1.33. **Chat is reliable; agentic use is not.**
-DeepSeek-V4 at native MXFP4 is the model to reach for when tools matter — and it
-is also the fastest here.
+K3 uses the official model-card sampling — temperature 1.0, top_p 0.95, no
+repetition penalty. **Chat and agentic use are both reliable**: perplexity 1.33,
+tool calls 5/5, the full gate passing, and a real agent loop (Glob then Read,
+correct, 234s). It writes 2247 characters of accurate technical prose without a
+wobble.
 
-**And that is not fixable on this box, which is worth stating flatly** so nobody
-re-opens it. The obvious remedy is a higher-bpw K3, and unsloth publishes one —
-`UD-Q4_K_XL`. It is **1508.7 GB** against 1133 GB of RAM, and would not fit the
-1.4 TB of free disk either. There is nothing between it and `UD-Q2_K_XL`
-(861 GB); the only smaller options (`UD-IQ2_XXS` at 711 GB, `UD-IQ1_*`) are
-worse. Requantising the local file upward recovers nothing, because the
-information is already gone at 2 bits, and rebuilding from the original weights
-means 2.8T parameters of bf16.
+This paragraph previously read "Chat is reliable; agentic use is not", and
+attributed that to 2.479 bpw giving up structured-output discipline. **That was
+wrong** — the fault was our own KDA path never passing `build_qkv`'s per-step
+checkpoint tensors, so speculative decoding corrupted the recurrent state. Left
+here because the wrong version was written with more confidence than the right
+one, and the difference between them was one more test.
+
+DeepSeek-V4 is still what to reach for when tools matter, on speed: 360 PP and
+32 TG against K3's 40 and 4.3.
+
+**The quant ceiling is real and separate.** `UD-Q4_K_XL` is **1508.7 GB** against
+1133 GB of RAM and would not fit the 1.3 TB of free disk either. Nothing is
+published between it and `UD-Q2_K_XL` (861 GB); everything smaller
+(`UD-IQ2_XXS` at 711 GB, the `UD-IQ1_*` and `UD-TQ*` rows) is worse.
+Requantising the local file upward recovers nothing — the information is gone at
+2 bits — and rebuilding from source means 2.8T parameters of bf16. That bounds
+**quality**, not tool calling, and conflating the two is exactly the mistake
+above.
 
 So `UD-Q2_K_XL` is the largest K3 this hardware can hold, and its
 structured-output unreliability comes with it. The next step up needs 1.5 TB.
