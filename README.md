@@ -109,6 +109,18 @@ seconds**; GLM chained two tools (Glob then Read) in **67 seconds**. Tool calls 
 (7 incremental deltas, `finish_reason: tool_calls`). The same task on K3 ran 838
 seconds and printed nothing.
 
+**All three production configs pass the full gate** (`serving/validate-model.sh`),
+which is the reproducible version of that claim rather than a remembered one:
+
+| | coherence | reasoning | tools | 5-run | streaming | replay | degeneration |
+|---|---|---|---|---|---|---|---|
+| DeepSeek-V4 (`-rtr`, spec) | ✅ | ✅ | ✅ | 5/5 | ✅ 7 deltas | ✅ | ✅ |
+| GLM-5.2 (spec) | ✅ | ✅ | ✅ | 5/5 | ✅ 6 deltas | ✅ | ✅ |
+| Kimi K3 (no spec) | ✅ | ✅ | ✅ | 5/5 | ✅ 6 deltas | ✅ | ✅ |
+| *K3 with spec (rejected)* | ✅ | ✅ | ❌ | **0/5** | ❌ 0 deltas | ✅ | ✅ |
+
+The last row is why the gate exists.
+
 **All three models emit tool calls 5/5.** K3 only got there after
 `--spec-type ngram-mod` was removed from its row: speculative decoding is
 supposed to be lossless, and on K3 it is not — 0/5 with it on, 5/5 with it off,
