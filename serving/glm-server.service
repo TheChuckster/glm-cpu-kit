@@ -24,7 +24,10 @@ EnvironmentFile=-/etc/default/glm-server
 # CTX: prompt processing is O(n^2). See the runbook's "Context window: the trap"
 # before raising it, and keep the harness limit below this value.
 # NUMA_POLICY: "distribute" for dual-socket; empty for a single NUMA domain.
-Environment=THREADS=64
+# THREADS is auto-detected as the physical core count by serve-glm.sh. Set it
+# here only to override - it was hardcoded to 64 for a 64-core box, which is
+# correct there and wrong on any other machine this kit gets copied to.
+#Environment=THREADS=64
 Environment=CTX=131072
 Environment=NUMA_POLICY=
 

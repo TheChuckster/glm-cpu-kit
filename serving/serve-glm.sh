@@ -28,9 +28,9 @@
 #   IK_ROOT     ik_llama.cpp checkout             (default ~/ik_llama.cpp)
 #   IK_LLAMA    full path to a llama-server binary; overrides the registry's
 #               engine field entirely (escape hatch for a one-off engine)
-#   THREADS     = PHYSICAL core count            (default nproc; on an SMT part nproc is
-#               double the physical count and too high - set it explicitly. Sweep DOWN
-#               for TG, see §7)
+#   THREADS     = PHYSICAL core count            (auto-detected via lscpu; nproc would
+#               report double on an SMT part and 128 threads measures 0.43 tok/s against
+#               31.5 at 64. Decode saturates ~32 regardless, so this is a prefill knob)
 #   CTX         context ceiling (default 65536=64K). Fits to 1M on RAM, but PP is O(n^2):
 #               a 128K-context first-token is ~2-3 HOURS. Do NOT raise blindly — see runbook
 #               "Context window: the trap". The harness limit MUST be set below this.
@@ -41,7 +41,17 @@ set -e
 VARIANTS="${VARIANTS:-/etc/glm-variants.conf}"
 GLM_VARIANT="${GLM_VARIANT:-base}"
 IK_ROOT="${IK_ROOT:-$HOME/ik_llama.cpp}"
-THREADS="${THREADS:-$(nproc)}"
+# nproc counts SMT siblings, so on a 64-core part it says 128 - and 128 is not
+# merely suboptimal here, it is catastrophic: DeepSeek-V4 measures 0.43 tok/s at
+# 128 threads against 31.5 at 64. Decode saturates around 32 threads on every
+# model on this box anyway (bandwidth, not cores); prefill wants physical cores
+# and no more. Default to those, and let THREADS override.
+_physical_cores() {
+    local n
+    n=$(lscpu -p=Core,Socket 2>/dev/null | grep -v '^#' | sort -u | wc -l)
+    [ "${n:-0}" -gt 0 ] 2>/dev/null && echo "$n" || nproc
+}
+THREADS="${THREADS:-$(_physical_cores)}"
 CTX="${CTX:-65536}"
 NUMA_POLICY="${NUMA_POLICY:-}"
 ALIAS="glm-5.2"
