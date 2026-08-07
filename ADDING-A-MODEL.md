@@ -298,6 +298,19 @@ technique, the upstream. That is the tell. **An explanation that ends "and
 therefore nothing can be done" deserves one more test, not a paragraph in the
 README.**
 
+### Keep a control model for any shared code path you touch
+
+`qwen3-next-ref` is registered for exactly this and is not a serving target.
+Qwen3-Next shares the delta-net path with K3's KDA layers and is supported
+**upstream**, so it answers the question "is this my bug or ik's?" in one run.
+It is 46 GB and loads in seconds.
+
+Run it through `validate-model.sh` on a spare port after touching
+`ggml_delta_net`, `iqk_fused_delta_net`, or `build_kimi_k3.cpp`'s KDA path. The
+one time it was used it saved an incorrect bug report from being sent to a
+maintainer who had already said his time was scarce — and pointed at the real
+fault in the process.
+
 With it on, K3 degenerates into repetition — 8000 tokens of one paragraph on an
 agent prompt — and never emits the call. With it off, `kimi-opencode` chains
 Glob and Read and answers correctly in 237 seconds, where it previously ran 1464
