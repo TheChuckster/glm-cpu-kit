@@ -824,6 +824,26 @@ Adherence is otherwise variable and it is *not* a throughput dial: on one fixed
 question `low` produced 9127 characters of reasoning where `high` produced 2781.
 Raise it per request for hard problems; do not rely on it to bound anything.
 
+### Per-variant engines drift independently, and quietly
+
+Rebasing the fork updated `build-k3`. `build-ds4` did not move — it is a separate
+tree, which is the entire point of the `engine` field, and the cost is that it
+silently stayed on an August 3 build while eight DS4-relevant commits landed
+upstream: **#2242 fixes DSV4 tool calls and reasoning**, #2256/#2254 fix the
+antirez GGUFs this runbook records as segfaulting, #2257 merges up/gate, #2225
+buys ~3% TG at 128k.
+
+Rebuilt and re-validated: all seven gate checks pass, tool calls 5/5.
+
+**No measurable speed change** — 365.5 PP / 28.7 TG new against 367.0 / 28.7 old,
+which is noise. The #2225 claim is at 128k context and this is measured at 1k, so
+it would not show here. The upgrade is worth taking for the correctness fixes and
+should not be sold as a speedup.
+
+The general point: the isolation that makes a new architecture safe to bring up
+also means every other engine ages in place with nothing to announce it. Check
+`ls -l ~/ik_llama.cpp/build-*/bin/llama-server` occasionally.
+
 ### Staying current with ik: rebase into a NEW tree, validate, then switch
 
 The fork sat on pin `6038941` while ik moved 20 commits ahead. Rebased onto
