@@ -5,19 +5,23 @@ back deliberately: posting is outward-facing and reviewed by nobody but the
 author of the port. Read it, change what you disagree with, then post it
 yourself.
 
-**Four of the five items below are useful to ik whether or not Kimi K3 ever
-lands**, and three are bug reports rather than features. If the whole thing is too
+**Three of the four items below are useful to ik whether or not Kimi K3 ever
+lands**, and two are bug reports rather than features. If the whole thing is too
 much, file those separately — they stand alone:
 
 1. the per-head gate layout inconsistency in `ggml_delta_net` (silently wrong
    Qwen3-Next results on any non-x86 path) — **fixed on the branch, with a test**
-2. `--spec-ckpt-mode auto` picks `gpu-fallback` on CPU-only builds and never
-   restores recurrent state on draft rejection — speculation silently produces
-   garbage on hybrid models. `cpu` fixes it *and* is 46-68% faster than no
-   speculation.
-3. `ssm_conv1d` prefix matching in the quantizer (produces a model that
+2. `ssm_conv1d` prefix matching in the quantizer (produces a model that
    quantizes without error and aborts at the first token)
-4. the `n_attention_wv` assert, which no hybrid-attention model can satisfy
+3. the `n_attention_wv` assert, which no hybrid-attention model can satisfy
+
+An earlier draft of this reply also reported `--spec-ckpt-mode auto` as
+corrupting recurrent models on CPU-only builds. **That was our bug, not yours** —
+this port's KDA path never passed `build_qkv`'s `per_step_ssm`/`per_step_conv`
+arguments, so nothing was snapshotted per draft step and rejected drafts had
+nothing to roll back to. `llama-delta-net.cpp` has always passed them, which is
+why Qwen3-Next is unaffected. Removed rather than sent; mentioned here only
+because testing it against Qwen3-Next is what found the real fault.
 
 The objection being answered is ikawrakow's own, and it is not a design
 objection:
@@ -92,50 +96,7 @@ dims pass: 8 (portable), 64 and 128 (fused). If you prefer the other convention
 the fix inverts trivially, but then `build_fused_delta_net` needs a `ggml_cont`
 it currently avoids for good reason.
 
-### 2. `--spec-ckpt-mode auto` corrupts recurrent models on CPU-only builds
-
-Speculation destroys Kimi K3 on the default checkpoint mode, and works — and is
-*faster* — on `cpu`:
-
-| K3, `--spec-type ngram-mod:n_max=16,n_min=2` | tool calls | streaming | TG |
-|---|---|---|---|
-| default (`--spec-ckpt-mode auto`) | **0/5** | **0 deltas** | — |
-| `--spec-ckpt-mode cpu` | **5/5** | 6 deltas | **6.3-7.2 tok/s** |
-| no speculation at all | 5/5 | 6 deltas | 4.30 tok/s |
-
-On the default it degenerates into repetition — 8000 tokens of one paragraph on
-an agent prompt — and never emits a call.
-
-The obvious explanation is recurrent state rollback: K3 has **69 KDA layers**
-whose state must be restored when a draft is rejected, `auto` documents itself as
-"per-step if CUDA full-GPU, **gpu-fallback otherwise**", and `gpu-fallback`
-copies architecture state "to a device buffer" — on a CPU-only build there is no
-device.
-
-**That explanation is at best incomplete, and I tested it rather than shipping
-it.** Qwen3-Next-80B-A3B (`UD-Q4_K_XL`, ik's own supported `qwen3next` arch, 48
-linear-attention layers) was downloaded and run through the same probe on the
-same build:
-
-| | tool calls | coherence |
-|---|---|---|
-| Qwen3-Next, no speculation | 5/5 | PASS |
-| **Qwen3-Next, speculation, default ckpt mode** | **5/5** | **PASS** |
-
-So a recurrent model on the default checkpoint mode is fine, and "any model with
-recurrent state is affected" is **wrong**. Whatever the trigger is, it
-distinguishes K3 from Qwen3-Next. The candidates I can see: K3 is **hybrid** — 24
-MLA layers interleaved with 69 KDA ones, so a draft rejection has to roll back
-both an attention KV cache and recurrent state — where Qwen3-Next is uniformly
-linear. It is also possible the fault is in this port rather than in ik, and I
-would rather say so than have you find it.
-
-What is solid: on K3, `--spec-ckpt-mode cpu` turns 0/5 into 5/5 and is faster
-than no speculation at all, and Qwen3-Next is unaffected either way.
-
-Reproducible on this hardware; happy to run whatever would help confirm it.
-
-### 3. Two quantizer bugs, also independent of K3
+### 2. Two quantizer bugs, also independent of K3
 
 **`ssm_conv1d` is matched as a literal, not a prefix.** The guard is
 `name.find("ssm_conv1d.weight")`. K3 has one conv per projection —
@@ -154,7 +115,7 @@ feeds the heuristic that spends extra bits on the first and last attention
 layers, so an arch exemption costs a slightly different bit allocation rather
 than correctness.
 
-### 4. Two quantizer features that made a 17% speedup expressible
+### 3. Two quantizer features that made a 17% speedup expressible
 
 Not bugs, but worth offering. Published quants spend their care on experts,
 because experts are the file — yet a token reads only the experts it activates
@@ -175,7 +136,7 @@ destroying and rebuilding the experts it was not asked to touch.
   `indexer.proj` tensors that choose which tokens attention sees and would have
   degraded silently.
 
-### 5. The per-channel KDA gate, which is what K3 actually needed
+### 4. The per-channel KDA gate, which is what K3 actually needed
 
 K3 sets `use_full_rank_gate`, so `A_log` is `[128]` — one decay per channel
 rather than the per-head scalar Qwen3-Next uses. The assert in `ggml.c` is
