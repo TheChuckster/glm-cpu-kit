@@ -311,6 +311,20 @@ one time it was used it saved an incorrect bug report from being sent to a
 maintainer who had already said his time was scarce — and pointed at the real
 fault in the process.
 
+Its baseline, for diffing against later — every check, **14 seconds** after load,
+with speculation on:
+
+```
+COHERENCE: PASS      TOOL RELIABILITY: 5/5 PASS
+REASONING: PASS      STREAM TOOLCALL:  PASS (7 deltas)
+TOOLCALL:  PASS      MULTITURN:        PASS
+                     DEGENERATION:     PASS
+```
+
+At 43 GB it runs **alongside** a resident K3 without stopping the live server —
+`glm-model status` will report "not responding" while the single slot is busy,
+which is the slot being occupied and not the server being down.
+
 With it on, K3 degenerates into repetition — 8000 tokens of one paragraph on an
 agent prompt — and never emits the call. With it off, `kimi-opencode` chains
 Glob and Read and answers correctly in 237 seconds, where it previously ran 1464
