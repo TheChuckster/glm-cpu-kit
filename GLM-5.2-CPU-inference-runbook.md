@@ -434,6 +434,22 @@ cleanly to 64 and falls off at 80+ where SMT contention starts. So 64 is right
 because of prefill, not because the extra cores help decode. There is no
 48-thread ceiling.
 
+**The same shape holds for every model on this box**, which makes it a rule
+rather than a DS4 quirk. GLM-5.2 `-q5attn`, swept the same way:
+
+| threads | PP | TG |
+|---|---|---|
+| 32 | 103.9 | 12.81 |
+| 48 | 126.2 | 12.87 |
+| **64** | **141.0** | 12.86 |
+| 80 | 102.4 | 12.18 |
+
+Decode saturates by 32 threads on all three models — GLM 12.81 -> 12.86, DS4
+32.11 -> 31.45, K3 3.67 -> 3.66 across 32 to 64 — because decode is
+bandwidth-bound and the bandwidth is gone before the cores are. Prefill is
+compute-bound and scales to the physical core count, then falls off into SMT.
+**So 64 is right everywhere, and it is right for prefill only.**
+
 **Two measurement traps this exposed, both worth avoiding.** Benchmarking a
 model while another one is resident and `--mlock`ed costs more than it looks:
 the same DS4 sweep run alongside K3's 788 GB read **TG 17.7 at 64 threads

@@ -102,9 +102,10 @@ buys almost no speed, while requantising the 7.2% of the file nobody optimises
 would be worth ~1.4x. `porting/k3/bytes_per_token.py` computes this for any GGUF
 and is worth running before assuming a model is slow.
 
-**The working local agent is `glm-opencode.sh` with `deepseek-v4-flash-0731`.**
-Verified end to end: a "read this file and tell me what it does" task invoked the
-file tool and answered correctly in **41 seconds**. Tool calls stream properly
+**The working local agents are `glm-opencode.sh` with `deepseek-v4-flash-0731`
+or `glm-5.2`.** Both verified end to end on a "read this file and tell me what it
+does" task: DeepSeek-V4 invoked the file tool and answered correctly in **41
+seconds**; GLM chained two tools (Glob then Read) in **67 seconds**. Tool calls stream properly
 (7 incremental deltas, `finish_reason: tool_calls`). The same task on K3 ran 838
 seconds and printed nothing.
 
