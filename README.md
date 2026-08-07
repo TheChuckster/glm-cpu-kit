@@ -14,7 +14,10 @@ additive, and the two times a shared default broke serving anyway.
 
 The reference target is a dual-socket box (for example 2x EPYC 9B45). NUMA handling (runbook
 section 4) is the main thing that differs from a single socket: get the model's memory
-interleaved across both sockets.
+interleaved across both sockets. `serve-glm.sh` now auto-detects this — `--numa distribute`
+when `numactl` reports more than one node — along with the physical core count, because
+both are properties of the machine and the previous defaults were the values that happened
+to be right on the box the kit was written on.
 
 ---
 

@@ -34,8 +34,9 @@
 #   CTX         context ceiling (default 65536=64K). Fits to 1M on RAM, but PP is O(n^2):
 #               a 128K-context first-token is ~2-3 HOURS. Do NOT raise blindly — see runbook
 #               "Context window: the trap". The harness limit MUST be set below this.
-#   NUMA_POLICY "distribute" adds --numa distribute for dual-socket; empty for a
-#               single NUMA domain (NPS0), where the flag only adds overhead.
+#   NUMA_POLICY auto: "distribute" when numactl reports >1 node, empty on a single
+#               NUMA domain (NPS0) where the flag only adds overhead. Set explicitly
+#               to override; NUMA_POLICY= (empty) forces it off.
 set -e
 
 VARIANTS="${VARIANTS:-/etc/glm-variants.conf}"
@@ -53,7 +54,18 @@ _physical_cores() {
 }
 THREADS="${THREADS:-$(_physical_cores)}"
 CTX="${CTX:-65536}"
-NUMA_POLICY="${NUMA_POLICY:-}"
+# Same reasoning as THREADS above: the correct value is a property of the machine,
+# so read it off the machine. The README calls NUMA "the main thing that differs
+# from a single socket", and leaving this empty by default meant the reference
+# target - a dual-socket box - silently got the single-socket setting.
+_numa_nodes() {
+    local n
+    n=$(numactl --hardware 2>/dev/null | awk '/^available:/{print $2}')
+    [ "${n:-0}" -gt 0 ] 2>/dev/null && echo "$n" || echo 1
+}
+if [ -z "${NUMA_POLICY+set}" ] || [ -z "$NUMA_POLICY" ]; then
+    if [ "$(_numa_nodes)" -gt 1 ]; then NUMA_POLICY=distribute; else NUMA_POLICY=""; fi
+fi
 ALIAS="glm-5.2"
 ENGINE=""
 

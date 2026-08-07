@@ -29,7 +29,9 @@ EnvironmentFile=-/etc/default/glm-server
 # correct there and wrong on any other machine this kit gets copied to.
 #Environment=THREADS=64
 Environment=CTX=131072
-Environment=NUMA_POLICY=
+# NUMA_POLICY is auto-detected by serve-glm.sh: "distribute" when numactl reports
+# more than one node, empty on a single domain. Set here only to override.
+#Environment=NUMA_POLICY=
 
 ExecStart=/usr/local/bin/serve-glm.sh
 Restart=on-failure
