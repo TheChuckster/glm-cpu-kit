@@ -138,6 +138,21 @@ VARIANT_ARGS=()
 
 [ -x "$IK" ]    || { echo "llama-server not found at $IK (engine='${ENGINE:-build}', build it - runbook §5)"; exit 1; }
 [ -f "$HOME/.glm-api-key" ] || { echo "no ~/.glm-api-key - run gen-api-key.sh"; exit 1; }
+# --mlock pins the whole model in RAM, which is right when it fits and fatal when
+# it does not: the unit sets LimitMEMLOCK=infinity, so the kernel will happily try
+# and then OOM. Compared against MemTotal rather than MemAvailable because a
+# restart races the previous instance's pages being released.
+MLOCK_ARGS=(--mlock)
+_model_bytes=$(du -scb "$(dirname "$MODEL")"/*.gguf 2>/dev/null | awk '/total$/{print $1}')
+_mem_total=$(awk '/^MemTotal:/{print $2*1024}' /proc/meminfo 2>/dev/null)
+if [ -n "$_model_bytes" ] && [ -n "$_mem_total" ] && \
+   [ "$_model_bytes" -gt $(( _mem_total * 92 / 100 )) ]; then
+    MLOCK_ARGS=()
+    echo "  model is $(( _model_bytes / 1000000000 )) GB against $(( _mem_total / 1000000000 )) GB of RAM"
+    echo "  -> NOT using --mlock; it would pin more than fits and OOM. Expect slower TG,"
+    echo "     since pages will be served from the page cache instead of pinned."
+fi
+
 echo "serving variant '$GLM_VARIANT' as '$ALIAS'  (threads=$THREADS ctx=$CTX engine=${ENGINE:-build})"
 echo "model: $MODEL"
 
@@ -162,7 +177,7 @@ exec "$IK" \
     --batch-size 2048 --ubatch-size 2048 \
     -fa on \
     --cache-type-k q8_0 --cache-type-v q8_0 \
-    --mlock \
+    "${MLOCK_ARGS[@]}" \
     --jinja \
     --repeat-penalty 1.1 --repeat-last-n 256 \
     --metrics \
