@@ -824,6 +824,28 @@ Adherence is otherwise variable and it is *not* a throughput dial: on one fixed
 question `low` produced 9127 characters of reasoning where `high` produced 2781.
 Raise it per request for hard problems; do not rely on it to bound anything.
 
+### Sustained load: 24 requests, no failures, no leak
+
+Everything else about K3 was measured in bursts between restarts, which says
+nothing about whether it survives being used. 24 mixed requests (18 chat, 6 tool)
+back to back:
+
+| | |
+|---|---|
+| failures | **0 of 24** |
+| chat latency | 5.4s min / 8.8s median / 18.8s max |
+| tool latency | 13.6s min / 16.9s median / 21.4s max |
+| RSS drift | 838.5 GB -> 838.5 GB (**+0.02 GB**, peak 839.9) |
+
+No leak — the resident set is flat across the run, which is what `--mlock` on an
+845 GB model should look like and worth confirming rather than assuming.
+
+The latency spread is reasoning length, not degradation: the median moves 9.3s ->
+12.6s between halves, which is inside the per-request spread (5.4s to 21.4s) and
+tracks how long K3 decides to think about a given question. Tool calls are
+consistently slower than chat because the tool declarations add prompt and the
+model reasons about which tool to use.
+
 ### K3 always reasons, and spends the budget before it answers
 
 K3 emits its whole `<|open|>think<|sep|>` section before the response section
