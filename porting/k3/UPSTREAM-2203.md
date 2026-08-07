@@ -76,7 +76,7 @@ pointer both kernels receive is the pre-permute buffer, so head-fastest is what
 is *actually in it* and the portable path was simply reading it wrong. The
 per-channel case is `ggml_cont`'d and stays token-fastest on both paths.
 
-`test_delta_net_gate.c` is the evidence. It previously needed
+`tests/test-delta-net-gate.c` is the evidence. It previously needed
 
 ```c
 beta_ph[fused ? t*H + h : h*T + t]

@@ -770,7 +770,8 @@ Components still not diffed line-by-line against the reference:
 
 ### The delta-net kernel is verified correct
 
-`test_delta_net_gate.c` is self-validating and needs no oracle: a per-channel
+`test_delta_net_gate.c` (since moved into the fork as `tests/test-delta-net-gate.c`,
+run with `ctest -R delta-net-gate`) is self-validating and needs no oracle: a per-channel
 gate whose channels all hold the same value is mathematically identical to a
 per-head gate holding that value, so the two paths must agree.
 
@@ -1297,7 +1298,7 @@ oracle for the fused kernel rather than a live path; keep it.
 
 #### What the test could not have caught
 
-`test_delta_net_gate.c` as originally written would have passed a broken kernel.
+`test-delta-net-gate.c` as originally written would have passed a broken kernel.
 Two gaps, both fixed:
 
 - Its gate was **constant across channels**, so a transposed or mis-strided read
@@ -1388,7 +1389,7 @@ effectively dead code.
 2. Once it accepts per-channel gates, `build_fused_delta_net`'s `ggml_cont` on
    that path becomes wrong for the fused route and right for the scalar one, so
    the cont has to move behind whichever path is actually taken.
-3. `test_delta_net_gate.c` remains the correctness bar and will catch a
+3. `test-delta-net-gate.c` remains the correctness bar and will catch a
    per-channel implementation that does not reduce to the per-head case — but
    note it calls `ggml_delta_net` directly with contiguous inputs, so it exercises
    the scalar path. Extending it to cover the fused route means feeding it a
