@@ -38,7 +38,7 @@ Restart=on-failure
 RestartSec=5
 LimitMEMLOCK=infinity
 LimitNOFILE=1048576
-# Loading a 340-590 GB mlocked model off NVMe takes minutes; no start timeout.
+# Loading a 340-845 GB mlocked model off NVMe takes minutes; no start timeout.
 TimeoutStartSec=0
 # Releasing that much mlocked memory also takes longer than the 90s default:
 # systemd would SIGKILL mid-teardown, mark the unit `failed`, and leave that

@@ -298,6 +298,25 @@ technique, the upstream. That is the tell. **An explanation that ends "and
 therefore nothing can be done" deserves one more test, not a paragraph in the
 README.**
 
+### Diff what is installed against what is in the kit
+
+The kit is version-controlled; the box is not. They drift, and the drift is
+invisible from either side alone. Checked all four installed artifacts:
+
+| | |
+|---|---|
+| `/usr/local/bin/glm-model` | identical, 0 diff lines |
+| `/usr/local/bin/serve-glm.sh` | behind by three auto-detection fixes |
+| `/etc/systemd/system/glm-server.service` | **missing `TimeoutStopSec=600`** |
+| `~/serve-glm.sh` | a 24-line stub, not run by anything |
+
+The unit one had teeth. Without that setting, systemd SIGKILLs after 90 seconds,
+and releasing 845 GB of mlocked memory takes longer — **58 hard kills in the
+previous day**, one per restart, each leaving the unit `failed`. The kit had
+carried the fix and its explanation for weeks; the box had never received it.
+
+A fix that exists only in the repository is not deployed.
+
 ### The script you are reading may not be the one that runs
 
 `~/serve-glm.sh` on this box is a 24-line stub from July. The unit runs
