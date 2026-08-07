@@ -4,7 +4,7 @@
   "//critical": "limit.context MUST be set BELOW the server's --ctx-size (serve-glm.sh CTX). It makes",
   "//critical2": "opencode auto-COMPACT before it hits the server ceiling. Without it, opencode assumes a",
   "//critical3": "huge window, balloons the context to 100k+ tokens, and the server grinds for HOURS (O(n^2)",
-  "//critical4": "prompt-processing). Server CTX 64k -> set context 60000. If you raise one, raise both.",
+  "//critical4": "prompt-processing). This kit's unit ships CTX=131072, so 120000 is the matching value; the 60000 below is deliberately conservative because prefill is O(n^2) and a cold 120K first-token costs hours. Raise it only with that in mind.",
   "//variants": "Listing several models here does NOT make them all available at once - only one is",
   "//variants2": "resident (they are 155-800 GB and mlocked). llama-server serves whatever is loaded no",
   "//variants3": "matter which name you ask for, so picking an inactive one here silently gets you the",

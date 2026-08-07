@@ -271,6 +271,8 @@ Or do it by hand:
 3. Turn thinking off and add a repeat penalty, or harnesses break (400s) and loop.
 4. opencode direct beats Claude Code plus litellm: no fragile Anthropic translation.
 5. TG is memory-bandwidth-bound: NUMA interleaving is your only real TG lever on CPU.
-6. Pair the context limits: harness `limit.context` < server `--ctx-size` (kit: 60K < 64K). Otherwise a
+6. Pair the context limits: harness `limit.context` < server `--ctx-size`. The unit ships
+   `CTX=131072`; `opencode.json` ships 60000, which is deliberately conservative rather than
+   matched, because prefill is O(n^2) and a cold 120K first token costs hours. Otherwise a
    big context grinds for HOURS (O(n^2) prompt-processing) or errors instead of compacting. Never set 1M.
    See "Context window: the trap" in the runbook.
