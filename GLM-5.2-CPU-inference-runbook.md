@@ -838,6 +838,10 @@ both terms are measurable.
 tensor table. A routed expert tensor is only read for the experts a token picks,
 so it counts for `n_expert_used/n_expert`; everything else is read in full.
 
+These are the **pre-requantisation** models — the numbers below are what
+motivated the requant, not what the box does today (see §7 of
+[`ADDING-A-MODEL.md`](ADDING-A-MODEL.md) for the current figures):
+
 | | bytes/token | measured TG | effective |
 |---|---|---|---|
 | GLM-5.2 UD-Q4_K_XL | 32.58 GiB | ~10 tok/s | 349.8 GB/s |
