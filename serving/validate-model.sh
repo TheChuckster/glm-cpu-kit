@@ -32,11 +32,12 @@
 #                               message back complete (tool_calls AND
 #                               reasoning_content) plus the tool result. That
 #                               shape is unavoidable for a reasoning model.
-#   8. does it DEGENERATE     - a low-bit quant can be clean on short prompts and
-#                               collapse into repetition on a long one, which is
-#                               what an agent sends. K3 answered chat correctly
-#                               and produced 8000 tokens of one paragraph on a
-#                               ~7000-token prompt.
+#   8. does it DEGENERATE     - long prompt WITH tool declarations, because that
+#                               is the shape that triggered it: K3 answered chat
+#                               correctly and produced 8000 tokens of one
+#                               paragraph on an agent prompt. An earlier version
+#                               of this check used plain filler, passed, and
+#                               missed it.
 #   9. how fast is it
 #
 # Runs as your normal user. It deliberately does NOT pass --mlock: the memlock
@@ -234,9 +235,18 @@ PY
 say "--- long-prompt degeneration ---"
 python3 - "$OUT/longprompt.json" "$LABEL" <<'PY'
 import json, sys
+# Tools are part of the prompt on purpose. Kimi K3 degenerated only on
+# agent-shaped input - long AND carrying tool declarations - and an earlier
+# version of this check used plain filler, passed, and missed it entirely while
+# the tool checks below caught it.
 filler = ("The following is reference material the assistant may consult. " * 60 + "\n") * 12
 msg = filler + "\nIgnoring the material above, answer in one short sentence: what is 2+2?"
-json.dump({"model": sys.argv[2], "max_tokens": 800, "stream": False,
+tools = [{"type": "function", "function": {
+    "name": "list_files", "description": "List files in a directory",
+    "parameters": {"type": "object", "properties": {"path": {"type": "string"}},
+                   "required": ["path"]}}}]
+json.dump({"model": sys.argv[2], "max_tokens": 1200, "stream": False,
+           "tools": tools, "tool_choice": "auto",
            "messages": [{"role": "user", "content": msg}]}, open(sys.argv[1], "w"))
 PY
 curl -sf --max-time 1800 "http://127.0.0.1:$PORT/v1/chat/completions" \

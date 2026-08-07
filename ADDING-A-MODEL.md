@@ -282,6 +282,17 @@ It is still enabled for GLM and DeepSeek-V4, both of which measure 5/5 with it
 on. K3's row alone omits it. **Speculation is per-model, like every other flag
 here, and it needs a correctness A/B and not only a throughput one.**
 
+Two smaller lessons from how it was eventually found:
+
+- **The gate has to be re-run after a config change, not only when adding a
+  model.** The single tool-call check already failed with speculation on. Nobody
+  ran it, because adding a flag to a registry row does not feel like the kind of
+  change that needs revalidating. It is.
+- **The degeneration check missed it**, and the tool checks caught it. Its prompt
+  was long filler with no tools, and K3 only degenerates on agent-shaped input —
+  long *and* carrying tool declarations. That check now sends tools. A check that
+  passes on a known-broken configuration is worth fixing the moment you notice.
+
 **The relationship that actually holds**, across every configuration tried: the
 call appears when the model finishes thinking in **under ~200 characters**, and
 does not when it thinks long — whatever made it think long. Every lever below
