@@ -102,6 +102,12 @@ buys almost no speed, while requantising the 7.2% of the file nobody optimises
 would be worth ~1.4x. `porting/k3/bytes_per_token.py` computes this for any GGUF
 and is worth running before assuming a model is slow.
 
+**The working local agent is `glm-opencode.sh` with `deepseek-v4-flash-0731`.**
+Verified end to end: a "read this file and tell me what it does" task invoked the
+file tool and answered correctly in **41 seconds**. Tool calls stream properly
+(7 incremental deltas, `finish_reason: tool_calls`). The same task on K3 ran 838
+seconds and printed nothing.
+
 **K3 is capped at `UD-Q2_K_XL` here and that is final.** The higher-bpw
 `UD-Q4_K_XL` is 1508.7 GB against 1133 GB of RAM (and 1.4 TB of free disk), with
 nothing published in between. Its structured-output unreliability below is a
@@ -153,7 +159,7 @@ the selected variant, and is the only reliable check.
 ### `harness/` (how you talk to it — three paths, pick by privacy vs speed)
 | Script | Backend | Speed | Use for |
 |---|---|---|---|
-| `glm-opencode.sh` + `opencode.json` | LOCAL CPU server (direct) | ~10 tok/s | **private** / sensitive / audit |
+| `glm-opencode.sh` + `opencode.json` | LOCAL CPU server (direct) | ~12-32 tok/s | **private** / sensitive / audit — **this is the working agent setup** |
 | `kimi-opencode.sh` | LOCAL, Kimi K3 on the forked engine | ~3.7 tok/s | K3 specifically — see the caveats in the script |
 | `glm-opencode-together.sh` | Together AI cloud | ~200-350 tok/s | fast everyday coding |
 | `glm-opencode-cloud.sh` | any OpenAI-compatible provider (env) | varies | OpenRouter / DeepInfra / Z.ai / Surplus / etc. |

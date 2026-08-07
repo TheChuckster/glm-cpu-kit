@@ -19,8 +19,13 @@
 #   default timeout will give up before the model answers - which is what
 #   "kimi-opencode doesn't work" turned out to be.
 #
-#   DeepSeek-V4 does ~377 PP / ~23 TG. If you want to get work done rather than
-#   exercise K3 specifically, use ./glm-opencode.sh with deepseek-v4-flash-0731.
+#   USE DEEPSEEK-V4 INSTEAD FOR ACTUAL AGENT WORK. Not a preference - measured:
+#   the same "read this file and say what it does" task takes DeepSeek-V4 41
+#   seconds and it invokes the tool correctly; on K3 it ran 838 seconds and
+#   printed nothing. K3 emits a valid tool call only about half the time (the
+#   model degenerates mid-reasoning at 2.479 bpw), where DeepSeek-V4 and GLM are
+#   5/5. Run:
+#       GLM_OPENCODE_MODEL=local/deepseek-v4-flash-0731 ./glm-opencode.sh
 #
 #   Output itself is clean: the chat parser for K3's <|open|>/<|sep|>/<|close|>
 #   template landed, reasoning goes to reasoning_content, and no structural
