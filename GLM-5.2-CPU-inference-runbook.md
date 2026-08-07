@@ -724,6 +724,29 @@ dead end. And the quantizer **refuses** 2-bit without one ("The result will be
 garbage, so bailing out"), which is a good check; `--ignore-imatrix-rules` does
 not get you past it for IQ2_XS, which asserts inside `ggml_quantize_chunk`.
 
+### Why `kimi-opencode` produces nothing, settled
+
+The original report was that the script "doesn't seem to be working". It took a
+long way round - it is not the harness, the server, or the parser. On a trivial
+"read util.py and say what it does" task:
+
+| | result |
+|---|---|
+| DeepSeek-V4 | 41s, invoked the tool, correct |
+| GLM-5.2 | 67s, chained Glob then Read, correct |
+| **Kimi K3** | **1464s, 8000 tokens of repeating text about home medical visits** |
+
+K3 degenerates, and **it degenerates worse the longer the prompt**. On a
+~185-token chat prompt it happens roughly half the time; on opencode's
+~7000-token system prompt it happened on every attempt. The first time this was
+seen the script printed nothing at all, because the degenerate text landed in
+`reasoning_content` and was discarded — which is why it looked like a harness
+bug for so long.
+
+One irony worth noting: TG *rose* to 6.31 tok/s during the loop, well above K3's
+4.3 baseline, because the n-gram speculator is delighted by repeated text.
+A throughput number going **up** is not always good news.
+
 ### Tool calls, and two things that silently stopped them
 
 K3 could not emit a tool call through the OpenAI API at all: the parser handled
