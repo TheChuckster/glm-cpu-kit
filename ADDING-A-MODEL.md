@@ -68,10 +68,16 @@ server. Every check in it exists because something passed a weaker test first:
 Then it needs a fork, and `porting/k3/GRAPH-BUILDER-SPEC.md` is the worked
 example end to end. The parts that generalise:
 
-- **Build into a NEW tree** (`build-k3`, `build-ds4`), never over `build`. Point
-  the registry row's `engine` field at it. This is the whole reason that field
-  exists: bringing up a new architecture means moving the engine forward by weeks
-  of commits, and doing that globally re-rolls the dice on every working model.
+- **Build into a NEW tree**, never over `build`. Point the registry row's
+  `engine` field at it. This is the whole reason that field exists: bringing up a
+  new architecture means moving the engine forward by weeks of commits, and doing
+  that globally re-rolls the dice on every working model.
+- **Then converge, once it is proven.** A pinned tree does not move when you
+  rebase, so it silently ages: `build-ds4` sat three weeks behind while
+  `build-k3` went forward, missing the very fix for DS4 tool calls. When the new
+  arch passes the gate and the others still validate on its commit, empty the
+  `engine` fields and delete the extra trees. Three trees compiled from one
+  source is not isolation.
 - **Reuse must be justified op-by-op, not by shape compatibility.** Substituting
   "the existing helper that does the same thing" silently changed a sigmoid to a
   SiLU across 69 layers. Every substitution that type-checked and ran was wrong in

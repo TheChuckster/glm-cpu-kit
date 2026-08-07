@@ -86,8 +86,9 @@ its own engine build, and what is still open upstream for tool calling.
 **Kimi K3 works, on a forked engine.** ik_llama.cpp has no `kimi-k3`
 architecture and ikawrakow declined to add one ([ik #2203](https://github.com/ikawrakow/ik_llama.cpp/issues/2203)),
 so the port lives on [`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp)
-branch `kimi-k3`, built into `build-k3` and selected by the registry's `engine`
-field. Perplexity 1.33 against a 1.55 reference; **40 tok/s prompt processing**
+branch `kimi-k3`, which is now the engine for every model on the box (it is
+upstream `main` plus additive K3 commits, and GLM and DS4 both validate on it).
+Perplexity 1.33 against a 1.55 reference; **40 tok/s prompt processing**
 and **4.3 tok/s generation, rising to 7.5-9.6 on repetitive or code-shaped
 output** where n-gram speculation fires (from 30.1 / 3.65 when the port first
 ran). Tool calls 5/5, and it drives a real agent loop. The fused AVX-512 delta-net kernel now handles K3's
@@ -230,11 +231,12 @@ Fastest path: mount fast storage at `/models`, then run `./install.sh`. It does 
 ik_llama.cpp (verifying VNNI), generates the API key, installs the model registry and the
 `glm-model` CLI, and installs the systemd service.
 
-It builds **only** the default `build` tree, from upstream ik. Registry rows with a
-non-empty `engine` field (`build-ds4`, `build-k3`) need their trees built separately —
-that separation is the point, so a new architecture cannot disturb a working model — and
-`install.sh` now lists which ones are missing rather than letting `glm-model use` fail with
-a missing-binary error. Kimi K3 additionally needs
+It builds **only** the default `build` tree. Every registry row now uses it —
+the per-variant `engine` field is still there and still supported, but no row
+pins it, because all three model families validate on one commit. If you pin a
+row at a separate tree while porting an architecture, `install.sh` lists which
+trees are missing rather than letting `glm-model use` fail with a missing-binary
+error. The default tree must be built from
 [the fork](https://github.com/TheChuckster/ik_llama.cpp), since upstream ik has no
 `kimi-k3` architecture. Add
 `--download` to also pull the ~440 GB model. Then benchmark NUMA and thread counts and set up

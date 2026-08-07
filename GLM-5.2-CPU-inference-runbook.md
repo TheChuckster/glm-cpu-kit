@@ -538,7 +538,9 @@ ikawrakow asked twice for it to be left on.
 
 This is why the registry gained an `engine` field. Bringing up DS4 means moving the engine forward
 by three weeks of commits; doing that globally would have silently re-rolled GLM and Kimi too. So
-DS4 rows point at `build-ds4` while everything else stays on `build`:
+DS4 rows pointed at `build-ds4` while everything else stayed on `build`. (They were converged back
+onto `build` on 2026-08-07, once every model validated on one commit — see "Then converge them"
+below. The build recipe is unchanged; only the tree name is.)
 
 ```bash
 cd ~/ik_llama.cpp && git fetch && git checkout 6038941
@@ -624,8 +626,9 @@ the answer to it is a port validated on hardware he does not have.
 
 So this box runs K3 on a **fork**:
 [`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp)
-branch `kimi-k3`, built into `build-k3`, selected by the registry's `engine`
-field. Full derivation, every dead end, and the remaining work are in
+branch `kimi-k3`. That branch is upstream `main` plus additive K3 commits, and
+since 2026-08-07 it is the default `build` tree for every model on the box —
+GLM and DS4 both pass the gate on it. Full derivation, every dead end, and the remaining work are in
 [`porting/k3/GRAPH-BUILDER-SPEC.md`](porting/k3/GRAPH-BUILDER-SPEC.md).
 
 **Where it landed:** wikitext perplexity **1.32** (n_ctx 512) against a
@@ -842,7 +845,33 @@ should not be sold as a speedup.
 
 The general point: the isolation that makes a new architecture safe to bring up
 also means every other engine ages in place with nothing to announce it. Check
-`ls -l ~/ik_llama.cpp/build-*/bin/llama-server` occasionally.
+`ls -l ~/ik_llama.cpp/build*/bin/llama-server` occasionally.
+
+### Then converge them — three trees from one source is not isolation
+
+Having rebuilt `build-ds4`, the obvious question is what the three trees were
+still for. Checked rather than assumed:
+
+```
+build      b1cc25b   GGML_NATIVE=ON GGML_IQK_MUL_MAT=ON GGML_IQK_FLASH_ATTENTION=ON ...
+build-ds4  b1cc25b   (identical flags)
+build-k3   b1cc25b   (identical flags)
+```
+
+Same commit, same flags — three copies of one engine, 870 MB and three rebuilds.
+The differing md5sums are build nondeterminism, not different code.
+
+So all fourteen registry rows were unpinned to the default `build` and the two
+extra trees deleted. GLM was the only model that had never run on this commit
+(it was still on a July 14 build), so it went through the gate first: seven of
+seven, tool calls 5/5. K3 then restarted on `build` and answered with tool calls.
+
+**Keep the `engine` field.** Emptying every row is the mechanism succeeding, not
+going unused: it brought up `deepseek4` and then `kimi-k3` without disturbing
+anything already serving, and the next architecture will need it again. What does
+not survive contact is leaving the pins in place afterwards — a pinned tree does
+not move when you rebase, and that is exactly how `build-ds4` came to be three
+weeks stale. Pin for the port, converge when it is proven.
 
 ### Staying current with ik: rebase into a NEW tree, validate, then switch
 

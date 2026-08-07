@@ -21,8 +21,19 @@ sudo apt-get -y install build-essential cmake git python3 python3-pip numactl un
 echo "  ok"
 
 say "2/7  build ik_llama.cpp (native AVX-512/VNNI)"
+# Clones the FORK, not ikawrakow/ik_llama.cpp. Branch `kimi-k3` is upstream main
+# plus additive commits for the kimi-k3 architecture, which upstream does not
+# have and declined to add (ik #2203). That used to matter only for the K3 rows,
+# which pinned their own build tree; since every registry row now serves off this
+# one `build`, cloning upstream here would produce an engine that cannot load K3
+# at all while the registry cheerfully points K3 at it.
+#
+# GLM and DeepSeek-V4 are unaffected by the K3 commits and both pass the full
+# validation gate on this branch - that is what made converging the trees safe.
+IK_REPO="${IK_REPO:-https://github.com/TheChuckster/ik_llama.cpp}"
+IK_BRANCH="${IK_BRANCH:-kimi-k3}"
 if [ ! -x "$HOME/ik_llama.cpp/build/bin/llama-server" ]; then
-  [ -d "$HOME/ik_llama.cpp" ] || git clone --depth 1 https://github.com/ikawrakow/ik_llama.cpp "$HOME/ik_llama.cpp"
+  [ -d "$HOME/ik_llama.cpp" ] || git clone --depth 1 -b "$IK_BRANCH" "$IK_REPO" "$HOME/ik_llama.cpp"
   cd "$HOME/ik_llama.cpp"
   cmake -B build -DGGML_NATIVE=ON -DGGML_CUDA=OFF -DLLAMA_CURL=OFF >/dev/null
   cmake --build build --config Release -j "$(nproc)"
@@ -67,11 +78,13 @@ done
 if [ -n "$MISSING" ]; then
     echo "  NOTE: these registry rows need engine trees that do not exist yet:$MISSING"
     echo "        Rows with an empty engine field use ~/ik_llama.cpp/build, which this"
-    echo "        script built. The others are deliberate - a new architecture gets its"
-    echo "        own tree so bringing it up cannot disturb a working model. Build them"
-    echo "        with:  cmake -B <tree> -DGGML_NATIVE=ON && cmake --build <tree> -j"
-    echo "        Kimi K3 additionally needs the fork, since upstream ik has no kimi-k3"
-    echo "        architecture:  https://github.com/TheChuckster/ik_llama.cpp (kimi-k3)"
+    echo "        script built. A pinned tree is deliberate - a new architecture gets"
+    echo "        its own so bringing it up cannot disturb a working model. Build with:"
+    echo "          cmake -B <tree> -DGGML_NATIVE=ON && cmake --build <tree> -j"
+    echo "        As shipped NO row pins an engine, so seeing this means you added one."
+    echo "        Converge it back onto build once it is proven - a pinned tree does not"
+    echo "        move when you rebase, and that is how one silently went three weeks"
+    echo "        stale here, missing the fix for its own model's tool calls."
 fi
 
 say "5/7  install systemd service"
