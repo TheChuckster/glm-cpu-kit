@@ -293,11 +293,63 @@ The settled config is `--reasoning-budget 1024` (runaway protection, since
 unbounded thinking produced a 22,423-character reasoning block and a 24-minute
 request) plus `--repeat-penalty 1.0` and `thinking_effort=low`.
 
-The honest reading is that structured-output discipline is what a 2.479 bpw
-quant gives up first, while prose stays fine — K3 writes 2247 characters of
-correct, on-topic technical prose without a wobble, and its perplexity is 1.33.
-Chat is reliable; agentic use is not. DeepSeek-V4 at native MXFP4 is the model
-to reach for when tools matter.
+### Read the raw tokens before theorising
+
+`--skip-chat-parsing` makes the server hand back everything the model emitted,
+unparsed. It should have been the *first* diagnostic and was about the twentieth.
+On K3 it ended the argument immediately — a success emits a clean, well-formed
+call, and the failures are the model **degenerating**:
+
+```
+run 2 (7445 chars): ... 17, 18, 19, 20, 21, 22, ... 172, 173
+run 3 (7703 chars): [unrelated SvelteKit Makefile prose] ... 0, 0, 0, 0, 0, 0
+```
+
+Counting loops and unrelated text. No parser change addresses that. Everything
+measured before this point was chasing a parsing bug that did not exist.
+
+### Diff against the reference implementation, not against your own reasoning
+
+The mainline llama.cpp K3 PR (`pwilkin:kimi-k3-text`) has its own
+`common_chat_params_init_kimi_k3`. Reading it found two real defects in ours
+that no amount of black-box testing would have:
+
+- Ours ended the top-level rule with `p.rest()`; mainline uses `p.end()`.
+  **`p.rest()` swallows anything that fails to match**, so a parse failure and
+  "the model emitted nothing" are indistinguishable from the outside. Every
+  failure diagnosis was made through that fog.
+- Mainline's reasoning uses `until_one_of({THINK_END, RESP_START})` because the
+  model *skips its own think closer on short answers*, and its content
+  terminators include `TOOLS_START` so a pure tool call — think straight to
+  tools, no response section — parses at all.
+
+Its grammar comment explains a result that had already been written off:
+
+> The message closer is part of the trigger rule so that the lazy grammar still
+> permits it once tool calls have started — otherwise constrained decoding
+> rejects the model's own closing tag.
+
+That is exactly why constraining generation scored 0/4 here. The conclusion
+"K3 fights grammars" was wrong; the grammar was built wrong. Ported.
+
+### `tool_choice: required` is unusable on K3, for a mundane reason
+
+Non-lazy grammar means constrained decoding on *every* token against a
+**163,840-token vocabulary**. A 200-token completion did not finish in 500
+seconds — against 4.21 tok/s unconstrained. The lazy grammar (`tool_choice:
+auto`, the default) only engages after the trigger and costs nothing measurable.
+Leave it on auto.
+
+### Where that leaves K3
+
+The official model card's sampling — temperature 1.0, top_p 0.95, no repetition
+penalty — is now what the row uses, and degeneration still occurs. The honest
+reading is that structured-output discipline is what a 2.479 bpw quant gives up
+first, while prose stays fine: K3 writes 2247 characters of correct, on-topic
+technical prose without a wobble, answers factual and arithmetic questions
+reliably, and has perplexity 1.33. **Chat is reliable; agentic use is not.**
+DeepSeek-V4 at native MXFP4 is the model to reach for when tools matter — and it
+is also the fastest here.
 
 **Passing this is still not the same as the harness working.** K3 answers the
 full loop over the API and yet a `kimi-opencode run` asking it to read a file
