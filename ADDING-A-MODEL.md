@@ -260,12 +260,27 @@ kit had turned on**.
 Speculative decoding is supposed to be **lossless** — only tokens the target
 model would have produced are accepted — so it was never suspected.
 
-On Kimi K3 it is not lossless. Same model, same build, same sampling, one flag:
+On Kimi K3 it is not lossless **unless the checkpoint mode is set correctly**:
 
-| K3 | tool reliability | streaming tool calls |
+| K3 | tool reliability | streaming |
 |---|---|---|
-| **speculation off** | **5/5** | PASS (6 deltas) |
-| speculation on | **0/5** | FAIL (0 deltas) |
+| speculation, default ckpt mode | **0/5** | FAIL (0 deltas) |
+| speculation, `--spec-ckpt-mode cpu` | **5/5** | PASS (6 deltas) |
+| no speculation | 5/5 | PASS |
+
+**And with `cpu` it is also 46-68% faster than no speculation** (6.3-7.2 tok/s
+against 4.30 on a code task), so this was never a correctness-versus-speed
+trade — it was one flag away from both.
+
+The cause is mechanical. K3 has **69 recurrent KDA layers**, and speculation must
+roll their state back when a draft is rejected. `--spec-ckpt-mode auto` resolves
+to `gpu-fallback` on anything that is not a full-GPU CUDA build — it copies
+architecture state "to a device buffer" on a box with no device — so recurrent
+state is never restored and the corruption compounds. GLM and DeepSeek-V4 have no
+recurrent layers, nothing to roll back, and are clean on the default.
+
+**If a model has recurrent or hybrid attention, set `--spec-ckpt-mode cpu`
+before enabling speculation.**
 
 With it on, K3 degenerates into repetition — 8000 tokens of one paragraph on an
 agent prompt — and never emits the call. With it off, `kimi-opencode` chains
