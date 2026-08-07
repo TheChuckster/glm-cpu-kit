@@ -21,7 +21,23 @@
 #   4. do tool calls work     - ik #2242: without it ik falls back to the
 #                               autoparser, which forces string="true" on every
 #                               argument, breaking prompt caching
-#   5. how fast is it
+#   5. are they RELIABLE      - one passing call proves nothing. Kimi K3 passed
+#                               check 4 and then emitted a call 3 times in 5,
+#                               where DeepSeek-V4 and GLM were 5/5. Runs it
+#                               VALIDATE_TOOL_REPEATS times (default 5).
+#   6. do they STREAM         - harnesses stream. A model can return tool_calls
+#                               non-streaming and emit zero deltas when streamed,
+#                               which shows up as the harness printing nothing.
+#   7. does the REPLAY work   - the turn after a tool call sends the assistant
+#                               message back complete (tool_calls AND
+#                               reasoning_content) plus the tool result. That
+#                               shape is unavoidable for a reasoning model.
+#   8. does it DEGENERATE     - a low-bit quant can be clean on short prompts and
+#                               collapse into repetition on a long one, which is
+#                               what an agent sends. K3 answered chat correctly
+#                               and produced 8000 tokens of one paragraph on a
+#                               ~7000-token prompt.
+#   9. how fast is it
 #
 # Runs as your normal user. It deliberately does NOT pass --mlock: the memlock
 # ulimit is often below the model size, and mmap plus a large page cache is fine
@@ -39,12 +55,31 @@ mkdir -p "$OUT"
 
 say() { echo "$(date +%H:%M:%S) [$LABEL] $*" | tee -a "$OUT/report.txt"; }
 [ -f "$MODEL" ] || { say "FATAL model missing: $MODEL"; exit 1; }
+
+# Refuse to start on an occupied port rather than silently sharing it. See the
+# trap below for why a stale listener is not merely cosmetic.
+if ss -ltn "sport = :${VALIDATE_PORT:-8081}" 2>/dev/null | grep -q LISTEN; then
+    say "FATAL something is already listening on port ${VALIDATE_PORT:-8081}"
+    say "      (a previous run's server, most likely - kill it, or set VALIDATE_PORT)"
+    ss -ltnp "sport = :${VALIDATE_PORT:-8081}" 2>/dev/null | tail -n +2
+    exit 1
+fi
 [ -x "$IK" ]    || { say "FATAL engine missing: $IK (set IK_LLAMA)"; exit 1; }
 
+# nproc counts SMT siblings, and using it here is not merely suboptimal. On a
+# 64-core part it asks for 128 threads, where DeepSeek-V4 measures 0.43 tok/s
+# against 31.5 at 64 - so a 300-token check takes twelve minutes instead of ten
+# seconds, and validation looks hung rather than slow. Decode saturates around
+# 32 threads on every model here anyway; prefill wants physical cores and no
+# more.
+VCORES=$(lscpu -p=Core,Socket 2>/dev/null | grep -v '^#' | sort -u | wc -l)
+[ "${VCORES:-0}" -gt 0 ] 2>/dev/null || VCORES=$(nproc)
+
 say "=== $(basename "$MODEL") $* ==="
+say "threads: $VCORES physical cores (nproc reports $(nproc))"
 "$IK" --model "$MODEL" --alias "$LABEL" --host 127.0.0.1 --port "$PORT" \
     --ctx-size "${VALIDATE_CTX:-65536}" --parallel 1 \
-    --threads "${THREADS:-$(nproc)}" --threads-batch "${THREADS:-$(nproc)}" \
+    --threads "${THREADS:-$VCORES}" --threads-batch "${THREADS:-$VCORES}" \
     --batch-size 2048 --ubatch-size 2048 -fa on \
     --cache-type-k q8_0 --cache-type-v q8_0 --jinja \
     --repeat-penalty 1.1 --repeat-last-n 256 --metrics \
@@ -53,7 +88,13 @@ say "=== $(basename "$MODEL") $* ==="
 SRV=$!
 # Kill by PID, not by pattern: a pkill -f on the port or the binary path also
 # matches other validation runs and, worse, anything else holding that string.
-trap 'kill "$SRV" 2>/dev/null; wait "$SRV" 2>/dev/null' EXIT
+# EXIT alone does NOT fire on SIGTERM/SIGINT, so an interrupted run used to
+# leave its llama-server bound to $PORT forever. That is worse than untidy:
+# llama-server binds with SO_REUSEPORT, so the next run's server shares the port
+# rather than failing, and requests are split between the live server and a
+# zombie that never answers - which presents as validation hanging with no
+# request ever reaching the server you just started.
+trap 'kill "$SRV" 2>/dev/null; wait "$SRV" 2>/dev/null' EXIT INT TERM HUP
 
 say "waiting for health"
 ready=0
@@ -117,6 +158,102 @@ args = str(f.get("arguments", ""))
 print("  tool     :", f.get("name"), args[:120])
 print("  TOOLCALL:", "FAIL (autoparser fallback - ik #2242)" if 'string="true"' in args
       else ("PASS" if f.get("name") == "list_files" else "FAIL (wrong tool)"))
+PY
+
+# --- tool call RELIABILITY, not existence -----------------------------------
+# One passing tool call proves nothing. Kimi K3 passed the single check above
+# and then emitted a call only 3 times in 5, while DeepSeek-V4 and GLM were 5/5
+# - which is the difference between a usable agent and one that stalls silently.
+REPEATS="${VALIDATE_TOOL_REPEATS:-5}"
+say "--- tool call reliability ($REPEATS runs) ---"
+PASSES=0
+for i in $(seq 1 "$REPEATS"); do
+  curl -sf --max-time 1800 "http://127.0.0.1:$PORT/v1/chat/completions" \
+    -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+    -d '{"model":"'"$LABEL"'","max_tokens":1200,"stream":false,"tool_choice":"auto","messages":[{"role":"user","content":"What files are in /tmp? Use the list_files tool."}],"tools":[{"type":"function","function":{"name":"list_files","description":"List files in a directory","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}]}' \
+    > "$OUT/tool_$i.json" 2>/dev/null || true
+  if python3 -c "
+import json,sys
+try: d=json.load(open('$OUT/tool_$i.json'))
+except Exception: sys.exit(1)
+sys.exit(0 if (d.get('choices',[{}])[0].get('message',{}).get('tool_calls')) else 1)
+" 2>/dev/null; then PASSES=$((PASSES+1)); fi
+done
+printf "  TOOL RELIABILITY: %d/%d %s\n" "$PASSES" "$REPEATS" \
+  "$([ "$PASSES" = "$REPEATS" ] && echo PASS || echo 'FAIL - unreliable for agent use')" \
+  | tee -a "$OUT/report.txt"
+
+# --- streaming tool calls ----------------------------------------------------
+# Harnesses stream. A model can return tool_calls non-streaming and emit zero
+# tool-call deltas when streamed, which presents as the harness printing nothing.
+say "--- streaming tool call ---"
+curl -sN --max-time 1800 "http://127.0.0.1:$PORT/v1/chat/completions" \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"model":"'"$LABEL"'","max_tokens":1200,"stream":true,"tool_choice":"auto","messages":[{"role":"user","content":"What files are in /tmp? Use the list_files tool."}],"tools":[{"type":"function","function":{"name":"list_files","description":"List files in a directory","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}]}' \
+  > "$OUT/toolstream.txt" 2>/dev/null || true
+python3 - "$OUT/toolstream.txt" <<'PY' | tee -a "$OUT/report.txt"
+import json, sys
+n = 0; finish = None
+for line in open(sys.argv[1], errors="replace"):
+    line = line.strip()
+    if not line.startswith("data: "): continue
+    payload = line[6:]
+    if payload == "[DONE]": break
+    try: d = json.loads(payload)
+    except Exception: continue
+    ch = d.get("choices", [{}])[0]
+    if (ch.get("delta") or {}).get("tool_calls"): n += 1
+    if ch.get("finish_reason"): finish = ch["finish_reason"]
+print("  STREAM TOOLCALL:", "PASS (%d deltas)" % n if n else
+      "FAIL (0 deltas, finish=%s) - harness will show nothing" % finish)
+PY
+
+# --- multi-turn replay -------------------------------------------------------
+# The turn AFTER a tool call is what breaks agents: the assistant message has to
+# go back complete, tool_calls and reasoning_content included, followed by the
+# tool result. Reasoning models cannot avoid that shape.
+say "--- multi-turn tool replay ---"
+curl -sf --max-time 1800 "http://127.0.0.1:$PORT/v1/chat/completions" \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"model":"'"$LABEL"'","max_tokens":600,"messages":[{"role":"user","content":"What is the weather in Oslo? Use the tool."},{"role":"assistant","content":"","reasoning_content":"Need to call get_weather for Oslo.","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Oslo\"}"}}]},{"role":"tool","tool_call_id":"call_1","name":"get_weather","content":"{\"temp_c\": 3, \"conditions\": \"light rain\"}"}],"tools":[{"type":"function","function":{"name":"get_weather","description":"Get current weather","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}]}' \
+  > "$OUT/multiturn.json" 2>/dev/null || true
+python3 - "$OUT/multiturn.json" <<'PY' | tee -a "$OUT/report.txt"
+import json, sys
+try: d = json.load(open(sys.argv[1]))
+except Exception as e:
+    print("  MULTITURN: FAIL (no/invalid response - replay rejected?)"); raise SystemExit
+c = (d.get("choices", [{}])[0].get("message", {}).get("content") or "")
+ok = "3" in c and ("rain" in c.lower())
+print("  MULTITURN:", "PASS" if ok else "FAIL (did not use the tool result)", repr(c[:100]))
+PY
+
+# --- degeneration on a long prompt -------------------------------------------
+# A low-bit quant can be fine on short prompts and collapse into repetition on a
+# long one - which is what an agent sends. Kimi K3 answered chat correctly and
+# produced 8000 tokens of the same paragraph on a ~7000-token agent prompt.
+say "--- long-prompt degeneration ---"
+python3 - "$OUT/longprompt.json" "$LABEL" <<'PY'
+import json, sys
+filler = ("The following is reference material the assistant may consult. " * 60 + "\n") * 12
+msg = filler + "\nIgnoring the material above, answer in one short sentence: what is 2+2?"
+json.dump({"model": sys.argv[2], "max_tokens": 800, "stream": False,
+           "messages": [{"role": "user", "content": msg}]}, open(sys.argv[1], "w"))
+PY
+curl -sf --max-time 1800 "http://127.0.0.1:$PORT/v1/chat/completions" \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d @"$OUT/longprompt.json" > "$OUT/longout.json" 2>/dev/null || true
+python3 - "$OUT/longout.json" <<'PY' | tee -a "$OUT/report.txt"
+import json, sys, collections
+try: d = json.load(open(sys.argv[1]))
+except Exception:
+    print("  DEGENERATION: FAIL (no response)"); raise SystemExit
+m = d.get("choices", [{}])[0].get("message", {})
+text = (m.get("content") or "") + (m.get("reasoning_content") or "")
+# Repetition detector: any 60-char window recurring many times is a loop.
+wins = collections.Counter(text[i:i+60] for i in range(0, max(0, len(text) - 60), 20))
+worst = wins.most_common(1)[0][1] if wins else 0
+print("  DEGENERATION:", "FAIL (a 60-char window repeats %dx - repetition loop)" % worst
+      if worst >= 5 else "PASS (no repetition loop, %d chars)" % len(text))
 PY
 
 say "=== done: $OUT/report.txt ==="
