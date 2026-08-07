@@ -824,6 +824,36 @@ Adherence is otherwise variable and it is *not* a throughput dial: on one fixed
 question `low` produced 9127 characters of reasoning where `high` produced 2781.
 Raise it per request for hard problems; do not rely on it to bound anything.
 
+### Staying current with ik: rebase into a NEW tree, validate, then switch
+
+The fork sat on pin `6038941` while ik moved 20 commits ahead. Rebased onto
+`40dffce6` — cleanly, 38 commits on top — but built into an isolated worktree
+rather than over `build-k3`, so a bad rebase could not take the live model down.
+Only after it passed everything did `build-k3` get rebuilt:
+
+| | |
+|---|---|
+| clean build + all tests | 34 parser assertions, delta-net 3/3 |
+| full gate | all 7 checks, tool calls 5/5 |
+| perplexity | **1.3253 +/- 0.030 — identical to before** |
+
+Two of those 20 commits were worth having and one needed checking:
+
+- **#2260 "Fix wrong output for hybrid/recurrent models at -np > 1"** adds a
+  sequence fingerprint to the graph-reuse key for architectures that bake
+  sequence state into the graph. K3 does exactly that, and is already registered
+  under `llm_arch_is_hybrid`, so it is covered automatically.
+- **#2242 "Fix DSV4 tool calls and reasoning"** and **#2256/#2254** on the
+  antirez DS4 GGUFs, which this runbook records as segfaulting.
+- **#2251 "fuse the delta-net recurrent state copy into the op"** touches the
+  file our gate-layout patch changes. Checked before assuming: it does not touch
+  the gate indexing (zero references), and **current `ik/main` still has the
+  bug** — `head_idx * n_tokens` at `ggml.c:23946`. The patch is still needed.
+
+That last check is the one worth copying. A patch prepared against an old pin
+can be silently obsolete by the time it is sent, and "it still rebases" does not
+mean "it is still needed".
+
 ### Multi-turn: conversational state holds
 
 Single-turn correctness and the tool-replay shape were both verified, but neither
