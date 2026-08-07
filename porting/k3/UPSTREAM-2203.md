@@ -13,9 +13,13 @@ much, file those separately — they stand alone:
    Qwen3-Next results on any non-x86 path) — **ready as a standalone PR**:
    [`upstream/delta-net-gate-layout`](https://github.com/TheChuckster/ik_llama.cpp/tree/upstream/delta-net-gate-layout),
    branched off `6038941`, 3 files, no K3 in it at all
-2. `ssm_conv1d` prefix matching in the quantizer (produces a model that
-   quantizes without error and aborts at the first token)
-3. the `n_attention_wv` assert, which no hybrid-attention model can satisfy
+2. `--keep-pattern` / `--keep-f32` for partial requantization, plus the
+   `ssm_conv1d` prefix fix — **ready as a standalone PR**:
+   [`upstream/quantize-partial-requant`](https://github.com/TheChuckster/ik_llama.cpp/tree/upstream/quantize-partial-requant),
+   branched off `6038941`, four files, no K3 code in it
+3. the `n_attention_wv` assert, which no hybrid-attention model can satisfy —
+   **not** in either branch, because exempting an architecture requires that
+   architecture to exist upstream. Mentioned in case you want it generalised.
 
 An earlier draft of this reply also reported `--spec-ckpt-mode auto` as
 corrupting recurrent models on CPU-only builds. **That was our bug, not yours** —
@@ -130,6 +134,11 @@ layers, so an arch exemption costs a slightly different bit allocation rather
 than correctness.
 
 ### 3. Two quantizer features that made a 17% speedup expressible
+
+Branch: [`upstream/quantize-partial-requant`](https://github.com/TheChuckster/ik_llama.cpp/tree/upstream/quantize-partial-requant).
+Builds clean off `6038941`, and verified functionally on that branch rather than
+only on ours — a dry run against DeepSeek-V4 converts **596 non-expert tensors
+and 0 expert tensors**, which is the whole point of the flag.
 
 Not bugs, but worth offering. Published quants spend their care on experts,
 because experts are the file — yet a token reads only the experts it activates
