@@ -249,20 +249,38 @@ So test both halves. All three models on this box, on their `-q5attn` rebuilds:
 The replay path returns HTTP 200 on all three, so #1605 is not blocking here.
 
 **Then measure it repeatedly, because it is not deterministic.** One success is
-not a working tool path. Same request, five times each:
+not a working tool path. All three models emit calls **5/5** — but K3 only got
+there after the cause of its failures was found, and the cause was **a flag this
+kit had turned on**.
 
-| | tool calls emitted | reasoning length |
+### The lesson: A/B your own optimisations against correctness, not just speed
+
+`--spec-type ngram-mod` was added to every model's row because it is worth
++89% to +143% on GLM code edits and costs nothing when it cannot fire.
+Speculative decoding is supposed to be **lossless** — only tokens the target
+model would have produced are accepted — so it was never suspected.
+
+On Kimi K3 it is not lossless. Same model, same build, same sampling, one flag:
+
+| K3 | tool reliability | streaming tool calls |
 |---|---|---|
-| GLM-5.2 | **5/5** | (thinking off) |
-| DeepSeek-V4 | **5/5** | 45-69 chars, tight |
-| Kimi K3 | **3/5** | 53-9377 chars, wildly variable |
+| **speculation off** | **5/5** | PASS (6 deltas) |
+| speculation on | **0/5** | FAIL (0 deltas) |
 
-K3 is the outlier and the parser is not the reason: it has unit tests, it
-handles single- and multi-argument calls, and the multi-turn replay works. On
-the failures the model simply **does not emit a call at all** — empty content,
-turn ended after thinking. The correlation is with reasoning length, and it is
-sharp: every run under ~200 characters of reasoning produced the call, and the
-long ones mostly did not.
+With it on, K3 degenerates into repetition — 8000 tokens of one paragraph on an
+agent prompt — and never emits the call. With it off, `kimi-opencode` chains
+Glob and Read and answers correctly in 237 seconds, where it previously ran 1464
+seconds and printed nothing.
+
+**Everything previously written here blaming 2.479 bpw for K3's tool failures
+was wrong.** The quant is fine; a well-measured throughput optimisation was
+silently corrupting output. It went unnoticed for a long time because it was
+introduced early, left in every subsequent test including the ones labelled
+"pure reference config", and because a lossless technique is not where you look.
+
+It is still enabled for GLM and DeepSeek-V4, both of which measure 5/5 with it
+on. K3's row alone omits it. **Speculation is per-model, like every other flag
+here, and it needs a correctness A/B and not only a throughput one.**
 
 **The relationship that actually holds**, across every configuration tried: the
 call appears when the model finishes thinking in **under ~200 characters**, and

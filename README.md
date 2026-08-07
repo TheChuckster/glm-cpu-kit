@@ -109,15 +109,15 @@ seconds**; GLM chained two tools (Glob then Read) in **67 seconds**. Tool calls 
 (7 incremental deltas, `finish_reason: tool_calls`). The same task on K3 ran 838
 seconds and printed nothing.
 
-**K3 is capped at `UD-Q2_K_XL` here and that is final.** The higher-bpw
-`UD-Q4_K_XL` is 1508.7 GB against 1133 GB of RAM (and 1.4 TB of free disk), with
-nothing published in between. Its structured-output unreliability below is a
-property of 2.479 bpw and is not reachable by configuration.
+**All three models emit tool calls 5/5.** K3 only got there after
+`--spec-type ngram-mod` was removed from its row: speculative decoding is
+supposed to be lossless, and on K3 it is not — 0/5 with it on, 5/5 with it off,
+same build and sampling. It stays enabled for GLM and DeepSeek-V4, which measure
+5/5 with it. See [`ADDING-A-MODEL.md`](ADDING-A-MODEL.md) §8.
 
-**Tool reliability differs sharply by model** — measured, same request five
-times: GLM **5/5**, DeepSeek-V4 **5/5**, Kimi K3 **3/5**. On K3's failures the
-model emits no call at all rather than a malformed one, and it correlates with
-reasoning length, not with the parser. Reach for DeepSeek-V4 when tools matter.
+**K3 is capped at `UD-Q2_K_XL` here** — the higher-bpw `UD-Q4_K_XL` is 1508.7 GB
+against 1133 GB of RAM, with nothing published in between. That bounds its
+quality ceiling, but it is *not* what was breaking its tool calls.
 
 **Tool calls work on K3** as of fork `c10d1e2` — it emits them as nested
 `<|open|>argument key=...<|sep|>` tags rather than JSON, and needed a parser plus
