@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Launch OpenCode against Kimi K3 (UD-Q2_K_XL, 803 GB) on chuckdancer, via the
+# Launch OpenCode against Kimi K3 (UD-Q2_K_XL) on $GLM_SERVER_HOST, via the
 # local litellm proxy. Same isolated-config trick as glm-opencode.sh: a clean
 # XDG_CONFIG_HOME so the global oh-my-openagent plugin is NOT loaded, which keeps
 # the system prompt small enough that first-token latency is bearable on CPU.
@@ -60,8 +60,9 @@
 #   output limit of 8000 is fine; hand-rolled curl calls are where this bites.
 #
 # K3 must be the resident model - only one is, and they are 155-860 GB mlocked:
-#   ssh chuckdancer 'sudo glm-model use kimi-k3'   # ~30s once page-cached
-#   ssh chuckdancer 'glm-model status'             # confirm before trusting it
+#   ssh $GLM_SERVER_HOST 'sudo glm-model use kimi-k3'   # ~30s once page-cached
+#   ssh $GLM_SERVER_HOST 'glm-model status'             # confirm before trusting it
+# (GLM_SERVER_HOST defaults to chuckdancer)
 set -euo pipefail
 
 BASE="${OPENCODE_BASE_URL:-http://127.0.0.1:4000/v1}"
@@ -82,12 +83,18 @@ fi
 # llama-server serves whatever is loaded regardless of the name asked for, so a
 # request for kimi-k3 while DeepSeek-V4 is resident silently answers as DS4.
 # Warn rather than fail: the check needs SSH, which may not be available.
-SERVED=$(ssh -o BatchMode=yes -o ConnectTimeout=4 chuckdancer \
+# Hostname of the box running glm-server. Was hardcoded to `chuckdancer`, which
+# is fine on the box this was written on and silently skips the check everywhere
+# else - the `|| true` means a failed ssh looks exactly like "nothing to warn
+# about". Override for any other host.
+GLM_HOST="${GLM_SERVER_HOST:-chuckdancer}"
+
+SERVED=$(ssh -o BatchMode=yes -o ConnectTimeout=4 "$GLM_HOST" \
            'glm-model status 2>/dev/null | sed -n "s/^serving alias *: //p"' 2>/dev/null || true)
 if [ -n "$SERVED" ] && [ "$SERVED" != "kimi-k3" ]; then
-  echo "WARNING: chuckdancer is serving '$SERVED', not kimi-k3." >&2
+  echo "WARNING: $GLM_HOST is serving '$SERVED', not kimi-k3." >&2
   echo "         Your requests will be answered by that model instead." >&2
-  echo "         Switch with: ssh chuckdancer 'sudo glm-model use kimi-k3'" >&2
+  echo "         Switch with: ssh $GLM_HOST 'sudo glm-model use kimi-k3'" >&2
   echo >&2
 fi
 
@@ -96,7 +103,7 @@ fi
 # likely way to conclude - wrongly - that this script is broken.
 echo "kimi-k3: ~40 tok/s prompt processing. A fresh session sends 10K+ tokens of" >&2
 echo "         system prompt and tools, so the FIRST reply takes ~4 minutes." >&2
-echo "         It is not hung. Watch it work:  ssh chuckdancer 'sudo journalctl -fu glm-server'" >&2
+echo "         It is not hung. Watch it work:  ssh $GLM_HOST 'sudo journalctl -fu glm-server'" >&2
 echo >&2
 
 exec env \
