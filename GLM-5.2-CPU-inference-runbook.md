@@ -893,11 +893,31 @@ Fork commit `5bba360`. Verified on the deterministic replay: **3/3 degenerate
 before** (two on the original engine, one more with the narrow divergence-only
 guard), **0/2 after**.
 
-**The cost is real.** These architectures now reprocess the whole prompt every
-request — 40–45 s for 14–16k tokens at 360 tok/s here. That is exactly what
-`cache_prompt=false` already did; it is now the default for models that cannot
-safely do otherwise. Recovering it means carrying the indexer cache across
-requests with the KV rows, which is a larger change.
+**Caching is preserved — the constraint is narrower than "no reuse".** DeepSeek-V4
+compresses with `CSA_RATIO 4` and `HCA_RATIO 128`, and the compression plan keys
+on absolute position (`pos % ratio`). Reuse is therefore safe up to a **block
+boundary** and corrupt in the middle of one: a prefix ending mid-block leaves the
+compressor's running state inconsistent with where the next batch starts. The
+failing request reused `n_past 17007`, and `17007 % 128 == 111`.
+
+So the reuse point is rounded **down** to the block rather than discarded.
+`llama_model_kv_reuse_alignment()` reports the granularity (128 for DEEPSEEK4, a
+multiple of CSA_RATIO; 0 = none known, reuse nothing — which is what openPangu
+still gets, since its block structure was not established here).
+
+| | degeneration | prefill per request | tokens dropped |
+|---|---|---|---|
+| original | 3/3 | — | — |
+| no reuse at all | 0/2 | 40–45 s / 14–16k tok | 16000+ |
+| **block-aligned reuse** | **0/2** | **1–5 s / 228–1697 tok** | **19–124** |
+
+Fork commits `5bba360` (the guard) and `749ba34` (the alignment). Full validation
+gate passes on the serving config: coherence, reasoning separation, tool calls
+5/5, streaming tool calls, multi-turn, long-prompt degeneration.
+
+**Generalisable point:** when an architecture keeps blockwise state outside the
+KV cache, the question is not "can this model reuse a prefix" but "at what
+granularity". Disabling reuse is the safe first answer and a bad final one.
 
 **DRY sampling did NOT fix this**, and the section below should be read with that
 in mind. The capture run that reproduced the failure had DRY already enabled. DRY
