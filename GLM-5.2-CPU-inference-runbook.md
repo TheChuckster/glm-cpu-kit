@@ -847,6 +847,63 @@ The general point: the isolation that makes a new architecture safe to bring up
 also means every other engine ages in place with nothing to announce it. Check
 `ls -l ~/ik_llama.cpp/build*/bin/llama-server` occasionally.
 
+### DS4 degeneration loops: root cause was KV cache reuse (FIXED)
+
+**Resolved.** DS4 agent sessions collapsed into repetition loops because
+llama-server reused a cached prompt prefix across requests, and DeepSeek-V4 keeps
+position-dependent state — the DSA indexer cache — *outside* the generic KV
+cache. A reused prefix therefore runs attention against side state belonging to a
+prompt that no longer exists.
+
+**How it was caught, after the direct approaches failed.** The rate is ~1 in 8
+sessions, so rerunning proves nothing. Instead every request was captured
+verbatim through a logging proxy (`capture-proxy.py` in this repo) and the
+failing session replayed:
+
+| replay | result |
+|---|---|
+| the failing request **alone** | 5/5 clean |
+| the captured **sequence in order** | degenerates at exactly that request, 2/2 |
+| the same sequence, `cache_prompt=false` | clean |
+
+That is the whole finding: **the trigger is not the prompt, it is the cache state
+the request arrives to.** Every earlier attempt failed because it sent one
+request in isolation, which can never reproduce it.
+
+**The bug.** `llama_model_supports_ctx_shift()` already excluded `OPENPANGU` and
+`DEEPSEEK4`, with the comment "keep position-dependent private state outside the
+generic KV cache". Twenty lines below it:
+
+```c
+bool llama_model_supports_partial_kv_reuse(const struct llama_model * model) {
+    return model != nullptr;      // true for every model
+}
+```
+
+So the guard in `server-context.cpp` written precisely to catch this — *"per-position
+side state past the divergence point is already lost"* — could never fire.
+
+**Fixing the predicate was necessary but not sufficient.** The guard only fired on
+mid-sequence *divergence*, and the failing request **purely extended** its cache
+(`n_past 17007 == cache_size 17007`, 43 new tokens) and still produced an
+8000-token loop. Divergence was never the trigger; *reuse* was. The guard now
+fires on any cross-request reuse for these architectures.
+
+Fork commit `5bba360`. Verified on the deterministic replay: **3/3 degenerate
+before** (two on the original engine, one more with the narrow divergence-only
+guard), **0/2 after**.
+
+**The cost is real.** These architectures now reprocess the whole prompt every
+request — 40–45 s for 14–16k tokens at 360 tok/s here. That is exactly what
+`cache_prompt=false` already did; it is now the default for models that cannot
+safely do otherwise. Recovering it means carrying the indexer cache across
+requests with the KV rows, which is a larger change.
+
+**DRY sampling did NOT fix this**, and the section below should be read with that
+in mind. The capture run that reproduced the failure had DRY already enabled. DRY
+was a reasonable response to the mechanism visible at the time and it costs
+nothing measurable, so it stays — but it treated a symptom.
+
 ### DS4 degeneration loops in agentic use: what was found, and what was not
 
 DS4 in opencode intermittently collapses mid-session into a repetition loop —
