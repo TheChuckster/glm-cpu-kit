@@ -847,6 +847,75 @@ The general point: the isolation that makes a new architecture safe to bring up
 also means every other engine ages in place with nothing to announce it. Check
 `ls -l ~/ik_llama.cpp/build*/bin/llama-server` occasionally.
 
+### DS4 degeneration loops in agentic use: what was found, and what was not
+
+DS4 in opencode intermittently collapses mid-session into a repetition loop —
+`The 2023. The 2024. The 2025.` — and runs to opencode's 8000-token output cap.
+Reproduced once in roughly eight attempts, so **any claim of a fix rests on very
+few samples**; that is stated up front because the rate makes it easy to declare
+victory on noise.
+
+**What is established:**
+
+- It starts **inside a tool-call argument**, while emitting a shell command
+  containing quotes and newlines — not at the start of a turn, and not in prose.
+- Once looping, ngram speculation drafts from the repeated context and accepts
+  nearly everything: **10.27 ms/token against a normal 38**, i.e. it races to the
+  cap 3.7x faster than it could otherwise.
+- The malformed `<|DSML|tool_calls>` markers that leak into content are a
+  *consequence*: the degenerated model emits `tool_calls` then `parameter`,
+  skipping the `invoke` level, so the parser correctly fails to match.
+
+**Ruled out, each by measurement rather than reasoning:**
+
+| Suspect | Why it is not the cause |
+|---|---|
+| The K3 chat parser | diff vs upstream is +162 lines, 0 deletions, nothing DeepSeek |
+| DS4 template detection | all three conditions (`dsml_token`, `DSML`, `tool_calls`) pass on all three GGUFs |
+| `string="true"` autoparser fallback | that is what the *correct* DS4 parser emits; the #2242 note misled me |
+| `--swa-compress` (#2266, new in this engine) | defaults false and is not passed by the unit |
+| Grammar-constrained decoding | if a grammar were binding, malformed DSML could not have been emitted |
+| Long generation alone | 0/4 degenerate at ~7900 tokens each, all at a normal 38 ms/token |
+| Tools / multi-turn via the API | 0/5 multi-turn with tool results, 0/4 with 15k-token prompts |
+
+**Speculation accelerates but does not cause it.** `common_sampler_sample_and_accept_n`
+samples from the *target* model and keeps a draft token only when it matches, so
+the output distribution is unchanged.
+
+**Mitigation applied: DRY sampling on all four DS4 rows.**
+
+    --dry-multiplier 0.8 --dry-base 1.75 --dry-allowed-length 4 --dry-penalty-last-n -1
+
+This targets the one part of the mechanism that is unambiguous. The unit shipped
+`--repeat-penalty 1.1 --repeat-last-n 256`, and a 256-token window **structurally
+cannot see a loop inside an 8000-token generation** — by the time the loop is
+established it is entirely outside the penalty's view. DRY spans the whole
+context (`penalty-last-n -1`) and penalises repeated *sequences* with an
+exponential term, which is what a degeneration loop is.
+
+`allowed-length 4` rather than the usual 2, deliberately: code output legitimately
+repeats short token runs (imports, indentation, assertion lines) and 2 risks
+penalising them.
+
+Verified not to cost quality: tool calls 5/5, code generation intact
+(`def`/`import`/`assert` all present, max 3-gram repeat x5), a 16,750-character
+long generation clean at max 3-gram repeat x3.
+
+**The agentic A/B did not discriminate, and should not be quoted as if it did:**
+3 opencode runs without DRY were 0/3 degenerate, 3 runs with DRY were also 0/3.
+At a ~1-in-8 base rate neither arm was ever likely to fail, so this says nothing
+about whether DRY helps. Distinguishing would need on the order of 20+ runs per
+arm at ~7 minutes each. What DRY has actually been shown to do is not break
+anything (tools, code, long output all clean) while closing a window that was
+provably too small.
+
+**This is a mitigation for an observed mechanism, not a root-cause fix.** The
+trigger — why coherence breaks inside a quoted shell argument in the first place —
+is still unknown. Perplexity would be the sensitive instrument for asking whether
+the local Q5attn requant is implicated, and it is currently **not measurable**:
+`examples/perplexity/perplexity.cpp` forces `n_parallel = max(4, ...)`, DS4
+refuses `n_seq_max > 1`, and `-np 1` is overridden. Worth fixing upstream.
+
 ### Then converge them — three trees from one source is not isolation
 
 Having rebuilt `build-ds4`, the obvious question is what the three trees were
