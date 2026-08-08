@@ -142,15 +142,28 @@ VARIANT_ARGS=()
 # it does not: the unit sets LimitMEMLOCK=infinity, so the kernel will happily try
 # and then OOM. Compared against MemTotal rather than MemAvailable because a
 # restart races the previous instance's pages being released.
+# Two tests, because a percentage alone is not enough. A 1009 GB model on a
+# 1133 GB box is 89% - under the ratio test - yet leaves only 124 GB for the OS,
+# the KV cache and the compute buffers, where the 861 GB model that works leaves
+# 272 GB. So also require an absolute floor of headroom.
+#
+# MLOCK_MIN_HEADROOM_GB overrides the floor. There is no --no-mlock flag in
+# llama-server, so a registry row cannot undo --mlock; this is the only place
+# the decision can be made.
 MLOCK_ARGS=(--mlock)
+MLOCK_MIN_HEADROOM_GB="${MLOCK_MIN_HEADROOM_GB:-160}"
 _model_bytes=$(du -scb "$(dirname "$MODEL")"/*.gguf 2>/dev/null | awk '/total$/{print $1}')
 _mem_total=$(awk '/^MemTotal:/{print $2*1024}' /proc/meminfo 2>/dev/null)
-if [ -n "$_model_bytes" ] && [ -n "$_mem_total" ] && \
-   [ "$_model_bytes" -gt $(( _mem_total * 92 / 100 )) ]; then
-    MLOCK_ARGS=()
-    echo "  model is $(( _model_bytes / 1000000000 )) GB against $(( _mem_total / 1000000000 )) GB of RAM"
-    echo "  -> NOT using --mlock; it would pin more than fits and OOM. Expect slower TG,"
-    echo "     since pages will be served from the page cache instead of pinned."
+if [ -n "$_model_bytes" ] && [ -n "$_mem_total" ]; then
+    _headroom=$(( (_mem_total - _model_bytes) / 1000000000 ))
+    if [ "$_model_bytes" -gt $(( _mem_total * 92 / 100 )) ] || \
+       [ "$_headroom" -lt "$MLOCK_MIN_HEADROOM_GB" ]; then
+        MLOCK_ARGS=()
+        echo "  model is $(( _model_bytes / 1000000000 )) GB against $(( _mem_total / 1000000000 )) GB of RAM"
+        echo "  -> ${_headroom} GB headroom, below the ${MLOCK_MIN_HEADROOM_GB} GB floor"
+        echo "  -> NOT using --mlock; it would pin more than fits and OOM. Expect slower TG,"
+        echo "     since pages will be served from the page cache instead of pinned."
+    fi
 fi
 
 echo "serving variant '$GLM_VARIANT' as '$ALIAS'  (threads=$THREADS ctx=$CTX engine=${ENGINE:-build})"
