@@ -25,7 +25,7 @@
 #
 # Use DeepSeek-V4 when you want the work done quickly:
 #
-#     GLM_OPENCODE_MODEL=local/deepseek-v4-flash-0731 ./glm-opencode.sh
+#     ./ds4-opencode.sh
 #
 # Use K3 when you specifically want K3. Both are real options now.
 #
@@ -45,7 +45,7 @@
 #   printed nothing. K3 emits a valid tool call only about half the time (the
 #   model degenerates mid-reasoning at 2.479 bpw), where DeepSeek-V4 and GLM are
 #   5/5. Run:
-#       GLM_OPENCODE_MODEL=local/deepseek-v4-flash-0731 ./glm-opencode.sh
+#       ./ds4-opencode.sh
 #
 #   Output itself is clean: the chat parser for K3's <|open|>/<|sep|>/<|close|>
 #   template landed, reasoning goes to reasoning_content, and no structural

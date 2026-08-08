@@ -183,7 +183,8 @@ the selected variant, and is the only reliable check.
 | Script | Backend | Speed | Use for |
 |---|---|---|---|
 | `glm-opencode.sh` + `opencode.json` | LOCAL CPU server (direct) | ~12-32 tok/s | **private** / sensitive / audit — **this is the working agent setup** |
-| `kimi-opencode.sh` | LOCAL, Kimi K3 on the forked engine | ~3.7 tok/s | K3 specifically — see the caveats in the script |
+| `ds4-opencode.sh` | LOCAL, DeepSeek-V4-Flash via litellm | ~28.6 tok/s | **fastest local agent** — prefer this for real work |
+| `kimi-opencode.sh` | LOCAL, Kimi K3 | ~4.3 tok/s | K3 specifically — see the caveats in the script |
 | `glm-opencode-together.sh` | Together AI cloud | ~200-350 tok/s | fast everyday coding |
 | `glm-opencode-cloud.sh` | any OpenAI-compatible provider (env) | varies | OpenRouter / DeepInfra / Z.ai / Surplus / etc. |
 | `litellm-config.yaml` + `proxy.sh` + `glm.sh` | Claude Code via litellm | - | only if you must use Claude Code (fragile) |
