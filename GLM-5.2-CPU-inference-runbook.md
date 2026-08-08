@@ -857,8 +857,8 @@ prompt that no longer exists.
 
 **How it was caught, after the direct approaches failed.** The rate is ~1 in 8
 sessions, so rerunning proves nothing. Instead every request was captured
-verbatim through a logging proxy (`capture-proxy.py` in this repo) and the
-failing session replayed:
+verbatim through a logging proxy (`debug/capture-proxy.py`) and the failing
+session replayed in order (`debug/replay-sequence.py`):
 
 | replay | result |
 |---|---|
