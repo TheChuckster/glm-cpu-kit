@@ -911,10 +911,54 @@ provably too small.
 
 **This is a mitigation for an observed mechanism, not a root-cause fix.** The
 trigger — why coherence breaks inside a quoted shell argument in the first place —
-is still unknown. Perplexity would be the sensitive instrument for asking whether
-the local Q5attn requant is implicated, and it is currently **not measurable**:
-`examples/perplexity/perplexity.cpp` forces `n_parallel = max(4, ...)`, DS4
-refuses `n_seq_max > 1`, and `-np 1` is overridden. Worth fixing upstream.
+is still unknown.
+
+**The Q5attn requant is NOT implicated.** Wikitext perplexity over 60 chunks at
+n_ctx 512: reference MXFP4 **4.5167 ± 0.096**, local Q5attn **4.4496 ± 0.093**.
+The difference is 0.067 against error bars of ±0.096 — indistinguishable, and
+nominally in Q5attn's favour. That was the last standing suspect and it is
+cleared.
+
+### Rebuilding one target leaves every other tool ABI-incompatible
+
+Getting that perplexity number first required finding a self-inflicted bug worth
+recording, because it fails in the most misleading way possible.
+
+`llama-perplexity` refused to load DS4 with:
+
+    swa_compress differs between llama_model_params (0) and llama_context_params (255)
+
+255 is not a boolean. Two theories were chased and both were wrong: that
+`perplexity.cpp` forces `n_parallel = max(4, ...)` (that line is in the HellaSwag
+branch, not the perplexity one — the real line is `n_seq = n_batch / n_ctx`, so
+`-b 512` with `-c 512` fixes it), and that the positional initialiser list in
+`llama_context_default_params()` had drifted from the struct field order (it had
+not).
+
+The actual cause: converging the build trees was done with
+`cmake --build build --target llama-server`. **Only that target was rebuilt.**
+Every other binary in `build/bin` — `llama-perplexity`, `llama-quantize`,
+`llama-sweep-bench`, `llama-cli`, all 55 tests — stayed on a July 14 build while
+`libllama` moved to `b1cc25b`. `llama_context_params` had gained fields, so the
+stale binaries used old field offsets and `swa_compress` read a neighbouring byte
+of `dsa_top_k = -1` → `0xFF` → 255.
+
+Rebuilding just `llama-perplexity` made it work immediately, with the debug print
+showing `swa=0` at every hop.
+
+**So: after moving the engine, rebuild the whole tree, not one target.**
+
+    cmake --build build -j 48        # not --target llama-server
+
+`ls -l build/bin | awk '{print $6}' | sort | uniq -c` shows the drift in one line;
+a healthy tree reports a single date. All 57 binaries are now current and
+`ctest -R delta-net-gate` passes 3/3.
+
+Two consequences worth flagging. A stale `llama-quantize` run against a newer
+`libllama` could write a subtly corrupt model with no error — nothing here was
+requantised in that window, but it is the dangerous case. And any measurement
+taken with `llama-sweep-bench` from a partially-rebuilt tree should be re-taken
+rather than trusted.
 
 ### Then converge them — three trees from one source is not isolation
 

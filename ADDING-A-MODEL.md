@@ -361,14 +361,28 @@ nobody else. Verified from scratch:
 
 ```sh
 cmake -B build-clean -DGGML_NATIVE=ON -DLLAMA_BUILD_TESTS=ON
-cmake --build build-clean --target llama-server llama-quantize \
-      test-chat-peg-parser test-delta-net-gate-8 -j 48
+cmake --build build-clean -j 48          # ALL targets, not a --target list
 ctest --test-dir build-clean -R delta-net-gate
 ```
 
 Clean build succeeded, delta-net gate 3/3 across head dims 8/64/128, chat peg
 parser 34 tests and 205 assertions with no failures. Cheap, and the alternative
 is finding out from whoever tries to use the branch.
+
+**Build every target, not a subset.** This originally named four targets, which
+is exactly the mistake that later cost real debugging time: rebuilding an
+existing tree with `--target llama-server` left `llama-perplexity`,
+`llama-quantize`, `llama-sweep-bench` and every test on a build three weeks older
+than `libllama`. They still ran — with stale struct offsets, so a `bool` read a
+neighbouring byte of an `int32_t -1` and reported `255`. The failure surfaced as
+an impossible-looking parameter mismatch, nowhere near the cause. See the runbook
+section "Rebuilding one target leaves every other tool ABI-incompatible".
+
+Check a tree in one line — a healthy one reports a single date:
+
+```sh
+ls -l build/bin | awk 'NR>1{print $6}' | sort | uniq -c
+```
 
 ### Keep a control model for any shared code path you touch
 
