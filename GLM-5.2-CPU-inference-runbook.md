@@ -847,6 +847,51 @@ The general point: the isolation that makes a new architecture safe to bring up
 also means every other engine ages in place with nothing to announce it. Check
 `ls -l ~/ik_llama.cpp/build*/bin/llama-server` occasionally.
 
+### DS4 tool calls silently lost to a lazy grammar that never triggered (FIXED)
+
+Separate from the degeneration below, and worth keeping apart: captured traffic
+showed short, coherent responses that nonetheless produced **no tool call**, with
+raw markers in the content —
+
+```
+<|DSML|tool/bin/echo done</|DSML|parameter>
+</|DSML|tool_package>
+</|DSML|tool_catalogue>
+```
+
+Invented closers, and no valid `tool_calls`/`invoke` ever opened. The parser was
+right to refuse; the question is why nothing stopped the model getting there.
+
+**Cause.** The DSV4 grammar is lazy, and its only trigger was the WORD
+`<|DSML|tool_calls>` — the *complete* tag. A model that starts the marker and
+drifts never matches it, so the grammar never engages and nothing constrains the
+rest of the turn.
+
+**Fix** (fork `7716eae`): also trigger on the prefix `<|DSML|tool`. This is sound
+because `llama_grammar_accept_impl` **replays** the matched text into the grammar
+from the match offset, so any proper prefix of `FC_START` lets the grammar pick
+up mid-tag and force the completion.
+
+**The bare `<|DSML|` was tried first and is wrong** — it fires too widely. A model
+that merely *quotes* a marker while reasoning ("the token `<|DSML|invoke`
+means...") got forced into a tool call it was explicitly told not to make, in 3
+of 6 probe cases, and one produced mangled content.
+
+| | bare `<|DSML|` | `<|DSML|tool` |
+|---|---|---|
+| tool calls | 16/16 | **16/16** |
+| DSML leaks | 0/16 | **0/16** |
+| spurious forced tool calls | 3/6 probes | **0/6** |
+| mangled content | 1/6 probes | **0/6** |
+
+**Honest limit:** the original failure appeared in roughly 1 captured response in
+22, so 16/16 clean does not statistically prove elimination. The argument is
+structural — once the grammar engages at `<|DSML|tool` the only continuation it
+accepts is `_calls>` — and the measurements show the fix is active with no
+regression. Scoped to `deepseek_v3_2`; MiniMax-M3 has an identically shaped
+trigger and probably the same latent bug, untouched because it is not served
+here.
+
 ### DS4 degeneration loops: root cause was KV cache reuse (FIXED)
 
 **Resolved.** DS4 agent sessions collapsed into repetition loops because
