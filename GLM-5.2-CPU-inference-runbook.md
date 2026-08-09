@@ -964,6 +964,26 @@ gate passes on the serving config: coherence, reasoning separation, tool calls
 KV cache, the question is not "can this model reuse a prefix" but "at what
 granularity". Disabling reuse is the safe first answer and a bad final one.
 
+**Two defects in that change were found by reviewing the diff, not by testing —
+the tests passed with both bugs present** (fork `fa00667`):
+
+- **Debug scaffolding was pushed in an unrelated commit.** `DSV4_REUSE_ALIGN`,
+  added to force an alignment while trying to prove 128, included a bypass where
+  `align==1` skipped the safety guard entirely. `git add -A` swept it into the
+  grammar-trigger commit, whose message never mentioned it. A shipped build could
+  therefore have the KV-reuse guard disabled by an environment variable.
+  *Lesson: `git add -A` after a debugging session commits the debugging session.*
+
+- **The rollback subtracted one token count from two different streams.**
+  `n_past` indexes the cache, `n_past_prompt` the prompt; they diverge when think
+  tokens are excluded from the match, and **differ in 88 of 667 observed
+  requests (13%)**. Rolling the cache back N is not rolling the prompt back N.
+  The aligned path now runs only when the two are in lock step and resets
+  otherwise. On the reproduction lock step held every time, so nothing was lost.
+
+Re-verified after: replay 0 degenerate, tool calls 10/10, no marker leaks,
+alignment still engaging.
+
 **DRY sampling did NOT fix this**, and the section below should be read with that
 in mind. The capture run that reproduced the failure had DRY already enabled. DRY
 was a reasonable response to the mechanism visible at the time and it costs
