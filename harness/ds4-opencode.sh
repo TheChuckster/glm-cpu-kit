@@ -64,6 +64,13 @@
 set -euo pipefail
 
 BASE="${OPENCODE_BASE_URL:-http://127.0.0.1:4000/v1}"
+# DS4_OPENCODE_MODEL selects which DS4 row you are talking to:
+#   local/deepseek-v4-flash-0731      the reference / Q5attn sibling (they share
+#                                     this alias deliberately - drop-in equivalents)
+#   local/deepseek-v4-flash-0731-abl  huihui-ai's abliterated 0731 MXFP4
+#   local/deepseek-v4-flash-0731-mix  antirez's mixed-precision build
+# The abliterated row gets its OWN alias on purpose: it is not a drop-in
+# equivalent, and you must be able to tell which model answered you.
 MODEL="${DS4_OPENCODE_MODEL:-local/deepseek-v4-flash-0731}"
 CFG_HOME="${GLM_OPENCODE_XDG:-$HOME/.glm-opencode-config}"
 
@@ -88,7 +95,11 @@ SERVED=$(ssh -o BatchMode=yes -o ConnectTimeout=4 "$GLM_HOST" \
 if [ -n "$SERVED" ] && [ "$SERVED" != "$MODEL_ID" ]; then
   echo "WARNING: $GLM_HOST is serving '$SERVED', not $MODEL_ID." >&2
   echo "         Your requests will be answered by that model instead." >&2
-  echo "         Switch with: ssh $GLM_HOST 'sudo glm-model use ds4-flash-q5attn'" >&2
+  case "$MODEL_ID" in
+    *-abl) echo "         Switch with: ssh $GLM_HOST 'sudo glm-model use ds4-flash-abl'" >&2 ;;
+    *-mix) echo "         Switch with: ssh $GLM_HOST 'sudo glm-model use ds4-flash-mix'" >&2 ;;
+    *)     echo "         Switch with: ssh $GLM_HOST 'sudo glm-model use ds4-flash-q5attn'" >&2 ;;
+  esac
   echo >&2
 fi
 
