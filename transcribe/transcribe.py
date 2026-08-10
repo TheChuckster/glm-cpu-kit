@@ -25,8 +25,10 @@ one channel); clean wideband audio with distinct voices does better. It is NOT a
 certified transcript - verify any quotation against the audio before relying
 on it.
 
-The clustering settings are not arbitrary. Measured against that reference
-(clustering-only accuracy, which is why these read higher than the 87.8% above):
+The clustering settings are not arbitrary. Measured against that reference.
+These are clustering-only numbers - scored on the window labels rather than on
+the finished transcript - so they are not directly comparable to the 92.4%
+end-to-end figure above:
 
     win=2.0s hop=1.0s  complete linkage   91.1%   <- default
     win=1.5s hop=0.75s complete linkage   90.0%
