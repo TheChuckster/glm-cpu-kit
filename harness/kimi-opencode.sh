@@ -91,10 +91,17 @@ GLM_HOST="${GLM_SERVER_HOST:-chuckdancer}"
 
 SERVED=$(ssh -o BatchMode=yes -o ConnectTimeout=4 "$GLM_HOST" \
            'glm-model status 2>/dev/null | sed -n "s/^serving alias *: //p"' 2>/dev/null || true)
-if [ -n "$SERVED" ] && [ "$SERVED" != "kimi-k3" ]; then
-  echo "WARNING: $GLM_HOST is serving '$SERVED', not kimi-k3." >&2
+# Compare against the SELECTED model, not the literal "kimi-k3". With the
+# literal, KIMI_OPENCODE_MODEL=local/kimi-k3-abl against a resident plain kimi-k3
+# printed no warning at all and was silently answered by the base model - the
+# exact failure this block exists to catch - while pointing the launcher at any
+# other model produced a false warning telling you to unload the one you asked
+# for. ds4-opencode.sh already did this correctly.
+if [ -n "$SERVED" ] && [ "$SERVED" != "$MODEL_ID" ]; then
+  echo "WARNING: $GLM_HOST is serving '$SERVED', not $MODEL_ID." >&2
   echo "         Your requests will be answered by that model instead." >&2
-  echo "         Switch with: ssh $GLM_HOST 'sudo glm-model use kimi-k3'" >&2
+  echo "         Switch with: ssh $GLM_HOST 'sudo glm-model use <variant serving $MODEL_ID>'" >&2
+  echo "         (glm-model list shows which variant maps to which alias)" >&2
   echo >&2
 fi
 
