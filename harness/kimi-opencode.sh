@@ -67,29 +67,45 @@ fi
 
 # llama-server serves whatever is loaded regardless of the name asked for, so a
 # request for kimi-k3 while DeepSeek-V4 is resident silently answers as DS4.
-# Warn rather than fail: the check needs SSH, which may not be available.
-# Hostname of the box running glm-server. Was hardcoded to `chuckdancer`, which
-# is fine on the box this was written on and silently skips the check everywhere
-# else - the `|| true` means a failed ssh looks exactly like "nothing to warn
-# about". Override for any other host.
+# Fail closed unless explicitly skipped: this server accepts a wrong model name
+# and answers with whatever is resident, so an unverified launch is not safe.
+# Hostname of the box running glm-server. Override for any other host. This
+# installation's user SSH config is malformed, so `none` deliberately uses the
+# system host/key configuration; set GLM_SSH_CONFIG to a real config path when
+# aliases are required.
 GLM_HOST="${GLM_SERVER_HOST:-chuckdancer}"
+GLM_SSH_CONFIG="${GLM_SSH_CONFIG:-none}"
+KIMI_SKIP_VARIANT_CHECK="${KIMI_SKIP_VARIANT_CHECK:-0}"
+[[ "$KIMI_SKIP_VARIANT_CHECK" == 0 || "$KIMI_SKIP_VARIANT_CHECK" == 1 ]] || {
+  echo "KIMI_SKIP_VARIANT_CHECK must be 0 or 1" >&2
+  exit 1
+}
 
-STATUS=$(ssh -o BatchMode=yes -o ConnectTimeout=4 "$GLM_HOST" \
-           'glm-model status 2>/dev/null' 2>/dev/null || true)
-SELECTED=$(printf '%s\n' "$STATUS" | sed -n 's/^selected variant *: \([^ ]*\).*/\1/p')
-SERVED=$(printf '%s\n' "$STATUS" | sed -n 's/^serving alias *: //p')
-# Several K3 variants deliberately share alias `kimi-k3`, so the alias alone
-# cannot distinguish the Q5-attention build from the lower-quality base quant.
-# Check the selected registry variant as well as the served API alias.
-if [ -n "$SELECTED" ] && [ "$SELECTED" != "$KIMI_VARIANT" ]; then
-  echo "WARNING: $GLM_HOST selected '$SELECTED', not '$KIMI_VARIANT'." >&2
-  echo "         Switch with: ssh $GLM_HOST 'sudo glm-model use $KIMI_VARIANT'" >&2
-  echo >&2
-elif [ -n "$SERVED" ] && [ "$SERVED" != "$MODEL_ID" ]; then
-  echo "WARNING: $GLM_HOST is serving alias '$SERVED', not '$MODEL_ID'." >&2
-  echo "         Your requests will be answered by that model instead." >&2
-  echo "         Switch with: ssh $GLM_HOST 'sudo glm-model use $KIMI_VARIANT'" >&2
-  echo >&2
+if [ "$KIMI_SKIP_VARIANT_CHECK" = 0 ]; then
+  if ! STATUS=$(ssh -F "$GLM_SSH_CONFIG" -o BatchMode=yes -o ConnectTimeout=4 "$GLM_HOST" \
+      'glm-model status 2>/dev/null' 2>/dev/null); then
+    echo "ERROR: cannot verify the resident model on $GLM_HOST; refusing an ambiguous launch." >&2
+    echo "       Fix SSH, or explicitly set KIMI_SKIP_VARIANT_CHECK=1." >&2
+    exit 1
+  fi
+  SELECTED=$(printf '%s\n' "$STATUS" | sed -n 's/^selected variant *: \([^ ]*\).*/\1/p')
+  SERVED=$(printf '%s\n' "$STATUS" | sed -n 's/^serving alias *: //p')
+  [ -n "$SELECTED" ] && [ -n "$SERVED" ] || {
+    echo "ERROR: could not parse glm-model status from $GLM_HOST; refusing an ambiguous launch." >&2
+    exit 1
+  }
+  # Several K3 variants deliberately share alias `kimi-k3`, so the alias alone
+  # cannot distinguish the Q5-attention build from the lower-quality base quant.
+  if [ "$SELECTED" != "$KIMI_VARIANT" ]; then
+    echo "ERROR: $GLM_HOST selected '$SELECTED', not '$KIMI_VARIANT'." >&2
+    echo "       Switch with: ssh -F $GLM_SSH_CONFIG $GLM_HOST 'sudo glm-model use $KIMI_VARIANT'" >&2
+    exit 1
+  fi
+  if [ "$SERVED" != "$MODEL_ID" ]; then
+    echo "ERROR: $GLM_HOST is serving alias '$SERVED', not '$MODEL_ID'." >&2
+    echo "       Requests would be answered by the wrong model; refusing to launch." >&2
+    exit 1
+  fi
 fi
 
 # Say this out loud every time. A multi-minute silence before the first token is
@@ -98,7 +114,7 @@ fi
 echo "kimi-k3: ~42.7 tok/s prompt processing, ~4.49 tok/s generation. A fresh" >&2
 echo "         session sends 7K+ tokens of system prompt and tools, so the" >&2
 echo "         FIRST reply usually takes ~3-4 minutes." >&2
-echo "         Quiet prompt evaluation is normal. Watch it:  ssh $GLM_HOST 'sudo journalctl -fu glm-server'" >&2
+echo "         Quiet prompt evaluation is normal. Watch it:  ssh -F $GLM_SSH_CONFIG $GLM_HOST 'sudo journalctl -fu glm-server'" >&2
 echo "         Generation running to 8K without a reply means the engine is older than d39033a5." >&2
 echo >&2
 

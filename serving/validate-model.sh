@@ -377,6 +377,19 @@ print("  DEGENERATION:", "FAIL (%s)" % "; ".join(verdict) if verdict
 sys.exit(1 if verdict else 0)
 PY
 
+# K3 used to rebuild the generation graph on every token because its MLA cache
+# write was not registered for kv-head fixups. Correctness survived, but the
+# server logged this fallback for every token and wasted CPU. Keep this opt-in
+# so generic model validation does not acquire a new architecture assumption.
+if [ "${VALIDATE_REJECT_GRAPH_REUSE_FALLBACK:-0}" = 1 ]; then
+    if grep -Eq 'update_cache_copies: [KV] has no copy or is not a copy' "$OUT/server.log"; then
+        say "GRAPH REUSE: FAIL (cache-copy fallback was logged)"
+        FAILURES=$((FAILURES+1))
+    else
+        say "GRAPH REUSE: PASS (no cache-copy fallback)"
+    fi
+fi
+
 if [ "$FAILURES" -ne 0 ]; then
     say "=== FAILED: $FAILURES gate section(s); report: $OUT/report.txt ==="
     exit 1
