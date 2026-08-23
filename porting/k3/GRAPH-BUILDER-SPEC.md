@@ -2,7 +2,7 @@
 
 > **Status (2026-08-22): complete and deployed.** The opening below records the
 > starting point of the port, not current work remaining. The implementation is
-> on `TheChuckster/ik_llama.cpp:kimi-k3` at `f921647b`, rebased onto upstream
+> on `TheChuckster/ik_llama.cpp:kimi-k3` at `d39033a5`, rebased onto upstream
 > `8337e4cd`; see [`README.md`](README.md) for the current verification and live
 > benchmark.
 

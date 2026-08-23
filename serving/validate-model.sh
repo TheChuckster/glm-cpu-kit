@@ -13,32 +13,37 @@
 #   2. is output coherent     - ik #2214/#2218: DS4 loaded fine and emitted
 #                               "dekametersapl dekametersapl". Perplexity looked
 #                               normal; it was a broken quantisation kernel
-#   3. does reasoning stay    - --reasoning-budget 0 does NOT suppress thinking,
+#   3. does it TERMINATE      - K3 once answered correctly, then repeated its
+#                               message-closing tag until max_tokens. The strict
+#                               parser rejected that tail and OpenCode appeared
+#                               to spin forever. Reject leaked structural tags
+#                               and a trivial reply consuming the full budget.
+#   4. does reasoning stay    - --reasoning-budget 0 does NOT suppress thinking,
 #      out of `content`         it dumps the raw chain-of-thought into the
 #                               user-visible answer. Checked on the STREAMING
 #                               path, because that is what harnesses use and ik's
 #                               own help text claims it degrades there
-#   4. do tool calls work     - ik #2242: without it ik falls back to the
+#   5. do tool calls work     - ik #2242: without it ik falls back to the
 #                               autoparser, which forces string="true" on every
 #                               argument, breaking prompt caching
-#   5. are they RELIABLE      - one passing call proves nothing. Kimi K3 passed
-#                               check 4 and then emitted a call 3 times in 5,
+#   6. are they RELIABLE      - one passing call proves nothing. Kimi K3 passed
+#                               check 5 and then emitted a call 3 times in 5,
 #                               where DeepSeek-V4 and GLM were 5/5. Runs it
 #                               VALIDATE_TOOL_REPEATS times (default 5).
-#   6. do they STREAM         - harnesses stream. A model can return tool_calls
+#   7. do they STREAM         - harnesses stream. A model can return tool_calls
 #                               non-streaming and emit zero deltas when streamed,
 #                               which shows up as the harness printing nothing.
-#   7. does the REPLAY work   - the turn after a tool call sends the assistant
+#   8. does the REPLAY work   - the turn after a tool call sends the assistant
 #                               message back complete (tool_calls AND
 #                               reasoning_content) plus the tool result. That
 #                               shape is unavoidable for a reasoning model.
-#   8. does it DEGENERATE     - long prompt WITH tool declarations, because that
+#   9. does it DEGENERATE     - long prompt WITH tool declarations, because that
 #                               is the shape that triggered it: K3 answered chat
 #                               correctly and produced 8000 tokens of one
 #                               paragraph on an agent prompt. An earlier version
 #                               of this check used plain filler, passed, and
 #                               missed it.
-#   9. how fast is it
+#  10. how fast is it
 #
 # Runs as your normal user. It deliberately does NOT pass --mlock: the memlock
 # ulimit is often below the model size, and mmap plus a large page cache is fine
@@ -120,6 +125,7 @@ curl -sN --max-time 1800 "http://127.0.0.1:$PORT/v1/chat/completions" \
 python3 - "$OUT/stream.sse" <<'PY' | tee -a "$OUT/report.txt"
 import json, sys
 content, reasoning = [], []
+predicted = None
 for ln in open(sys.argv[1]):
     ln = ln.strip()
     if not ln.startswith("data: "): continue
@@ -127,6 +133,9 @@ for ln in open(sys.argv[1]):
     if p == "[DONE]": break
     try: d = json.loads(p)
     except Exception: continue
+    timings = d.get("timings") or {}
+    if isinstance(timings.get("predicted_n"), int):
+        predicted = timings["predicted_n"]
     for ch in d.get("choices", []):
         delta = ch.get("delta", {}) or {}
         if delta.get("content"):           content.append(delta["content"])
@@ -135,6 +144,10 @@ c, r = "".join(content), "".join(reasoning)
 print("  content  :", repr(c[:250]))
 print("  reasoning:", repr(r[:150]) if r else "(none)")
 print("  COHERENCE:", "PASS" if "paris" in c.lower() else "FAIL (garbled quant? ik #2214)")
+termination_fail = "<|" in c or (predicted is not None and predicted >= 300)
+detail = "structural tag leaked" if "<|" in c else "used all 300 tokens"
+print("  TERMINATION:", "FAIL (" + detail + ")" if termination_fail else
+      "PASS (%s generated tokens)" % (predicted if predicted is not None else "unknown"))
 # A leaked trace is recognisable: the model narrates a numbered plan first.
 leak = c.lstrip().startswith("1.") or "The user asks" in c[:200]
 print("  REASONING:", "LEAK into content" if leak else "PASS (separated)")

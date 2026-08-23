@@ -7,12 +7,12 @@ seriously beyond my hardware limits. Not sure I want to just blindly copy the
 mainline K3 PR"* — which is a hardware and review-confidence objection, and
 exactly the one a port validated on real hardware answers.
 
-## Current status (2026-08-22)
+## Current status (2026-08-23)
 
 | | |
 |---|---|
 | upstream base | ik `main` `8337e4cd` |
-| fork tip | `f921647b` (`kimi-k3`) |
+| fork tip | `d39033a5` (`kimi-k3`) |
 | architecture + graph | **complete** — 93 layers, SiTU, AttnRes, latent MoE, 69 KDA + 24 MLA |
 | recurrent correctness | **complete** — per-step SSM/conv checkpoints at `e3b9f045` |
 | parser/tools | **complete** — clean reasoning/content and nested K3 tool calls, 5/5 |
@@ -25,7 +25,8 @@ The branch was rebased from old base `40dffce6` onto upstream `8337e4cd` and
 reconciled against Firedancer's `kimi-k3` and `main-patches` branches. Their
 DS4/KV patches were already present; the missing malformed-request HTTP 400 fix
 was added as `cfac74d2`. Upstream's newly shared KDA fields were consolidated
-with the K3 implementation in `f921647b`.
+with the K3 implementation reconciled in `f921647b`; `d39033a5` adds the
+deployed message-termination fix.
 
 Verification after the rebase: full build; seven focused parser, Jinja, and
 delta-net tests; the fixture, composition, and delta-net numerical oracles; and

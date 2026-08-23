@@ -256,7 +256,7 @@ That silent no-op is the trap: pass GLM's flag to Kimi and nothing errors, you j
 output that breaks the harness. Before `opts` existed these flags were hardcoded in `serve-glm.sh`,
 so every model got GLM's.
 
-### Kimi K3: production deployment (updated 2026-08-22)
+### Kimi K3: production deployment (updated 2026-08-23)
 
 K3 is a ~2.8T MoE — 896 routed experts, 16 active + 2 shared, 93 layers, and a
 hybrid of 69 KDA recurrent layers and 24 MLA layers. It is now the
@@ -267,7 +267,7 @@ quality-first model on `chuckdancer`:
 | variant | `kimi-k3-q5attn` (19 local shards, about 788 GiB on disk) |
 | source quant | unsloth `UD-Q2_K_XL`, with non-expert tensors requantized to Q5_K |
 | API alias | `kimi-k3` |
-| engine | `TheChuckster/ik_llama.cpp:kimi-k3` at `f921647b` |
+| engine | `TheChuckster/ik_llama.cpp:kimi-k3` at `d39033a5` |
 | upstream base | ik `main` at `8337e4cd` |
 | live throughput | **42.607 PP tok/s**, **4.453 TG tok/s** |
 | serving gate | coherence/reasoning/tools 5/5/streaming/replay/degeneration all pass |
@@ -284,6 +284,19 @@ compared commit by commit: all DS4/KV fixes were already in this fork; the one
 missing substantive patch, malformed-request HTTP 400 handling, was added as
 `cfac74d2`. The K3/shared-KDA overlap introduced by upstream was reconciled in
 `f921647b`.
+
+The next deployed commit, `d39033a5`, fixes response termination. K3 can emit a
+complete response and message closer but omit `<|end_of_msg|>`; it then repeats
+the message closer until `max_tokens`. Because the PEG parser intentionally
+rejects unexplained trailing text, that converted a correct reply into raw XTML
+and looked like an infinite OpenCode progress bar. The K3 chat parameters now
+stop at the first `<|close|>message<|sep|>`; the trailer was already optional in
+the parser, and it occurs after both response and tool blocks, so this is safe
+for chat and tools. A fixed-seed `hi` changed from 300/300 tokens with repeated
+markers to 29 tokens, clean content, and `finish_reason: stop`; the LiteLLM
+streaming path was verified separately. A post-fix request through that same
+proxy returned a correctly typed `get_weather({"city":"Oslo"})` call with
+`finish_reason: tool_calls` and terminated after 87 tokens.
 
 The rebuilt tree passes the full build, seven focused parser/Jinja/delta-net
 tests, and the numerical K3 composition, delta-net, and fixture oracles. A live
@@ -1117,11 +1130,12 @@ onto upstream `8337e4cd`. The Firedancer `kimi-k3` and `main-patches` branches
 were fetched and compared before rebasing: their DS4/KV work was already in the
 fork, while their malformed-request 400 patch was added as `cfac74d2`. Upstream
 had meanwhile introduced shared KDA fields, so the duplicated K3/KDA state was
-consolidated in `f921647b`, the deployed branch tip.
+consolidated in `f921647b`, the branch tip deployed in that cycle. The
+termination fix in `d39033a5` is the current deployed tip.
 
 The entire tree was rebuilt. Seven focused parser/Jinja/delta-net tests and all
 three K3 numerical oracle suites pass. The fork's `main` now matches upstream
-`8337e4cd`; `kimi-k3` is `f921647b`; and the pre-rebase tip remains recoverable
+`8337e4cd`; `kimi-k3` is `d39033a5`; and the pre-rebase tip remains recoverable
 as `archive/kimi-k3-pre-rebase-20260822`.
 
 The following `6038941` -> `40dffce6` account is the previous cycle, retained

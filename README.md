@@ -91,9 +91,11 @@ architecture and ikawrakow declined to add one ([ik #2203](https://github.com/ik
 so the port lives on [`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp)
 branch `kimi-k3`. On 2026-08-22 the branch was rebased onto upstream
 `8337e4cd`, reconciled with Firedancer's `kimi-k3` and `main-patches` branches,
-and pushed at `f921647b`; the fork's `main` was fast-forwarded to the same
-upstream base. A full build, the seven focused parser/delta-net tests, and all
-three numerical K3 oracles pass.
+and reconciled at `f921647b`; the fork's `main` was fast-forwarded to the same
+upstream base. The deployed tip is now `d39033a5`, which stops at K3's first
+complete message trailer instead of letting a missing EOG turn a finished answer
+into an output-limit loop. A full build, the focused parser/delta-net tests, and
+all three numerical K3 oracles pass.
 
 The live `kimi-k3-q5attn` service has perplexity **1.3253 +/- 0.031**. A dated,
 reproducible live sample measured **42.607 tok/s** on a fresh 897-token prompt
@@ -110,6 +112,15 @@ peak — normal efficiency, just 2.2x more bytes. Runbook §6c and
 [`porting/k3/`](porting/k3/) have the full account, including the eleven silent
 bugs it took to get there and why attributing the generation speed to that kernel
 was wrong.
+
+A deterministic live `hi` regression on 2026-08-23 exposed a termination bug:
+K3 produced the right reply, then repeated `<|close|>message<|sep|>` until all
+300 test tokens (8,000 under OpenCode) were consumed. The strict parser then
+returned raw tagged content, while OpenCode showed only a progress bar.
+`d39033a5` registers that completed message trailer as a stop. The identical
+request now returns clean separated reasoning/content in **29 tokens**, including
+through the LiteLLM streaming route OpenCode uses. A separate post-fix agent
+smoke test returned a correctly typed tool call and stopped after 87 tokens.
 
 **The surprise is which bytes.** K3 is 92.8% routed experts by file size, but
 only 16 of 896 are active, so experts are just 19% of what a token reads — the
@@ -152,7 +163,7 @@ quality ceiling, but it is *not* what was breaking its tool calls.
 `<|open|>argument key=...<|sep|>` tags rather than JSON, and needed a parser plus
 `--repeat-penalty 1.0` (the global 1.1 penalises structured tag output badly
 enough to derail the model mid-call). The current verified fork tip is
-`f921647b`. Runbook §6c.
+`d39033a5`. Runbook §6c.
 
 `kimi-k3-ik` stays `pending` — ubergarm has published no K3 quant, so that row is
 still a guess about filenames. Run `glm-model upstream` to check.

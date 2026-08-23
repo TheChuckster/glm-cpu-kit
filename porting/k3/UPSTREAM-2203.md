@@ -1,7 +1,7 @@
 # Draft reply to ik_llama.cpp #2203 — NOT POSTED
 
 > **Repository status (2026-08-22):** the working K3 branch is now rebased onto
-> upstream `8337e4cd` at fork tip `f921647b`. This file remains the historical
+> upstream `8337e4cd` at fork tip `d39033a5`. This file remains the historical
 > draft and patch rationale; it is not the deployment status page.
 
 Ready to post to <https://github.com/ikawrakow/ik_llama.cpp/issues/2203>. Held

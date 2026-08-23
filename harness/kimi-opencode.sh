@@ -24,9 +24,12 @@
 #   EXPECT ROUGHLY
 #   FOUR MINUTES BEFORE THE FIRST TOKEN of a fresh session, every session.
 #   (Measured end to end: 225s for a one-word reply on a cold session.)
-#   Nothing is hung. It looks exactly like a hang, and an HTTP client with a
-#   default timeout will give up before the model answers - which is what
-#   "kimi-opencode doesn't work" turned out to be.
+#   Silence while the server is evaluating that prompt is normal, and an HTTP
+#   client with a default timeout will give up before the model answers. Do not
+#   confuse it with the older termination bug: before engine `d39033a5`, K3
+#   could finish a response and then repeat its message trailer to the 8K output
+#   cap. If the server log shows generation climbing after a completed reply,
+#   update the `kimi-k3` engine branch rather than waiting it out.
 #   Output itself is clean: the chat parser for K3's <|open|>/<|sep|>/<|close|>
 #   template landed, reasoning goes to reasoning_content, and no structural
 #   markers reach content. (Earlier versions of this script warned that they
@@ -94,7 +97,8 @@ fi
 echo "kimi-k3: ~42.6 tok/s prompt processing, ~4.45 tok/s generation. A fresh" >&2
 echo "         session sends 10K+ tokens of system prompt and tools, so the" >&2
 echo "         FIRST reply takes ~4 minutes." >&2
-echo "         It is not hung. Watch it work:  ssh $GLM_HOST 'sudo journalctl -fu glm-server'" >&2
+echo "         Quiet prompt evaluation is normal. Watch it:  ssh $GLM_HOST 'sudo journalctl -fu glm-server'" >&2
+echo "         Generation running to 8K without a reply means the engine is older than d39033a5." >&2
 echo >&2
 
 exec env \
