@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# One-shot software bring-up for GLM-5.2 CPU inference (ik_llama.cpp).
+# One-shot software bring-up for frontier MoE CPU inference (ik_llama.cpp).
 # Run on the TARGET machine as your normal (sudo-capable) user:
 #
 #   ./install.sh              # deps + build ik + api key + install service
@@ -30,6 +30,8 @@ say "2/7  build ik_llama.cpp (native AVX-512/VNNI)"
 #
 # GLM and DeepSeek-V4 are unaffected by the K3 commits and both pass the full
 # validation gate on this branch - that is what made converging the trees safe.
+# Validated 2026-08-22 at fork tip f921647b on upstream base 8337e4cd; the
+# branch remains the source of truth, so fresh installs follow later fixes too.
 IK_REPO="${IK_REPO:-https://github.com/TheChuckster/ik_llama.cpp}"
 IK_BRANCH="${IK_BRANCH:-kimi-k3}"
 if [ ! -x "$HOME/ik_llama.cpp/build/bin/llama-server" ]; then

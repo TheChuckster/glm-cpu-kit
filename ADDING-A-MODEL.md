@@ -411,10 +411,11 @@ At 43 GB it runs **alongside** a resident K3 without stopping the live server �
 `glm-model status` will report "not responding" while the single slot is busy,
 which is the slot being occupied and not the server being down.
 
-With it on, K3 degenerates into repetition — 8000 tokens of one paragraph on an
-agent prompt — and never emits the call. With it off, `kimi-opencode` chains
-Glob and Read and answers correctly in 237 seconds, where it previously ran 1464
-seconds and printed nothing.
+Before the builder fix, turning speculation on made K3 degenerate into 8000
+tokens of repetition and never emit the call. With it off,
+`kimi-opencode` chained Glob and Read correctly. That A/B isolated the defect;
+after the recurrent checkpoints were wired, the same speculative config passes
+5/5 and stays enabled in the production row.
 
 **Everything previously written here blaming 2.479 bpw for K3's tool failures
 was wrong.** The quant is fine; a well-measured throughput optimisation was
@@ -422,9 +423,9 @@ silently corrupting output. It went unnoticed for a long time because it was
 introduced early, left in every subsequent test including the ones labelled
 "pure reference config", and because a lossless technique is not where you look.
 
-It is still enabled for GLM and DeepSeek-V4, both of which measure 5/5 with it
-on. K3's row alone omits it. **Speculation is per-model, like every other flag
-here, and it needs a correctness A/B and not only a throughput one.**
+It is enabled for GLM, DeepSeek-V4, and the fixed K3 row, all of which measure
+5/5 with it on. **Speculation is per-model, like every other flag here, and it
+needs a correctness A/B and not only a throughput one.**
 
 Two smaller lessons from how it was eventually found:
 
@@ -509,13 +510,13 @@ Its grammar comment explains a result that had already been written off:
 That is exactly why constraining generation scored 0/4 here. The conclusion
 "K3 fights grammars" was wrong; the grammar was built wrong. Ported.
 
-### `tool_choice: required` is unusable on K3, for a mundane reason
+### `tool_choice: required` works on the current parser path
 
-Non-lazy grammar means constrained decoding on *every* token against a
-**163,840-token vocabulary**. A 200-token completion did not finish in 500
-seconds — against 4.21 tok/s unconstrained. The lazy grammar (`tool_choice:
-auto`, the default) only engages after the trigger and costs nothing measurable.
-Leave it on auto.
+The earlier grammar-constrained implementation checked every token against a
+163,840-token vocabulary and was effectively unusable. The fork now leaves K3
+tool generation unconstrained and parses the model's nested tags afterward. A
+2026-08-22 live `tool_choice: required` probe completed in 27 seconds with
+`finish_reason: tool_calls` and correctly typed two-argument JSON.
 
 ### Where that leaves K3
 
@@ -532,8 +533,8 @@ checkpoint tensors, so speculative decoding corrupted the recurrent state. Left
 here because the wrong version was written with more confidence than the right
 one, and the difference between them was one more test.
 
-DeepSeek-V4 is still what to reach for when tools matter, on speed: 360 PP and
-32 TG against K3's 40 and 4.3.
+DeepSeek-V4 is still what to reach for when tools matter on speed. The current
+K3 Q5-attention live baseline is 42.607 PP and 4.453 TG tok/s.
 
 **The quant ceiling is real and separate.** `UD-Q4_K_XL` is **1508.7 GB** against
 1133 GB of RAM and would not fit the 1.3 TB of free disk either. Nothing is

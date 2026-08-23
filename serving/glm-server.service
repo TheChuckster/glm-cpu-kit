@@ -1,8 +1,8 @@
-# GLM-5.2 inference server - install to /etc/systemd/system/glm-server.service
+# Frontier MoE inference server - install to /etc/systemd/system/glm-server.service
 # EDIT the marked lines, then:
 #   sudo systemctl daemon-reload && sudo systemctl enable --now glm-server
 [Unit]
-Description=GLM-5.2 ik_llama.cpp server
+Description=Frontier MoE ik_llama.cpp server
 After=network-online.target
 
 [Service]

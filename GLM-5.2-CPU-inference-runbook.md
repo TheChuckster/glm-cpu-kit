@@ -1,8 +1,8 @@
-# GLM-5.2 CPU Inference Runbook
+# Frontier MoE CPU Inference Runbook
 
-A step-by-step guide to running GLM-5.2 (753B MoE) inference on CPU on a dual-socket EPYC box,
-written for someone starting from scratch. It's based on what we worked out getting this running
-on our first machine, a single-socket EPYC 9575F.
+A step-by-step guide to running GLM-5.2, Kimi K3, and DeepSeek-V4-Flash on CPU
+on a large-memory EPYC box. It began with GLM-5.2 and now records the shared
+engine, registry, validation, and harness work used by all three families.
 
 Target machine for this guide: Google Cloud, 2x EPYC 9B45 (96 cores per socket, 192 cores across
 2 sockets), 768 MiB L3, 1.4 TiB RAM, running Ubuntu 24.04 LTS.
@@ -248,97 +248,76 @@ is fine.
 §10 explains why reasoning blocks must be off for agentic harnesses. There is no single flag:
 
 - **GLM** — its template takes a kwarg: `--chat-template-kwargs '{"enable_thinking": false}'`
-- **Kimi** — its template has **no such variable at all**; it unconditionally opens the assistant
-  turn with `<think>`. The kwarg is silently a no-op. Use `--reasoning off` instead.
+- **Kimi K2.x** — its template has **no such variable at all**; use `--reasoning off`.
+- **Kimi K3** — always reasons. Route it with `--reasoning-format deepseek` and set
+  `thinking_effort` through chat-template kwargs; do not try to turn it off.
 
 That silent no-op is the trap: pass GLM's flag to Kimi and nothing errors, you just get thinking
 output that breaks the harness. Before `opts` existed these flags were hardcoded in `serve-glm.sh`,
 so every model got GLM's.
 
-### Kimi K3: why it is registered but not servable (as of 2026-07-28)
+### Kimi K3: production deployment (updated 2026-08-22)
 
-K3 (released 2026-07-27) is a ~2.8T MoE — 896 experts, 16 active + 2 shared, 93 layers, hybrid
-KDA-linear + MLA attention, multimodal, 1M context. Two independent blockers:
+K3 is a ~2.8T MoE — 896 routed experts, 16 active + 2 shared, 93 layers, and a
+hybrid of 69 KDA recurrent layers and 24 MLA layers. It is now the
+quality-first model on `chuckdancer`:
 
-**1. It does not fit at 4-bit.** Moonshot ships the routed experts *already* 4-bit (`mxfp4`,
-group 32; attention, shared experts, dense MLP, lm_head and the vision tower stay bf16). The native
-release is **1,561 GB** against this box's 1,133 GB. So a true 4-bit K3 cannot run here at all, and
-anything that fits is a **requantisation of already-4-bit weights** down to ~2–3 bpw. Expect it to
-land *below* GLM-5.2 Q4_K_XL, not beside it.
+| component | deployed value |
+|---|---|
+| variant | `kimi-k3-q5attn` (19 local shards, about 788 GiB on disk) |
+| source quant | unsloth `UD-Q2_K_XL`, with non-expert tensors requantized to Q5_K |
+| API alias | `kimi-k3` |
+| engine | `TheChuckster/ik_llama.cpp:kimi-k3` at `f921647b` |
+| upstream base | ik `main` at `8337e4cd` |
+| live throughput | **42.607 PP tok/s**, **4.453 TG tok/s** |
+| serving gate | coherence/reasoning/tools 5/5/streaming/replay/degeneration all pass |
 
-| what exists | size | fits 1,133 GB? |
+The throughput line is a live-server measurement, not a second model load: one
+fresh 897-token prompt and three forced 128-token generations at 4.446, 4.457,
+and 4.456 tok/s. Run `serving/benchmark-live.sh` to repeat the same sample.
+
+Upstream ik still has no `kimi-k3` architecture, so the port remains in
+[`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp/tree/kimi-k3).
+The branch was rebased on 2026-08-22 from old base `40dffce6` onto current
+upstream `8337e4cd`. Firedancer's `kimi-k3` and `main-patches` branches were
+compared commit by commit: all DS4/KV fixes were already in this fork; the one
+missing substantive patch, malformed-request HTTP 400 handling, was added as
+`cfac74d2`. The K3/shared-KDA overlap introduced by upstream was reconciled in
+`f921647b`.
+
+The rebuilt tree passes the full build, seven focused parser/Jinja/delta-net
+tests, and the numerical K3 composition, delta-net, and fixture oracles. A live
+post-deploy request returned `finish_reason: tool_calls` with correctly typed
+`city` and `units` arguments.
+
+Two serving rules remain model-specific:
+
+- **K3 always thinks.** `--reasoning off` is for K2.x and is wrong here. The
+  production row routes thoughts to `reasoning_content`, sets template effort
+  to `low` for agent latency, and caps the default reasoning budget at 1024.
+  Raise effort per request for a problem that warrants it.
+- **Replay the complete assistant message.** K3 expects reasoning, content, and
+  tool calls in preserved history. The replay gate now passes; dropping those
+  fields in a client still breaks the model's expected conversation shape.
+
+#### Abliterated/uncensored K3 assessment
+
+There is no proven drop-in uncensored sibling at the current Q5-attention
+quality level:
+
+| candidate | footprint/evidence | decision |
 |---|---|---|
-| native mxfp4 (true 4-bit) | 1,561 GB | no, +428 GB over |
-| unsloth `UD-Q8_K_XL` (34 shards) | 1,561.2 GB | no |
-| unsloth `UD-Q4_K_XL` (32 shards) | 1,508.7 GB | no |
-| GrEarl `Q2_K`, 2.673 bpw | 929 GB | yes, tight |
-| **unsloth `UD-Q2_K_XL` (19 shards)** | **861.3 GB** | **yes, ~270 GB spare** |
-| unsloth `UD-IQ2_XXS` (16 shards) | 711.1 GB | yes |
-| unsloth `UD-IQ1_M` (15 shards) | 648.9 GB | yes |
-| unsloth `UD-IQ1_S` (14 shards) | 594.0 GB | yes |
+| current `kimi-k3-q5attn` | PPL **1.3253 +/- 0.031**, full serving gate | **keep live** |
+| [GrEarl abliterated Q2](https://huggingface.co/GrEarl/Kimi-K3-Abliterated-Q2_K-GGUF) | 929 GB; card says WIP/unverified and recommends not downloading yet | do not deploy |
+| [Blackfrost abliterated Q2](https://huggingface.co/Blackfrost-AI/KIMI-K3-Q2_K-GGUF-ABLITERATED) | 1009 GB; only ~124 GB RAM headroom, no capability/PPL result | registry-only experiment |
+| [Ryanchen uncensored IQ1](https://huggingface.co/Ryanchen911/Kimi-K3-Uncensored-GGUF) | 539.7 GiB; refusal tests pass, but reported PPL **1.9323 +/- 0.0473** | uncensored, not quality-equivalent |
 
-unsloth published the sub-4-bit tiers on 2026-07-29, so **a fitting quant now exists** —
-`UD-Q2_K_XL` is the largest, at roughly 2.5 bpw.
+That is why the service was **not** switched to an abliterated row. A candidate
+must at minimum match perplexity within error and pass the same 5-run tool,
+streaming, replay, and degeneration gate before replacing the current model.
 
-Their Q8 tier is the same size as Moonshot's native MXFP4 release, which states the
-double-quantisation problem as plainly as it can be put: above 4 bits there is no information left
-to keep, and below it you are destroying what the QAT put there. Whether ~2.5 bpw over
-already-4-bit-QAT weights beats the GLM-5.2 Q4 running here is **unmeasured**, and it is the
-question that decides whether any of the engine work below is worth doing.
-
-GrEarl's is the only K3 GGUF that exists, and its own README says the author lacks the hardware to
-run or validate it. It is deliberately **not** registered. Prefer a *dynamic* quant (unsloth `UD-*`,
-ubergarm `IQ*_K`) when they land: keeping sensitive tensors at higher precision matters far more
-than usual when the source is already quantised.
-
-**2. No engine we run can load it — now the only blocker.** ik has no `kimi-k3` arch; mainline's
-PR [#26185](https://github.com/ggml-org/llama.cpp/pull/26185) is open and conflicted; unsloth built
-these GGUFs against their own fork ([unslothai/llama.cpp#48](https://github.com/unslothai/llama.cpp/pull/48))
-and their README says to use it. No `opts` value substitutes for a missing arch.
-
-There is also a cap that precedes all the arch work: `LLAMA_MAX_EXPERTS` is **512** (raised for
-Qwen3 Next) and K3 has **896**, so it trips a generic assert in `load_hparams` before any arch hook
-runs — in ik that is `src/llama-hparams.cpp:9`, asserted at `:165`. Mainline's PR to raise it
-(#26192) was closed unmerged. One line, but step zero.
-
-Two further things from Moonshot's README invalidate settings that are correct for K2.x:
-
-- **K3 always thinks** — no `enable_thinking` equivalent, and effort is a top-level
-  `reasoning_effort` field (`low`/`high`/`max`, default `max`) that llama.cpp has no flag for. So
-  `--reasoning off` is meaningless for K3; the registry uses `--reasoning-format deepseek` instead.
-  With `max` as default, thinking dominates the cost of a reply.
-- **Preserved thinking history** — multi-turn and tool calls require the *complete* assistant
-  message replayed, including `reasoning_content` and `tool_calls`. That is exactly the shape
-  ik #1605 400s on. For K2 you can avoid it; for K3 it is mandatory, so #1605 becomes **blocking**
-  for agentic K3 rather than a caveat.
-
-Porting it to ik is *tractable but not small*. ik already has the hard parts:
-
-- `ggml_delta_net` — the gated delta-rule linear-attention kernel (from Qwen3-Next)
-- `ggml_ssm_conv` — the short convolution KDA needs (kernel size 4)
-- the hybrid recurrent+attention KV cache: per-sequence state slots, save/restore, mixed-batch
-  handling. This is the genuinely gnarly infrastructure and it is done.
-- MLA via `LLM_ARCH_DEEPSEEK2` for K3's 24 full-attention layers; sigmoid-router grouped-topk MoE;
-  MXFP4 (`MXFP4_R8` landed 2026-07-28), matching K3's native weight format
-- DS4 / `HC_PRE`, which the PR reuses for the cross-layer residual, is landing upstream now
-
-What would still have to be written: the `situ` activation (replaces SwiGLU *everywhere*, so it
-needs an AVX-512 path or it becomes the bottleneck); **the full-rank KDA gate** — K3 sets
-`use_full_rank_gate`, a per-channel decay, where ik's `ggml_delta_net` takes a per-head scalar `g`,
-so the inner recurrence has to change, and this is the main technical risk; latent MoE (routed
-experts at 3584 latent vs 7168 hidden); the MLA output gate; and the arch plumbing plus a ~600-line
-graph builder rewritten against ik's monolithic `src/llama.cpp` style rather than mainline's
-`src/models/*.cpp` — a re-implementation, not a cherry-pick.
-
-Mainline's version is 1,313 lines from an experienced llama.cpp contributor. Budget 1–3 weeks
-against a PR that is days old and still churning.
-
-**The reason not to do it yet is not difficulty, it's payoff:** a perfect port buys you K3 at
-~2.7 bpw, which is very likely worse than the GLM-5.2 Q4 you already run. Wait for unsloth and
-ubergarm — both have shipped every prior Kimi — then reassess. `glm-model upstream` is the check.
-
-Groundwork is in `porting/k3/`: a validated numerical oracle for the four new ops, plus the port
-sequence. See that README before writing any C.
+The derivation and numerical fixtures remain in `porting/k3/`; they are now a
+regression suite and implementation record rather than a future porting plan.
 
 ### Streaming experts instead of fitting them: measured, and rejected
 
@@ -609,13 +588,15 @@ iqk/iqk_gemm_legacy_quants.cpp:1826: GGML_ASSERT(nrc_x%16 == 0) failed
   iqk_mul_mat -> iqk_mul_mat_4d -> ggml_abort
 ```
 
-So the answer for DS4 is not "skip RTR because it is not worth it" but **"-rtr is broken here"** —
-the repacked layout produces a row count the legacy-quant GEMM refuses. Worth an upstream report.
-Nothing in the serving path passes `-rtr`, so this only bites if you add it by hand.
+At that engine/model pin the answer was not "skip RTR because it is not worth
+it" but **"-rtr is broken here"**: the repacked layout produced a row count the
+legacy-quant GEMM refused. This is historical, not the current registry state;
+the later DS4 Q5-attention build was revalidated with `-rtr` and keeps it in its
+own row, while K3 omits it because it costs 16% prompt throughput there.
 
 ---
 
-## 6c. Kimi K3: when the engine does not support the model at all
+## 6c. Kimi K3 on the forked engine
 
 Everything so far assumed ik could load the model. K3 is the case where it could
 not — no `kimi-k3` architecture existed, and ikawrakow declined to add one on
@@ -628,13 +609,13 @@ So this box runs K3 on a **fork**:
 [`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp)
 branch `kimi-k3`. That branch is upstream `main` plus additive K3 commits, and
 since 2026-08-07 it is the default `build` tree for every model on the box —
-GLM and DS4 both pass the gate on it. Full derivation, every dead end, and the remaining work are in
+GLM and DS4 both pass the gate on it. Full derivation, every dead end, and the implementation record are in
 [`porting/k3/GRAPH-BUILDER-SPEC.md`](porting/k3/GRAPH-BUILDER-SPEC.md).
 
-**Where it landed:** wikitext perplexity **1.32** (n_ctx 512) against a
-**1.55** reference measured at 8192 on a worse quant, answering correctly on
-facts, code and arithmetic, at **39 tok/s prompt processing and 3.7 tok/s
-generation**.
+**Current production result:** `kimi-k3-q5attn` has wikitext perplexity
+**1.3253 +/- 0.031**. The 2026-08-22 live benchmark measured **42.607 tok/s
+prompt processing** and **4.453 tok/s generation**. The earlier 39/3.7 figures
+below are kept as the port's historical baseline.
 
 ### The speed, and a wrong explanation worth keeping
 
@@ -644,7 +625,7 @@ layers fell back to the scalar reference path. This runbook used to say that was
 "the one number that explains the speed". **It was not**, and the correction is
 more useful than the original claim.
 
-Teaching the fused kernel a full-rank gate (fork commit `86057247`) was measured
+Teaching the fused kernel a full-rank gate (rebased fork commit `a9c84ba5`) was measured
 A/B, same binary, only the dispatch guard differing:
 
 | | scalar path | fused path |
@@ -763,7 +744,8 @@ A throughput number going **up** is not always good news.
 K3 could not emit a tool call through the OpenAI API at all: the parser handled
 reasoning and content and had no tool support, so a request with tools returned
 `finish_reason: stop`, no `tool_calls`, and empty content after burning the whole
-budget. Fixed in the fork (`c10d1e2`); it works now, single- and
+budget. Fixed in the fork (tool-call support is rebased at `5621ae2b`, with the
+current parser structure at `bc96e4b4`); it works now, single- and
 multi-argument, with correctly typed values.
 
 K3 does not emit JSON. It nests the same tags it uses for everything else, one
@@ -867,7 +849,7 @@ right to refuse; the question is why nothing stopped the model getting there.
 drifts never matches it, so the grammar never engages and nothing constrains the
 rest of the turn.
 
-**Fix** (fork `7716eae`): also trigger on the prefix `<|DSML|tool`. This is sound
+**Fix** (rebased fork `b74a9229`): also trigger on the prefix `<|DSML|tool`. This is sound
 because `llama_grammar_accept_impl` **replays** the matched text into the grammar
 from the match offset, so any proper prefix of `FC_START` lets the grammar pick
 up mid-tag and force the completion.
@@ -934,7 +916,7 @@ mid-sequence *divergence*, and the failing request **purely extended** its cache
 8000-token loop. Divergence was never the trigger; *reuse* was. The guard now
 fires on any cross-request reuse for these architectures.
 
-Fork commit `5bba360`. Verified on the deterministic replay: **3/3 degenerate
+Rebased fork commit `1e045479`. Verified on the deterministic replay: **3/3 degenerate
 before** (two on the original engine, one more with the narrow divergence-only
 guard), **0/2 after**.
 
@@ -956,7 +938,7 @@ still gets, since its block structure was not established here).
 | no reuse at all | 0/2 | 40–45 s / 14–16k tok | 16000+ |
 | **block-aligned reuse** | **0/2** | **1–5 s / 228–1697 tok** | **19–124** |
 
-Fork commits `5bba360` (the guard) and `749ba34` (the alignment). Full validation
+Rebased fork commits `1e045479` (the guard) and `43cd25d4` (the alignment). Full validation
 gate passes on the serving config: coherence, reasoning separation, tool calls
 5/5, streaming tool calls, multi-turn, long-prompt degeneration.
 
@@ -965,7 +947,7 @@ KV cache, the question is not "can this model reuse a prefix" but "at what
 granularity". Disabling reuse is the safe first answer and a bad final one.
 
 **Two defects in that change were found by reviewing the diff, not by testing —
-the tests passed with both bugs present** (fork `fa00667`):
+the tests passed with both bugs present** (rebased fork `4a135afb`):
 
 - **Debug scaffolding was pushed in an unrelated commit.** `DSV4_REUSE_ALIGN`,
   added to force an alignment while trying to prove 128, included a bypass where
@@ -1081,7 +1063,7 @@ The actual cause: converging the build trees was done with
 `cmake --build build --target llama-server`. **Only that target was rebuilt.**
 Every other binary in `build/bin` — `llama-perplexity`, `llama-quantize`,
 `llama-sweep-bench`, `llama-cli`, all 55 tests — stayed on a July 14 build while
-`libllama` moved to `b1cc25b`. `llama_context_params` had gained fields, so the
+`libllama` moved to the commit now rebased as `c5e79b0a`. `llama_context_params` had gained fields, so the
 stale binaries used old field offsets and `swa_compress` read a neighbouring byte
 of `dsa_top_k = -1` → `0xFF` → 255.
 
@@ -1108,9 +1090,9 @@ Having rebuilt `build-ds4`, the obvious question is what the three trees were
 still for. Checked rather than assumed:
 
 ```
-build      b1cc25b   GGML_NATIVE=ON GGML_IQK_MUL_MAT=ON GGML_IQK_FLASH_ATTENTION=ON ...
-build-ds4  b1cc25b   (identical flags)
-build-k3   b1cc25b   (identical flags)
+build      c5e79b0a  GGML_NATIVE=ON GGML_IQK_MUL_MAT=ON GGML_IQK_FLASH_ATTENTION=ON ...
+build-ds4  c5e79b0a  (identical flags)
+build-k3   c5e79b0a  (identical flags)
 ```
 
 Same commit, same flags — three copies of one engine, 870 MB and three rebuilds.
@@ -1129,6 +1111,21 @@ not move when you rebase, and that is exactly how `build-ds4` came to be three
 weeks stale. Pin for the port, converge when it is proven.
 
 ### Staying current with ik: rebase into a NEW tree, validate, then switch
+
+**Latest cycle (2026-08-22):** 42 fork commits were rebased from `40dffce6`
+onto upstream `8337e4cd`. The Firedancer `kimi-k3` and `main-patches` branches
+were fetched and compared before rebasing: their DS4/KV work was already in the
+fork, while their malformed-request 400 patch was added as `cfac74d2`. Upstream
+had meanwhile introduced shared KDA fields, so the duplicated K3/KDA state was
+consolidated in `f921647b`, the deployed branch tip.
+
+The entire tree was rebuilt. Seven focused parser/Jinja/delta-net tests and all
+three K3 numerical oracle suites pass. The fork's `main` now matches upstream
+`8337e4cd`; `kimi-k3` is `f921647b`; and the pre-rebase tip remains recoverable
+as `archive/kimi-k3-pre-rebase-20260822`.
+
+The following `6038941` -> `40dffce6` account is the previous cycle, retained
+because the isolated-build procedure is still the right one:
 
 The fork sat on pin `6038941` while ik moved 20 commits ahead. Rebased onto
 `40dffce6` — cleanly, 38 commits on top — but built into an isolated worktree
@@ -1211,10 +1208,12 @@ opens, and it is not brief - 1800+ characters of reasoning for "write a Python
 one-liner and name a capital". A tight `max_tokens` therefore returns **empty
 `content` with a full `reasoning_content`** and `finish_reason: length`. It looks
 exactly like a parser failure and is not one; the model simply never got to the
-answer. Budget 1500+ output tokens, and remember that at 3.7 tok/s that is
-minutes of wall clock.
+answer. The production row uses `thinking_effort=low` and a 1024-token reasoning
+budget to bound this behavior. For a deliberately hard/max-effort request,
+raise both the reasoning and output budgets and remember that 1500 generated
+tokens at the current 4.453 tok/s baseline still means minutes of wall clock.
 
-### Why 3.7 tok/s, settled
+### Why the original 3.7 tok/s baseline was memory-bound
 
 The kernel work above raised prompt processing and left generation exactly where
 it was, which made "what actually limits generation?" worth answering properly
@@ -1305,13 +1304,11 @@ stop verifying parts. Diff a working implementation's execution against yours.
 
 ### Serving it
 
-`glm-model use kimi-k3` works, and the selection survives reboot. Two caveats,
-both recorded in the registry row so they show up before use rather than after:
+`glm-model use kimi-k3-q5attn` works, and the selection survives reboot. The
+K3 parser now cleanly separates reasoning, content, and nested tool calls; no
+structural marker stripping is required downstream. One model-specific cache
+override remains:
 
-- The template's structural markers (`<|open|>`, `<|sep|>`, `<|close|>`) leak into
-  `content`. The answer is correct and `reasoning_content` is clean, but anything
-  parsing `content` must strip them. ik has no parser for this template family;
-  one attempt is documented, including why it failed.
 - `--cache-type-v f16` is forced on that row. `serve-glm.sh` sets `q8_0` for both
   caches and ik asserts `n_embd_head_v(0) % block_size == 0`; K3 reports
   `value_length = 74`, which is meaningless for an MLA model but still trips the
@@ -1529,10 +1526,10 @@ OS-level.
 
 | You want | Do this |
 |---|---|
-| Max quality, patient use | GLM-5.2 Q4, this setup. TG ~18-25 tok/s here. |
+| Max local reasoning quality, patient use | `glm-model use kimi-k3-q5attn`; measured 42.607 PP / 4.453 TG tok/s. |
 | Faster generation | Fewer-active model: `glm-model use kimi-k2.7-code` (~32B active vs GLM's ~40B), or Qwen3-Coder-Next (3B active, ~5-10x). |
 | Coding specifically | `kimi-k2.7-code` (unsloth UD-Q4_K_XL, 584 GB). Genuine 4-bit, fits with ~550 GB spare. |
-| Kimi K3 | Not yet: doesn't fit at 4-bit (1,561 GB native) and ik has no `kimi-k3` arch. See 6a. |
+| Uncensored Kimi K3 | Keep the base Q5-attention model for now; current abliterated candidates are unverified or materially worse in perplexity. See 6a. |
 | Fast first-token on big context | Add a GPU for attention/KV offload (`-ngl 99 -ot exps=CPU`), or keep context small. |
 | Serve many users | Wrong tool: CPU aggregate throughput is low. Use GPUs. |
 | Don't time out on huge prompts | Raise client timeout to 30-60 min; but really, keep context lean. |

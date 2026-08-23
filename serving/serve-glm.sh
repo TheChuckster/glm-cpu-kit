@@ -1,6 +1,6 @@
 #!/bin/bash
 # CPU inference server - ik_llama.cpp fused-MoE, NUMA-aware. Serves GLM-5.2,
-# Kimi K2.x or DeepSeek-V4-Flash depending on the selected variant.
+# Kimi K2.x/K3 or DeepSeek-V4-Flash depending on the selected variant.
 # See ../GLM-5.2-CPU-inference-runbook.md  §3 (NUMA), §5 (build), §6 (this script).
 #
 # WHICH model is served comes from GLM_VARIANT, resolved against the registry in

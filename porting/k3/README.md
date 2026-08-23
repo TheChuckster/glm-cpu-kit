@@ -1,26 +1,43 @@
 # Porting Kimi K3 to ik_llama.cpp
 
 The port lives on [`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp),
-branch `kimi-k3`, based on ik pin `6038941` (the commit already proven for
-DeepSeek-V4). It is a fork because ikawrakow declined the work himself on
+branch `kimi-k3`. It is a fork because ikawrakow declined the work himself on
 [ik #2203](https://github.com/ikawrakow/ik_llama.cpp/issues/2203) — *"Kimi-K3 is
 seriously beyond my hardware limits. Not sure I want to just blindly copy the
 mainline K3 PR"* — which is a hardware and review-confidence objection, and
 exactly the one a port validated on real hardware answers.
 
-Status:
+## Current status (2026-08-22)
 
 | | |
 |---|---|
-| trusted GGUF quant | **downloaded** — unsloth `UD-Q2_K_XL`, 19 shards, 861.3 GB, at `/models/Kimi-K3-UD-Q2_K_XL` |
-| reference engine | unsloth's fork, **built** at `~/llama.cpp-k3` — use it to diff logits when output looks wrong |
-| expert cap | **done** — `LLAMA_MAX_EXPERTS` 512 → 1024 |
-| per-channel KDA gate | **done** — `ggml_delta_net` accepts `g->ne[1] ∈ {1, S_v}`, verified numerically |
-| SiTU / MLA gate / AttnRes / latent MoE | to do (see below — all smaller than first estimated) |
-| `LLM_ARCH_KIMI_K3` + graph builder | to do — the bulk |
-| mainline llama.cpp | PR [#26185](https://github.com/ggml-org/llama.cpp/pull/26185) still open, but matured: perplexity runs, lineage-bench passes at 64/128/256, agent tool calls work |
+| upstream base | ik `main` `8337e4cd` |
+| fork tip | `f921647b` (`kimi-k3`) |
+| architecture + graph | **complete** — 93 layers, SiTU, AttnRes, latent MoE, 69 KDA + 24 MLA |
+| recurrent correctness | **complete** — per-step SSM/conv checkpoints at `e3b9f045` |
+| parser/tools | **complete** — clean reasoning/content and nested K3 tool calls, 5/5 |
+| production quant | `kimi-k3-q5attn`, 19 shards, about 788 GiB on disk |
+| quality | wikitext PPL **1.3253 +/- 0.031** |
+| live speed | **42.607 PP tok/s**, **4.453 TG tok/s** (2026-08-22) |
+| deployment | `glm-model use kimi-k3-q5attn`; API alias `kimi-k3` |
 
-## What ik gained underneath this (checked, not assumed)
+The branch was rebased from old base `40dffce6` onto upstream `8337e4cd` and
+reconciled against Firedancer's `kimi-k3` and `main-patches` branches. Their
+DS4/KV patches were already present; the missing malformed-request HTTP 400 fix
+was added as `cfac74d2`. Upstream's newly shared KDA fields were consolidated
+with the K3 implementation in `f921647b`.
+
+Verification after the rebase: full build; seven focused parser, Jinja, and
+delta-net tests; the fixture, composition, and delta-net numerical oracles; and
+a live structured tool call all pass. The pre-rebase tip is archived at
+`archive/kimi-k3-pre-rebase-20260822`.
+
+The rest of this document preserves the architecture analysis and the original
+implementation sequence. Treat future-tense passages as the porting record;
+the status table above is authoritative. The much more detailed chronological
+debugging record is in [`GRAPH-BUILDER-SPEC.md`](GRAPH-BUILDER-SPEC.md).
+
+## What ik had underneath the port (checked, not assumed)
 
 The original estimate here was written before ik landed DeepSeek-V4. That work
 changed the shape of the port substantially:
@@ -65,22 +82,17 @@ K3 PR itself. There was never a technical objection to inherit.
 Two things from Moonshot's README that a port has to accommodate, both of which
 invalidate settings that are correct for K2:
 
-- **K3 always thinks.** There is no `enable_thinking` equivalent. Effort is a
-  top-level `reasoning_effort` field (`low`/`high`/`max`, default `max`) that
-  llama.cpp has no flag for at all. So `--reasoning off` is meaningless here;
-  `--reasoning-format deepseek` (thoughts into `reasoning_content`, which is what
-  K3 returns) is the closest available behaviour. Capping effort would need new
-  plumbing, and with `max` as the default a K3 answer carries a lot of thinking
-  tokens — Simon Willison measured 13,241 reasoning tokens for a 3,417-token
-  answer. On this box that is the dominant cost of a reply.
+- **K3 always thinks.** There is no `enable_thinking` equivalent, so
+  `--reasoning off` is meaningless. Use `--reasoning-format deepseek`. The
+  embedded template accepts `thinking_effort`; the production row sets it to
+  `low` and applies a 1024-token default reasoning budget so agent requests
+  finish in finite time. Raise effort per request for hard problems.
 - **Preserved thinking history.** K3 was trained expecting the *complete*
   assistant message replayed on every turn — `reasoning_content` and
   `tool_calls`, not just `content`. That is exactly the message shape
-  [ik #1605](https://github.com/ikawrakow/ik_llama.cpp/issues/1605) reports a
-  silent HTTP 400 on for the `kimi_k25` family. For K2 that bug is avoidable by
-  not replaying both fields; for K3 the pattern is **mandatory**, so #1605 is a
-  blocking issue for agentic K3 on ik rather than a caveat. Fix or verify it
-  before trusting K3 in an agent loop.
+  [ik #1605](https://github.com/ikawrakow/ik_llama.cpp/issues/1605) historically
+  reported a silent HTTP 400 for the `kimi_k25` family. The current fork passes
+  the replay gate for K3; clients still must retain the complete message.
 
 ---
 
@@ -107,9 +119,11 @@ sequential, 4.2–5.1 GB/s on 20 MB expert-sized random reads. md1 is RAID0 acro
 **two** NVMe, not four.
 
 Now compare against simply making the model fit. A ~2.7 bpw K3 is ~930 GB,
-fully RAM-resident under `--mlock`, reading ~16.4 GB/token at memory bandwidth
-rather than storage bandwidth — **~10–20 tok/s**, in the same class as the
-GLM-5.2 Q4 already running here (18–25 tok/s).
+fully RAM-resident under `--mlock` keeps those reads at memory bandwidth rather
+than storage bandwidth. The early **10–20 tok/s** estimate was optimistic:
+bytes-per-token analysis later found 71.2 GiB of always-read plus active-expert
+traffic, and the production Q5-attention model measures **4.453 tok/s**. That is
+still several times faster and far more stable than NVMe expert streaming.
 
 **Streaming is a ~15× regression on this hardware.** It is the right design for
 a 64 GB machine, where nothing else is possible. Here, capacity is the one thing
@@ -226,7 +240,7 @@ per-channel gate with all channels equal reproduces the per-head result.
 
 The fused AVX-512 kernel originally could not express a per-channel gate in its
 signature, so full-rank gates were skipped and the scalar path ran. It handles
-them now (`86057247`): +29% prompt processing, no change to generation.
+them now (`a9c84ba5`): +29% prompt processing, no change to generation.
 
 ### Not an op, but easy to get wrong: latent MoE
 
@@ -297,9 +311,9 @@ at the latent width; shared experts `ffn_*_shexp [7168,6144]` at **full** width
 `activation.situ_beta 4.0`, `activation.situ_linear_beta 25.0`,
 `attn_res.block_size 12`.
 
-## What ik already has
+## Components reused from ik
 
-The port is tractable because the genuinely hard infrastructure is done:
+The port was tractable because the genuinely hard infrastructure already existed:
 
 - `ggml_delta_net` — gated delta-rule linear attention (Qwen3-Next)
 - `ggml_ssm_conv` — the short convolution KDA needs (kernel size 4)
@@ -308,13 +322,13 @@ The port is tractable because the genuinely hard infrastructure is done:
 - MLA via `LLM_ARCH_DEEPSEEK2` — K3 has 24 full-attention layers
 - sigmoid-router grouped-topk MoE
 - MXFP4, plus `MXFP4_R8` (landed 2026-07-28) — matches K3's native weight format
-- DS4 / `HC_PRE`, which mainline's PR reuses for AttnRes, landing now
+- DS4 / `HC_PRE` infrastructure (the analysis above explains why K3's AttnRes
+  still needed its own composition)
 
-Still to write: SiTU, the full-rank KDA gate, latent MoE, the MLA output gate,
-`LLM_ARCH_KIMI_K3` plumbing, and a ~600-line graph builder — rewritten against
-ik's monolithic `src/llama.cpp` `build_*` style rather than mainline's
-`src/models/*.cpp`. That makes it a re-implementation, not a cherry-pick.
-Mainline's version is 1,313 lines from an experienced contributor.
+The port added SiTU composition, the full-rank KDA gate, latent MoE, the MLA
+output gate, `LLM_ARCH_KIMI_K3` plumbing, and the graph builder against ik's
+monolithic `src/llama.cpp` `build_*` style. It was a re-implementation, not a
+mainline cherry-pick; the numerical fixtures below are what made that safe.
 
 ### MXFP4 on-disk layout
 
@@ -346,7 +360,7 @@ arrays are not, since `--emit` reproduces them byte-for-byte from a fixed seed.
 `--verify` exists to catch an accidental edit to an op silently moving the
 goalposts. The fixtures are a contract.
 
-Suggested order of work, dependency-first:
+The completed implementation order, dependency-first:
 
 0. `LLAMA_MAX_EXPERTS` 512 → ≥896, and audit what assumed 512
 1. SiTU — self-contained, needed by every expert, easiest to validate
@@ -356,16 +370,15 @@ Suggested order of work, dependency-first:
 5. latent MoE — new code path
 6. `LLM_ARCH_KIMI_K3` plumbing + graph builder + conversion
 
-A trusted quant now exists, so the port *can* be validated end-to-end — that
-precondition is met. What is still open is whether it is worth running at all:
-`UD-Q2_K_XL` is ~2.5 bpw over weights Moonshot already QAT'd at 4.25 bpw, and
-whether that beats the GLM-5.2 Q4 on this box is unmeasured.
+A trusted quant exists and the port is validated end to end. `UD-Q2_K_XL` is
+still ~2.5 bpw over weights Moonshot already QAT'd at 4.25 bpw, so the quant
+ceiling remains real even though the deployed model is useful.
 
-## The cheap experiment (do this BEFORE any ik port)
+## Historical viability experiment (completed)
 
-`UD-Q2_K_XL` is downloaded (861 GB, `/models/Kimi-K3-UD-Q2_K_XL`, verified). The
-question that decides everything else — is a ~2.5 bpw K3 actually better than the
-GLM-5.2 Q4 already running — is answerable with one throwaway build, no ik work.
+`UD-Q2_K_XL` was downloaded (861 GB, `/models/Kimi-K3-UD-Q2_K_XL`) and tested
+with this throwaway reference build before the production ik implementation was
+written. It established that the fitting quant was coherent enough to port.
 
 unsloth built their GGUFs against their own fork, and its
 [PR #48](https://github.com/unslothai/llama.cpp/pull/48) says the full-size model
@@ -392,13 +405,8 @@ not final speed.
 (not 8080) from the dedicated build dir, and restart `glm-server` after. Nothing
 about this touches `~/ik_llama.cpp` or the registry.
 
-What to measure once it runs: does it load at all; first-token latency and TG
-tok/s (mainline CPU, so expect below ik's GLM numbers); and — the real
-question — answer quality on a handful of prompts held against GLM-5.2 Q4. Only
-if K3 clearly wins is the multi-week ik port worth starting. If it is a wash or
-worse, the ~2.5 bpw double-quantisation hypothesis was right and the port is not
-worth it.
+The completed ik port then supplied fused-MoE performance, parser/tool support,
+and the regression results recorded at the top of this file.
 
-Note this fork also carries the `LLAMA_MAX_EXPERTS` fix (step 0) and everything
-else — so if you only ever want to *run* K3, not run it fast, this build is the
-whole answer and the ik port below is optional.
+The unsloth build remains useful as an independent reference when the ik fork's
+logits or perplexity need to be compared against another implementation.

@@ -1,5 +1,11 @@
 # build_kimi_k3: what the graph has to do
 
+> **Status (2026-08-22): complete and deployed.** The opening below records the
+> starting point of the port, not current work remaining. The implementation is
+> on `TheChuckster/ik_llama.cpp:kimi-k3` at `f921647b`, rebased onto upstream
+> `8337e4cd`; see [`README.md`](README.md) for the current verification and live
+> benchmark.
+
 Working notes for the one piece still missing. Everything here was read out of
 mainline's `src/models/kimi-k3.cpp` (PR #26185, head `pwilkin@a614fab1`) and
 checked against ik at pin `6038941`. Written down rather than kept in a head
@@ -1136,10 +1142,11 @@ Every one silent: no crash, no assert, full speed.
 
 ---
 
-## Remaining work, precisely specified
+## Remaining work at this checkpoint (historical)
 
-The port is numerically correct (PPL 1.32) and serves through
-`glm-model use kimi-k3`. Two things are left, both well-bounded.
+At this point in the chronology the port was numerically correct (PPL 1.32) and
+served through `glm-model use kimi-k3`, but two things were still left. Both are
+complete in the current `kimi-k3-q5attn` deployment described at the top.
 
 ### 1. Chat parser — blocks agentic use
 
@@ -1247,7 +1254,7 @@ there is a reference to port rather than a grammar to reverse-engineer.
 it declined and 69 of 93 layers ran the scalar reference path. This section used
 to call that "the entire speed story."
 
-It taught the fused kernel a full-rank gate (`86057247`) and measured A/B — same
+It taught the fused kernel a full-rank gate (`a9c84ba5`) and measured A/B — same
 binary, same model, same flags, only the dispatch guard in `ggml.c` differing:
 
 | | scalar | fused |
@@ -1335,7 +1342,7 @@ reasoning: (none)
 
 Reasoning ended up in `content` and `reasoning_content` was empty — **worse than
 the generic fallback**, which at least separates reasoning correctly. Reverted
-(commit `576c137d`) and the previous behaviour verified restored.
+(rebased commit `740c0790`) and the previous behaviour verified restored.
 
 The likely culprit is `p.prefix(inputs.generation_prompt, "<|open|>think")`.
 K3 resumes mid-section, so the prefix handling is doing something other than what

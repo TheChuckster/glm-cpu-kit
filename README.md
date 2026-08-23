@@ -1,7 +1,9 @@
-# GLM-5.2 CPU Inference Kit
+# Frontier MoE CPU Inference Kit
 
-Scripts and configs for running GLM-5.2 (753B MoE) inference on CPU, taken from a working
-single-socket build. Copy this folder to the target machine and follow the runbook.
+Scripts and configs for running Kimi K3, GLM-5.2, and DeepSeek-V4-Flash on CPU,
+taken from the working `chuckdancer` deployment. The repository began as the
+GLM-5.2 kit; its registry, launcher, validation gate, and harnesses are now
+model-family aware.
 
 Start with [`GLM-5.2-CPU-inference-runbook.md`](GLM-5.2-CPU-inference-runbook.md), the full
 step-by-step with the reasoning behind each choice. This README is just the file map and the
@@ -33,14 +35,15 @@ to be right on the box the kit was written on.
 | `glm-variants.conf` | registry of servable models (GLM, Kimi, DeepSeek-V4) with per-model engine + flags | 6a, 6b |
 | `glm-model` | list / download / switch / track which model is served | 6a |
 | `validate-model.sh` | prove a new quant loads, stays coherent, keeps reasoning out of `content`, and can call a tool — on a spare port | 6b |
+| `benchmark-live.sh` | measure PP/TG against the already-loaded model without allocating a second copy | 8 |
 
 **Speculative decoding is on, and it is close to free money for agent work.**
 `--spec-type ngram-mod` drafts from n-grams already in the context and verifies
 a run of them in one pass — lossless, and near-free on a bandwidth-bound box.
 GLM does a code edit at **23-30 tok/s against a 12.4 baseline** (+89% to +143%)
-and generic prose at exactly 12.40, i.e. no cost when it cannot fire. It does
-nothing for K3 or DeepSeek-V4, which always reason, and reasoning prose repeats
-nothing. See [`ADDING-A-MODEL.md`](ADDING-A-MODEL.md) §8.
+and generic prose at exactly 12.40, i.e. no cost when it cannot fire. K3 can
+also benefit on repetitive/code-shaped output, but only with the recurrent
+checkpoint fix now in the fork. See [`ADDING-A-MODEL.md`](ADDING-A-MODEL.md) §8.
 
 **Every model here got ~17% faster generation** by requantizing only its
 non-expert tensors to Q5_K (GLM 10.68 -> 12.43, DS4 23.82 -> 27.75, K3
@@ -61,8 +64,8 @@ whether a model is slow or just large.
 
 ```sh
 glm-model list                     # registered, downloaded, live
-glm-model download kimi-k2.7-code  # ~584 GB, resumable, size-verified
-glm-model use kimi-k2.7-code       # switch + restart, waits for readiness
+glm-model verify kimi-k3-q5attn    # local requant: prove all 19 shards exist
+glm-model use kimi-k3-q5attn       # quality-first K3; waits for readiness
 glm-model status                   # what is ACTUALLY loaded right now
 glm-model upstream                 # what HF publishes now, and does it fit this box
 ```
@@ -70,28 +73,35 @@ glm-model upstream                 # what HF publishes now, and does it fit this
 Only one variant is resident at a time — they are 155–800 GB and `--mlock` pins
 them, so a switch is a full reload of minutes, not a hot swap.
 
-**Registered today:** `base` (GLM-5.2, 440 GB), two GLM abliterated variants,
-two Kimi at genuine 4-bit — `kimi-k2.7-code` (unsloth UD-Q4_K_XL, 584 GB) and
-`kimi-k2.6` (ubergarm Q4_X, 4.549 bpw, built to match Moonshot's official int4)
-— and three **DeepSeek-V4-Flash-0731** quants at ~155 GB. Kimi K2.x is ~1T total
-but only ~32B active vs GLM's ~40B, and token generation is
-memory-bandwidth-bound, so **Kimi generates faster here** for ~145 GB more RAM.
+**Registered today:** `base` (GLM-5.2, 440 GB), its Q5-attention and abliterated
+siblings, Kimi K2.6/K2.7, Kimi K3 base/Q5-attention, an experimental K3
+abliteration, and DeepSeek-V4-Flash variants. `chuckdancer` currently selects
+`kimi-k3-q5attn`; the state is persisted by `glm-model`, while a fresh install
+still falls back to `base` until an operator selects and downloads another row.
 
 **DeepSeek-V4-Flash is the fast one.** 284B total but only ~13B active, with
 experts shipped natively at fp4, so a lossless MXFP4 conversion is ~155 GB —
 about a third of GLM's footprint and roughly a third of its bytes-per-token.
-Runbook §6b covers why the usual quant ladder does not apply to it, why it needs
-its own engine build, and what is still open upstream for tool calling.
+Runbook §6b covers why the usual quant ladder does not apply to it and the
+validation that let its once-separate engine tree converge onto the shared build.
 
-**Kimi K3 works, on a forked engine.** ik_llama.cpp has no `kimi-k3`
+**Kimi K3 is the quality-first local deployment, on a forked engine.** Upstream
+ik_llama.cpp has no `kimi-k3`
 architecture and ikawrakow declined to add one ([ik #2203](https://github.com/ikawrakow/ik_llama.cpp/issues/2203)),
 so the port lives on [`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp)
-branch `kimi-k3`, which is now the engine for every model on the box (it is
-upstream `main` plus additive K3 commits, and GLM and DS4 both validate on it).
-Perplexity 1.33 against a 1.55 reference; **40 tok/s prompt processing**
-and **4.3 tok/s generation, rising to 7.5-9.6 on repetitive or code-shaped
-output** where n-gram speculation fires (from 30.1 / 3.65 when the port first
-ran). Tool calls 5/5, and it drives a real agent loop. The fused AVX-512 delta-net kernel now handles K3's
+branch `kimi-k3`. On 2026-08-22 the branch was rebased onto upstream
+`8337e4cd`, reconciled with Firedancer's `kimi-k3` and `main-patches` branches,
+and pushed at `f921647b`; the fork's `main` was fast-forwarded to the same
+upstream base. A full build, the seven focused parser/delta-net tests, and all
+three numerical K3 oracles pass.
+
+The live `kimi-k3-q5attn` service has perplexity **1.3253 +/- 0.031**. A dated,
+reproducible live sample measured **42.607 tok/s** on a fresh 897-token prompt
+and **4.453 tok/s generation** (mean of three forced 128-token samples), rising
+to **7.5-9.6 tok/s** on repetitive or code-shaped output where n-gram
+speculation fires (from 30.1 / 3.65 when the port first
+ran). Tool calls pass 5/5; a post-deploy probe also returned a correctly typed
+two-argument tool call. The fused AVX-512 delta-net kernel now handles K3's
 per-channel KDA gate (it used to decline, dropping 69 of 93 layers to the scalar
 path) — worth +29% on prompt processing and, measured A/B, *nothing* on
 generation. Generation is at the memory wall: K3 reads **71.2 GiB per token** and
@@ -108,12 +118,11 @@ buys almost no speed, while requantising the 7.2% of the file nobody optimises
 would be worth ~1.4x. `porting/k3/bytes_per_token.py` computes this for any GGUF
 and is worth running before assuming a model is slow.
 
-**The working local agents are `glm-opencode.sh` with `deepseek-v4-flash-0731`
-or `glm-5.2`.** Both verified end to end on a "read this file and tell me what it
-does" task: DeepSeek-V4 invoked the file tool and answered correctly in **41
-seconds**; GLM chained two tools (Glob then Read) in **67 seconds**. Tool calls stream properly
-(7 incremental deltas, `finish_reason: tool_calls`). The same task on K3 ran 838
-seconds and printed nothing.
+**All three local agent paths work.** On the same "read this file and tell me
+what it does" task, DeepSeek-V4 finished in **41 seconds**, GLM in **67
+seconds**, and K3 in **234 seconds**, each invoking the required tools. Use
+`kimi-opencode.sh` for the strongest local reasoning model and expect its large
+prompt plus always-on reasoning to make it the slowest path.
 
 **All three production configs pass the full gate** (`serving/validate-model.sh`),
 which is the reproducible version of that claim rather than a remembered one:
@@ -122,40 +131,38 @@ which is the reproducible version of that claim rather than a remembered one:
 |---|---|---|---|---|---|---|---|
 | DeepSeek-V4 (`-rtr`, spec) | ✅ | ✅ | ✅ | 5/5 | ✅ 7 deltas | ✅ | ✅ |
 | GLM-5.2 (spec) | ✅ | ✅ | ✅ | 5/5 | ✅ 6 deltas | ✅ | ✅ |
-| Kimi K3 (spec + `--spec-ckpt-mode cpu`) | ✅ | ✅ | ✅ | 5/5 | ✅ 6 deltas | ✅ | ✅ |
-| *K3 with spec, default ckpt mode (rejected)* | ✅ | ✅ | ❌ | **0/5** | ❌ 0 deltas | ✅ | ✅ |
+| Kimi K3 Q5-attention (spec, default checkpoint mode) | ✅ | ✅ | ✅ | 5/5 | ✅ 6 deltas | ✅ | ✅ |
 
-The last row is why the gate exists — and the row above it is one flag away.
-`--spec-ckpt-mode auto` resolves to `gpu-fallback` on a CPU-only build and never
-restores the recurrent state of K3's 69 KDA layers when a draft is rejected. With
-`cpu` it is correct **and 46-68% faster** than no speculation. Any model with
-recurrent or hybrid attention needs that flag before speculation is safe.
+The old K3 failure under default checkpoint mode was a graph-builder bug, not a
+required serving flag: its KDA path failed to pass the per-step SSM/conv state
+to `build_qkv`. Rebased fork commit `e3b9f045` wires those checkpoints. Default
+and explicit per-step modes now agree, so the registry deliberately carries no
+`--spec-ckpt-mode` workaround.
 
-**All three models emit tool calls 5/5.** K3 only got there after
-`--spec-type ngram-mod` was removed from its row: speculative decoding is
-supposed to be lossless, and on K3 it is not — 0/5 with it on, 5/5 with it off,
-same build and sampling. It stays enabled for GLM and DeepSeek-V4, which measure
-5/5 with it. See [`ADDING-A-MODEL.md`](ADDING-A-MODEL.md) §8.
+**All three models emit tool calls 5/5.** K3 keeps n-gram speculation enabled
+now that rejected drafts restore recurrent state correctly. The live deployment
+also passed a fresh structured tool probe after the engine rebase. See
+[`ADDING-A-MODEL.md`](ADDING-A-MODEL.md) §8.
 
 **K3 is capped at `UD-Q2_K_XL` here** — the higher-bpw `UD-Q4_K_XL` is 1508.7 GB
 against 1133 GB of RAM, with nothing published in between. That bounds its
 quality ceiling, but it is *not* what was breaking its tool calls.
 
-**Tool calls work on K3** as of fork `c10d1e2` — it emits them as nested
+**Tool calls work on K3** — it emits them as nested
 `<|open|>argument key=...<|sep|>` tags rather than JSON, and needed a parser plus
 `--repeat-penalty 1.0` (the global 1.1 penalises structured tag output badly
-enough to derail the model mid-call). Runbook §6c.
+enough to derail the model mid-call). The current verified fork tip is
+`f921647b`. Runbook §6c.
 
 `kimi-k3-ik` stays `pending` — ubergarm has published no K3 quant, so that row is
 still a guess about filenames. Run `glm-model upstream` to check.
 
 **Per-model flags.** Field 9 (`opts`) of a registry row is appended last to the
-server command line. It exists because "turn thinking off" is not one flag:
-GLM takes `--chat-template-kwargs '{"enable_thinking": false}'`, Kimi's template
-has no such variable and needs `--reasoning off`, and DeepSeek-V4 has neither —
-it always reasons, and takes `--reasoning-format deepseek` (or
-`--reasoning-budget 0`). Passing GLM's flag to Kimi fails *silently* — no error,
-just thinking output that breaks the harness.
+server command line. It exists because reasoning control is not one flag: GLM
+takes `--chat-template-kwargs '{"enable_thinking": false}'`; Kimi K2.x needs
+`--reasoning off`; K3 always reasons and uses `--reasoning-format deepseek`
+plus `thinking_effort`; DeepSeek-V4 also always reasons. Passing GLM's flag to
+Kimi fails *silently* — no error, just the wrong prompt behavior.
 
 **Per-model engine.** Field 8 (`engine`) names the build tree under
 `~/ik_llama.cpp` that serves a variant — empty means `build`, the default.
@@ -166,13 +173,22 @@ on. Repointing the single global engine to gain one model silently re-rolls the
 dice on every other model, so instead a new architecture gets its own build tree
 and nothing else moves until it is proven.
 
-Two abliterated variants are registered and they are **not** equivalent.
+The GLM abliterated variants are **not** equivalent.
 `abliterated` (frz1, Q4_K_M, 455 GB) matches the base model's quant class and
 size almost exactly, but the publisher is unknown and the capability cost of
 their ablation is unverified. `abliterated-q3` (huihui-ai, UD-Q3_K_M, 343 GB) is
 from the established abliteration publisher, but that repo has no Q4-class quant
 at all — so it costs a full quantisation step, which on a 745B MoE is likely a
 larger quality hit than the ablation itself.
+
+There is likewise **no verified abliterated/uncensored K3 equivalent to
+`kimi-k3-q5attn` yet**. The closest full-size GrEarl Q2 transfer is explicitly
+WIP and unverified; Blackfrost's registered 1009 GB Q2 build leaves too little
+RAM headroom and has no quality measurements; Ryanchen's tested uncensored
+IQ1 build is much smaller but reports perplexity 1.9323, versus 1.3253 for the
+current Q5-attention service. `kimi-k3-abl` therefore remains an experimental,
+not-downloaded row. Do not switch the reference deployment to it without the
+same perplexity, tool, replay, and degeneration gates used for the base model.
 
 Note that `llama-server` does not reject a request naming a different alias than
 the loaded model: asking for `glm-5.2-abliterated` while `base` is live returns
@@ -184,7 +200,8 @@ the selected variant, and is the only reliable check.
 |---|---|---|---|
 | `glm-opencode.sh` + `opencode.json` | LOCAL CPU server (direct) | ~12-32 tok/s | **private** / sensitive / audit — **this is the working agent setup** |
 | `ds4-opencode.sh` | LOCAL, DeepSeek-V4-Flash via litellm | ~28.6 tok/s | **fastest local agent** — prefer this for real work |
-| `kimi-opencode.sh` | LOCAL, Kimi K3 | ~4.3 tok/s | K3 specifically — see the caveats in the script |
+| `kimi-opencode.sh` | LOCAL, Kimi K3 Q5-attention | ~4.45 tok/s | **quality-first local reasoning**; slow prefill on a fresh agent session |
+| `kimi-opencode-together.sh` | Together AI, Kimi K3 | provider speed | K3 with `max` reasoning by default; `KIMI_REASONING_EFFORT=high` to reduce cost/latency |
 | `glm-opencode-together.sh` | Together AI cloud | ~200-350 tok/s | fast everyday coding |
 | `glm-opencode-cloud.sh` | any OpenAI-compatible provider (env) | varies | OpenRouter / DeepInfra / Z.ai / Surplus / etc. |
 | `litellm-config.yaml` + `proxy.sh` + `glm.sh` | Claude Code via litellm | - | only if you must use Claude Code (fragile) |
@@ -269,9 +286,13 @@ Or do it by hand:
 - No Tailscale or BMC jump needed; SSH via GCP directly.
 
 ## Main takeaways (see the runbook for detail)
-1. Use ik_llama.cpp, not mainline: about 7x MoE prompt-processing throughput.
-2. Use Q4_K_XL, not Q8: near-lossless, half the bandwidth per token.
-3. Turn thinking off and add a repeat penalty, or harnesses break (400s) and loop.
+1. Use the `TheChuckster/ik_llama.cpp:kimi-k3` fork: it carries K3 plus the
+   validated GLM/DS4 engine base.
+2. Choose a tested quant that fits with OS/compute headroom. For K3 here, the
+   local Q5-attention rebuild is the best validated speed/quality point; the
+   larger base quant is slightly slower with no measured PPL advantage.
+3. Keep reasoning, sampling, cache, and repetition settings per model. K3 always
+   thinks and its structured tool tags specifically require repeat penalty 1.0.
 4. opencode direct beats Claude Code plus litellm: no fragile Anthropic translation.
 5. TG is memory-bandwidth-bound: NUMA interleaving is your only real TG lever on CPU.
 6. Pair the context limits: harness `limit.context` < server `--ctx-size`. The unit ships
