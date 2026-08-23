@@ -534,7 +534,7 @@ here because the wrong version was written with more confidence than the right
 one, and the difference between them was one more test.
 
 DeepSeek-V4 is still what to reach for when tools matter on speed. The current
-K3 Q5-attention live baseline is 42.607 PP and 4.453 TG tok/s.
+K3 Q5-attention live baseline is 42.715 PP and 4.491 TG tok/s.
 
 **The quant ceiling is real and separate.** `UD-Q4_K_XL` is **1508.7 GB** against
 1133 GB of RAM and would not fit the 1.3 TB of free disk either. Nothing is

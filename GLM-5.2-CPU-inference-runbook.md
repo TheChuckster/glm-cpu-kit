@@ -267,14 +267,14 @@ quality-first model on `chuckdancer`:
 | variant | `kimi-k3-q5attn` (19 local shards, about 788 GiB on disk) |
 | source quant | unsloth `UD-Q2_K_XL`, with non-expert tensors requantized to Q5_K |
 | API alias | `kimi-k3` |
-| engine | `TheChuckster/ik_llama.cpp:kimi-k3` at `d39033a5` |
+| engine | `TheChuckster/ik_llama.cpp:kimi-k3` at `4d1f09d3` |
 | upstream base | ik `main` at `8337e4cd` |
-| live throughput | **42.607 PP tok/s**, **4.453 TG tok/s** |
+| live throughput | **42.715 PP tok/s**, **4.491 TG tok/s** |
 | serving gate | coherence/reasoning/tools 5/5/streaming/replay/degeneration all pass |
 
 The throughput line is a live-server measurement, not a second model load: one
-fresh 897-token prompt and three forced 128-token generations at 4.446, 4.457,
-and 4.456 tok/s. Run `serving/benchmark-live.sh` to repeat the same sample.
+fresh 897-token prompt and three forced 128-token generations at 4.489, 4.493,
+and 4.492 tok/s. Run `serving/benchmark-live.sh` to repeat the same sample.
 
 Upstream ik still has no `kimi-k3` architecture, so the port remains in
 [`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp/tree/kimi-k3).
@@ -298,10 +298,20 @@ streaming path was verified separately. A post-fix request through that same
 proxy returned a correctly typed `get_weather({"city":"Oslo"})` call with
 `finish_reason: tool_calls` and terminated after 87 tokens.
 
-The rebuilt tree passes the full build, seven focused parser/Jinja/delta-net
-tests, and the numerical K3 composition, delta-net, and fixture oracles. A live
-post-deploy request returned `finish_reason: tool_calls` with correctly typed
-`city` and `units` arguments.
+The final live matrix went further than that single probe:
+`serving/smoke-k3-live.py` passed 11/11 direct-server cases and 9/9 through the
+actual LiteLLM route, including multiple deterministic seeds, streamed chat,
+typed and streamed tools, tool-result replay, and a 7,835-token agent-shaped
+prompt. A real `kimi-opencode.sh run hi` then evaluated 7,313 prompt tokens at
+41.83 tok/s, generated 37 tokens at 4.50 tok/s, returned a clean greeting, and
+exited in 183 seconds. An intentionally disconnected long request was cancelled
+server-side and released the slot about one second after the client went away.
+
+The rebuilt tree passes the full build, ten focused parser/Jinja/delta-net tests,
+the numerical K3 composition, delta-net, and fixture oracles, and an ASan/UBSan
+run of the expanded 49-assertion message-stop regression. A live post-deploy
+request returned `finish_reason: tool_calls` with correctly typed `city` and
+`units` arguments.
 
 Two serving rules remain model-specific:
 
@@ -626,8 +636,8 @@ GLM and DS4 both pass the gate on it. Full derivation, every dead end, and the i
 [`porting/k3/GRAPH-BUILDER-SPEC.md`](porting/k3/GRAPH-BUILDER-SPEC.md).
 
 **Current production result:** `kimi-k3-q5attn` has wikitext perplexity
-**1.3253 +/- 0.031**. The 2026-08-22 live benchmark measured **42.607 tok/s
-prompt processing** and **4.453 tok/s generation**. The earlier 39/3.7 figures
+**1.3253 +/- 0.031**. The 2026-08-23 post-deploy benchmark measured **42.715 tok/s
+prompt processing** and **4.491 tok/s generation**. The earlier 39/3.7 figures
 below are kept as the port's historical baseline.
 
 ### The speed, and a wrong explanation worth keeping
@@ -1131,11 +1141,12 @@ were fetched and compared before rebasing: their DS4/KV work was already in the
 fork, while their malformed-request 400 patch was added as `cfac74d2`. Upstream
 had meanwhile introduced shared KDA fields, so the duplicated K3/KDA state was
 consolidated in `f921647b`, the branch tip deployed in that cycle. The
-termination fix in `d39033a5` is the current deployed tip.
+termination fix is in `d39033a5`; the expanded regression coverage makes
+`4d1f09d3` the current deployed and verified tip.
 
-The entire tree was rebuilt. Seven focused parser/Jinja/delta-net tests and all
+The entire tree was rebuilt. Ten focused parser/Jinja/delta-net tests and all
 three K3 numerical oracle suites pass. The fork's `main` now matches upstream
-`8337e4cd`; `kimi-k3` is `d39033a5`; and the pre-rebase tip remains recoverable
+`8337e4cd`; `kimi-k3` is `4d1f09d3`; and the pre-rebase tip remains recoverable
 as `archive/kimi-k3-pre-rebase-20260822`.
 
 The following `6038941` -> `40dffce6` account is the previous cycle, retained
@@ -1225,7 +1236,7 @@ exactly like a parser failure and is not one; the model simply never got to the
 answer. The production row uses `thinking_effort=low` and a 1024-token reasoning
 budget to bound this behavior. For a deliberately hard/max-effort request,
 raise both the reasoning and output budgets and remember that 1500 generated
-tokens at the current 4.453 tok/s baseline still means minutes of wall clock.
+tokens at the current 4.491 tok/s baseline still means minutes of wall clock.
 
 ### Why the original 3.7 tok/s baseline was memory-bound
 
@@ -1540,7 +1551,7 @@ OS-level.
 
 | You want | Do this |
 |---|---|
-| Max local reasoning quality, patient use | `glm-model use kimi-k3-q5attn`; measured 42.607 PP / 4.453 TG tok/s. |
+| Max local reasoning quality, patient use | `glm-model use kimi-k3-q5attn`; measured 42.715 PP / 4.491 TG tok/s. |
 | Faster generation | Fewer-active model: `glm-model use kimi-k2.7-code` (~32B active vs GLM's ~40B), or Qwen3-Coder-Next (3B active, ~5-10x). |
 | Coding specifically | `kimi-k2.7-code` (unsloth UD-Q4_K_XL, 584 GB). Genuine 4-bit, fits with ~550 GB spare. |
 | Uncensored Kimi K3 | Keep the base Q5-attention model for now; current abliterated candidates are unverified or materially worse in perplexity. See 6a. |

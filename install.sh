@@ -30,7 +30,7 @@ say "2/7  build ik_llama.cpp (native AVX-512/VNNI)"
 #
 # GLM and DeepSeek-V4 are unaffected by the K3 commits and both pass the full
 # validation gate on this branch - that is what made converging the trees safe.
-# Validated 2026-08-23 at fork tip d39033a5 on upstream base 8337e4cd; the
+# Validated 2026-08-23 at fork tip 4d1f09d3 on upstream base 8337e4cd; the
 # branch remains the source of truth, so fresh installs follow later fixes too.
 IK_REPO="${IK_REPO:-https://github.com/TheChuckster/ik_llama.cpp}"
 IK_BRANCH="${IK_BRANCH:-kimi-k3}"

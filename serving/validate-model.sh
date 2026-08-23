@@ -116,21 +116,26 @@ for _ in $(seq 1 180); do
 done
 [ "$ready" = 1 ] || { say "FATAL not ready after 30 min"; exit 1; }
 say "loaded OK"
+FAILURES=0
 
 # --- coherence + reasoning separation, on the STREAMING path -----------------
 curl -sN --max-time 1800 "http://127.0.0.1:$PORT/v1/chat/completions" \
   -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d '{"model":"'"$LABEL"'","stream":true,"max_tokens":300,"messages":[{"role":"user","content":"Say hello and name the capital of France in one short sentence."}]}' \
   > "$OUT/stream.sse"
-python3 - "$OUT/stream.sse" <<'PY' | tee -a "$OUT/report.txt"
+python3 - "$OUT/stream.sse" <<'PY' | tee -a "$OUT/report.txt" || FAILURES=$((FAILURES+1))
 import json, sys
 content, reasoning = [], []
 predicted = None
+finish = None
+done = False
 for ln in open(sys.argv[1]):
     ln = ln.strip()
     if not ln.startswith("data: "): continue
     p = ln[6:]
-    if p == "[DONE]": break
+    if p == "[DONE]":
+        done = True
+        break
     try: d = json.loads(p)
     except Exception: continue
     timings = d.get("timings") or {}
@@ -140,17 +145,24 @@ for ln in open(sys.argv[1]):
         delta = ch.get("delta", {}) or {}
         if delta.get("content"):           content.append(delta["content"])
         if delta.get("reasoning_content"): reasoning.append(delta["reasoning_content"])
+        if ch.get("finish_reason"):         finish = ch["finish_reason"]
 c, r = "".join(content), "".join(reasoning)
 print("  content  :", repr(c[:250]))
 print("  reasoning:", repr(r[:150]) if r else "(none)")
-print("  COHERENCE:", "PASS" if "paris" in c.lower() else "FAIL (garbled quant? ik #2214)")
-termination_fail = "<|" in c or (predicted is not None and predicted >= 300)
-detail = "structural tag leaked" if "<|" in c else "used all 300 tokens"
-print("  TERMINATION:", "FAIL (" + detail + ")" if termination_fail else
-      "PASS (%s generated tokens)" % (predicted if predicted is not None else "unknown"))
+coherent = "paris" in c.lower()
+print("  COHERENCE:", "PASS" if coherent else "FAIL (garbled quant? ik #2214)")
+termination_errors = []
+if not done:              termination_errors.append("missing [DONE]")
+if "<|" in c or "<|" in r: termination_errors.append("structural tag leaked")
+if predicted is None:        termination_errors.append("missing generated-token timing")
+elif predicted >= 300:       termination_errors.append("used all 300 tokens")
+if finish != "stop":         termination_errors.append("finish_reason=%r" % finish)
+print("  TERMINATION:", "FAIL (" + "; ".join(termination_errors) + ")" if termination_errors else
+      "PASS (%d generated tokens, finish=stop)" % predicted)
 # A leaked trace is recognisable: the model narrates a numbered plan first.
 leak = c.lstrip().startswith("1.") or "The user asks" in c[:200]
 print("  REASONING:", "LEAK into content" if leak else "PASS (separated)")
+sys.exit(1 if (not coherent or termination_errors or leak) else 0)
 PY
 
 # --- tool call ---------------------------------------------------------------
@@ -158,20 +170,32 @@ curl -sf --max-time 1800 "http://127.0.0.1:$PORT/v1/chat/completions" \
   -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d '{"model":"'"$LABEL"'","max_tokens":400,"stream":false,"tool_choice":"auto","messages":[{"role":"user","content":"What files are in /tmp? Use the list_files tool."}],"tools":[{"type":"function","function":{"name":"list_files","description":"List files in a directory","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}]}' \
   > "$OUT/toolcall.json"
-python3 - "$OUT/toolcall.json" <<'PY' | tee -a "$OUT/report.txt"
+python3 - "$OUT/toolcall.json" <<'PY' | tee -a "$OUT/report.txt" || FAILURES=$((FAILURES+1))
 import json, sys
 try: d = json.load(open(sys.argv[1]))
 except Exception as e:
-    print("  TOOLCALL: FAIL (no/invalid response:", e, ")"); raise SystemExit
-m = d.get("choices", [{}])[0].get("message", {})
+    print("  TOOLCALL: FAIL (no/invalid response:", e, ")"); raise SystemExit(1)
+choice = d.get("choices", [{}])[0]
+m = choice.get("message", {})
 tc = m.get("tool_calls") or []
 if not tc:
-    print("  TOOLCALL: FAIL (no tool_calls);", str(m.get("content"))[:150]); raise SystemExit
+    print("  TOOLCALL: FAIL (no tool_calls);", str(m.get("content"))[:150]); raise SystemExit(1)
 f = tc[0].get("function", {})
-args = str(f.get("arguments", ""))
-print("  tool     :", f.get("name"), args[:120])
-print("  TOOLCALL:", "FAIL (autoparser fallback - ik #2242)" if 'string="true"' in args
-      else ("PASS" if f.get("name") == "list_files" else "FAIL (wrong tool)"))
+args_raw = str(f.get("arguments", ""))
+try: args = json.loads(args_raw)
+except Exception: args = None
+errors = []
+if 'string="true"' in args_raw: errors.append("autoparser fallback - ik #2242")
+if f.get("name") != "list_files": errors.append("wrong tool")
+if not isinstance(args, dict) or not isinstance(args.get("path"), str): errors.append("untyped/invalid arguments")
+if choice.get("finish_reason") != "tool_calls": errors.append("finish_reason=%r" % choice.get("finish_reason"))
+completion = (d.get("usage") or {}).get("completion_tokens")
+if not isinstance(completion, int) or completion >= 400: errors.append("unbounded completion=%r" % completion)
+if "<|" in json.dumps(m): errors.append("structural tag leaked")
+print("  tool     :", f.get("name"), args_raw[:120])
+print("  TOOLCALL:", "FAIL (" + "; ".join(errors) + ")" if errors else
+      "PASS (%d generated tokens)" % completion)
+sys.exit(1 if errors else 0)
 PY
 
 # --- tool call RELIABILITY, not existence -----------------------------------
@@ -186,16 +210,30 @@ for i in $(seq 1 "$REPEATS"); do
     -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
     -d '{"model":"'"$LABEL"'","max_tokens":1200,"stream":false,"tool_choice":"auto","messages":[{"role":"user","content":"What files are in /tmp? Use the list_files tool."}],"tools":[{"type":"function","function":{"name":"list_files","description":"List files in a directory","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}]}' \
     > "$OUT/tool_$i.json" 2>/dev/null || true
-  if python3 -c "
-import json,sys
-try: d=json.load(open('$OUT/tool_$i.json'))
+  if python3 - "$OUT/tool_$i.json" <<'PY' 2>/dev/null
+import json, sys
+try: d=json.load(open(sys.argv[1]))
 except Exception: sys.exit(1)
-sys.exit(0 if (d.get('choices',[{}])[0].get('message',{}).get('tool_calls')) else 1)
-" 2>/dev/null; then PASSES=$((PASSES+1)); fi
+choice=d.get('choices',[{}])[0]; msg=choice.get('message',{})
+completion=(d.get('usage') or {}).get('completion_tokens')
+calls=msg.get('tool_calls') or []
+try:
+    fn=calls[0].get('function',{}) if len(calls) == 1 else {}
+    args=json.loads(fn.get('arguments') or '')
+except Exception:
+    fn={}; args=None
+ok=(choice.get('finish_reason') == 'tool_calls' and len(calls) == 1 and
+    fn.get('name') == 'list_files' and isinstance(args,dict) and
+    isinstance(args.get('path'),str) and isinstance(completion,int) and
+    completion < 1200 and '<|' not in json.dumps(msg))
+sys.exit(0 if ok else 1)
+PY
+  then PASSES=$((PASSES+1)); fi
 done
 printf "  TOOL RELIABILITY: %d/%d %s\n" "$PASSES" "$REPEATS" \
   "$([ "$PASSES" = "$REPEATS" ] && echo PASS || echo 'FAIL - unreliable for agent use')" \
   | tee -a "$OUT/report.txt"
+[ "$PASSES" = "$REPEATS" ] || FAILURES=$((FAILURES+1))
 
 # --- streaming tool calls ----------------------------------------------------
 # Harnesses stream. A model can return tool_calls non-streaming and emit zero
@@ -205,21 +243,48 @@ curl -sN --max-time 1800 "http://127.0.0.1:$PORT/v1/chat/completions" \
   -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d '{"model":"'"$LABEL"'","max_tokens":1200,"stream":true,"tool_choice":"auto","messages":[{"role":"user","content":"What files are in /tmp? Use the list_files tool."}],"tools":[{"type":"function","function":{"name":"list_files","description":"List files in a directory","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}]}' \
   > "$OUT/toolstream.txt" 2>/dev/null || true
-python3 - "$OUT/toolstream.txt" <<'PY' | tee -a "$OUT/report.txt"
+python3 - "$OUT/toolstream.txt" <<'PY' | tee -a "$OUT/report.txt" || FAILURES=$((FAILURES+1))
 import json, sys
-n = 0; finish = None
+n = 0; finish = None; predicted = None; visible = []; done = False; calls = {}
 for line in open(sys.argv[1], errors="replace"):
     line = line.strip()
     if not line.startswith("data: "): continue
     payload = line[6:]
-    if payload == "[DONE]": break
+    if payload == "[DONE]":
+        done = True
+        break
     try: d = json.loads(payload)
     except Exception: continue
     ch = d.get("choices", [{}])[0]
-    if (ch.get("delta") or {}).get("tool_calls"): n += 1
+    delta = ch.get("delta") or {}
+    if delta.get("tool_calls"):
+        n += 1
+        for part in delta["tool_calls"]:
+            idx = part.get("index", 0)
+            call = calls.setdefault(idx, {"name": "", "arguments": ""})
+            function = part.get("function") or {}
+            call["name"] += function.get("name") or ""
+            call["arguments"] += function.get("arguments") or ""
+    visible.append(json.dumps(delta))
     if ch.get("finish_reason"): finish = ch["finish_reason"]
-print("  STREAM TOOLCALL:", "PASS (%d deltas)" % n if n else
-      "FAIL (0 deltas, finish=%s) - harness will show nothing" % finish)
+    timings = d.get("timings") or {}
+    if isinstance(timings.get("predicted_n"), int): predicted = timings["predicted_n"]
+errors = []
+if not done: errors.append("missing [DONE]")
+if not n: errors.append("0 tool deltas - harness will show nothing")
+if finish != "tool_calls": errors.append("finish=%r" % finish)
+if predicted is None or predicted >= 1200: errors.append("generated tokens=%r" % predicted)
+if "<|" in "".join(visible): errors.append("structural tag leaked")
+try:
+    args = json.loads(calls[0]["arguments"]) if len(calls) == 1 else None
+except Exception:
+    args = None
+if (len(calls) != 1 or calls.get(0, {}).get("name") != "list_files" or
+        not isinstance(args, dict) or not isinstance(args.get("path"), str)):
+    errors.append("invalid reconstructed tool call")
+print("  STREAM TOOLCALL:", "FAIL (" + "; ".join(errors) + ")" if errors else
+      "PASS (%d deltas, %d generated tokens)" % (n, predicted))
+sys.exit(1 if errors else 0)
 PY
 
 # --- multi-turn replay -------------------------------------------------------
@@ -231,14 +296,23 @@ curl -sf --max-time 1800 "http://127.0.0.1:$PORT/v1/chat/completions" \
   -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d '{"model":"'"$LABEL"'","max_tokens":600,"messages":[{"role":"user","content":"What is the weather in Oslo? Use the tool."},{"role":"assistant","content":"","reasoning_content":"Need to call get_weather for Oslo.","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Oslo\"}"}}]},{"role":"tool","tool_call_id":"call_1","name":"get_weather","content":"{\"temp_c\": 3, \"conditions\": \"light rain\"}"}],"tools":[{"type":"function","function":{"name":"get_weather","description":"Get current weather","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}]}' \
   > "$OUT/multiturn.json" 2>/dev/null || true
-python3 - "$OUT/multiturn.json" <<'PY' | tee -a "$OUT/report.txt"
+python3 - "$OUT/multiturn.json" <<'PY' | tee -a "$OUT/report.txt" || FAILURES=$((FAILURES+1))
 import json, sys
 try: d = json.load(open(sys.argv[1]))
 except Exception as e:
-    print("  MULTITURN: FAIL (no/invalid response - replay rejected?)"); raise SystemExit
-c = (d.get("choices", [{}])[0].get("message", {}).get("content") or "")
-ok = "3" in c and ("rain" in c.lower())
-print("  MULTITURN:", "PASS" if ok else "FAIL (did not use the tool result)", repr(c[:100]))
+    print("  MULTITURN: FAIL (no/invalid response - replay rejected?)"); raise SystemExit(1)
+choice = d.get("choices", [{}])[0]
+m = choice.get("message", {})
+c = m.get("content") or ""
+completion = (d.get("usage") or {}).get("completion_tokens")
+errors = []
+if not ("3" in c and "rain" in c.lower()): errors.append("did not use the tool result")
+if choice.get("finish_reason") != "stop": errors.append("finish_reason=%r" % choice.get("finish_reason"))
+if not isinstance(completion, int) or completion >= 600: errors.append("unbounded completion=%r" % completion)
+if "<|" in json.dumps(m): errors.append("structural tag leaked")
+print("  MULTITURN:", "FAIL (" + "; ".join(errors) + ")" if errors else
+      "PASS (%d generated tokens)" % completion, repr(c[:100]))
+sys.exit(1 if errors else 0)
 PY
 
 # --- degeneration on a long prompt -------------------------------------------
@@ -265,14 +339,16 @@ PY
 curl -sf --max-time 1800 "http://127.0.0.1:$PORT/v1/chat/completions" \
   -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d @"$OUT/longprompt.json" > "$OUT/longout.json" 2>/dev/null || true
-python3 - "$OUT/longout.json" <<'PY' | tee -a "$OUT/report.txt"
+python3 - "$OUT/longout.json" <<'PY' | tee -a "$OUT/report.txt" || FAILURES=$((FAILURES+1))
 import json, sys, collections
 try: d = json.load(open(sys.argv[1]))
 except Exception:
-    print("  DEGENERATION: FAIL (no response)"); raise SystemExit
-m = d.get("choices", [{}])[0].get("message", {})
+    print("  DEGENERATION: FAIL (no response)"); raise SystemExit(1)
+choice = d.get("choices", [{}])[0]
+m = choice.get("message", {})
 content = m.get("content") or ""
 text = content + (m.get("reasoning_content") or "")
+completion = (d.get("usage") or {}).get("completion_tokens")
 
 # Two independent detectors, because degeneration does not have one shape.
 #
@@ -292,8 +368,17 @@ if worst >= 5:      verdict.append("a 60-char window repeats %dx" % worst)
 if not answered:    verdict.append("never answered (no '4' in content)")
 if len(text) > 4000 and not answered:
                     verdict.append("%d chars for a one-sentence question" % len(text))
+if choice.get("finish_reason") != "stop": verdict.append("finish_reason=%r" % choice.get("finish_reason"))
+if not isinstance(completion, int) or completion >= 1200:
+                    verdict.append("unbounded completion=%r" % completion)
+if "<|" in json.dumps(m): verdict.append("structural tag leaked")
 print("  DEGENERATION:", "FAIL (%s)" % "; ".join(verdict) if verdict
-      else "PASS (answered, %d chars)" % len(text))
+      else "PASS (answered, %d chars, %d generated tokens)" % (len(text), completion))
+sys.exit(1 if verdict else 0)
 PY
 
-say "=== done: $OUT/report.txt ==="
+if [ "$FAILURES" -ne 0 ]; then
+    say "=== FAILED: $FAILURES gate section(s); report: $OUT/report.txt ==="
+    exit 1
+fi
+say "=== PASS: $OUT/report.txt ==="

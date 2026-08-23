@@ -34,7 +34,8 @@ to be right on the box the kit was written on.
 | `glm-server.service` | systemd unit (survives reboot, `LimitMEMLOCK=infinity`) | 7 |
 | `glm-variants.conf` | registry of servable models (GLM, Kimi, DeepSeek-V4) with per-model engine + flags | 6a, 6b |
 | `glm-model` | list / download / switch / track which model is served | 6a |
-| `validate-model.sh` | prove a new quant loads, stays coherent, keeps reasoning out of `content`, and can call a tool — on a spare port | 6b |
+| `validate-model.sh` | hard gate for load, coherence, termination, reasoning separation, tools, streaming, replay, and long-prompt degeneration — on a spare port | 6b |
+| `smoke-k3-live.py` | bounded K3 regression matrix against an already-loaded direct or LiteLLM endpoint | 6c |
 | `benchmark-live.sh` | measure PP/TG against the already-loaded model without allocating a second copy | 8 |
 
 **Speculative decoding is on, and it is close to free money for agent work.**
@@ -92,14 +93,17 @@ so the port lives on [`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckst
 branch `kimi-k3`. On 2026-08-22 the branch was rebased onto upstream
 `8337e4cd`, reconciled with Firedancer's `kimi-k3` and `main-patches` branches,
 and reconciled at `f921647b`; the fork's `main` was fast-forwarded to the same
-upstream base. The deployed tip is now `d39033a5`, which stops at K3's first
-complete message trailer instead of letting a missing EOG turn a finished answer
-into an output-limit loop. A full build, the focused parser/delta-net tests, and
-all three numerical K3 oracles pass.
+upstream base. The deployed and verified tip is now `4d1f09d3`. Its production
+fix in `d39033a5` stops at K3's first complete message trailer instead of letting
+a missing EOG turn a finished answer into an output-limit loop; the follow-up
+commit exercises every partial stop prefix, canonical and missing closers,
+incremental response/tool parsing, and both lazy and required tool grammars. A
+full build, ten focused parser/Jinja/delta-net tests, sanitizer run, and all
+three numerical K3 oracles pass.
 
 The live `kimi-k3-q5attn` service has perplexity **1.3253 +/- 0.031**. A dated,
-reproducible live sample measured **42.607 tok/s** on a fresh 897-token prompt
-and **4.453 tok/s generation** (mean of three forced 128-token samples), rising
+reproducible post-deploy sample measured **42.715 tok/s** on a fresh 897-token
+prompt and **4.491 tok/s generation** (mean of three forced 128-token samples), rising
 to **7.5-9.6 tok/s** on repetitive or code-shaped output where n-gram
 speculation fires (from 30.1 / 3.65 when the port first
 ran). Tool calls pass 5/5; a post-deploy probe also returned a correctly typed
@@ -119,8 +123,14 @@ K3 produced the right reply, then repeated `<|close|>message<|sep|>` until all
 returned raw tagged content, while OpenCode showed only a progress bar.
 `d39033a5` registers that completed message trailer as a stop. The identical
 request now returns clean separated reasoning/content in **29 tokens**, including
-through the LiteLLM streaming route OpenCode uses. A separate post-fix agent
-smoke test returned a correctly typed tool call and stopped after 87 tokens.
+through the LiteLLM streaming route OpenCode uses. `serving/smoke-k3-live.py`
+then passed **11/11** direct-server cases and **9/9** through LiteLLM, covering
+multiple seeds, streamed chat, typed tools, streamed tools, tool-result replay,
+and a 7,835-token agent-shaped prompt. Finally, the exact headless OpenCode path
+evaluated 7,313 prompt tokens, generated a clean 37-token greeting, and exited
+normally in 183 seconds. Deliberately disconnecting a separate long generation
+also logged a server-side cancellation and returned the only slot to idle about
+one second later.
 
 **The surprise is which bytes.** K3 is 92.8% routed experts by file size, but
 only 16 of 896 are active, so experts are just 19% of what a token reads — the
@@ -135,14 +145,21 @@ seconds**, and K3 in **234 seconds**, each invoking the required tools. Use
 `kimi-opencode.sh` for the strongest local reasoning model and expect its large
 prompt plus always-on reasoning to make it the slowest path.
 
-**All three production configs pass the full gate** (`serving/validate-model.sh`),
-which is the reproducible version of that claim rather than a remembered one:
+**Recorded runs for all three production configs pass every gate section** in
+`serving/validate-model.sh`:
 
 | | coherence | reasoning | tools | 5-run | streaming | replay | degeneration |
 |---|---|---|---|---|---|---|---|
 | DeepSeek-V4 (`-rtr`, spec) | ✅ | ✅ | ✅ | 5/5 | ✅ 7 deltas | ✅ | ✅ |
 | GLM-5.2 (spec) | ✅ | ✅ | ✅ | 5/5 | ✅ 6 deltas | ✅ | ✅ |
 | Kimi K3 Q5-attention (spec, default checkpoint mode) | ✅ | ✅ | ✅ | 5/5 | ✅ 6 deltas | ✅ | ✅ |
+
+The validator now returns nonzero when *any* section fails; the prior version
+could print `FAIL` from its Python checks and still exit successfully. Mock
+controls prove that the historical K3 marker loop, output-limit exhaustion, and
+a stream truncated before `[DONE]` all fail the process gate. For an already
+resident K3, use `serving/smoke-k3-live.py` to avoid loading a second 788 GiB
+copy merely to exercise the same live API paths.
 
 The old K3 failure under default checkpoint mode was a graph-builder bug, not a
 required serving flag: its KDA path failed to pass the per-step SSM/conv state
@@ -163,7 +180,7 @@ quality ceiling, but it is *not* what was breaking its tool calls.
 `<|open|>argument key=...<|sep|>` tags rather than JSON, and needed a parser plus
 `--repeat-penalty 1.0` (the global 1.1 penalises structured tag output badly
 enough to derail the model mid-call). The current verified fork tip is
-`d39033a5`. Runbook §6c.
+`4d1f09d3` (the termination code itself is `d39033a5`). Runbook §6c.
 
 `kimi-k3-ik` stays `pending` — ubergarm has published no K3 quant, so that row is
 still a guess about filenames. Run `glm-model upstream` to check.
@@ -211,7 +228,7 @@ the selected variant, and is the only reliable check.
 |---|---|---|---|
 | `glm-opencode.sh` + `opencode.json` | LOCAL CPU server (direct) | ~12-32 tok/s | **private** / sensitive / audit — **this is the working agent setup** |
 | `ds4-opencode.sh` | LOCAL, DeepSeek-V4-Flash via litellm | ~28.6 tok/s | **fastest local agent** — prefer this for real work |
-| `kimi-opencode.sh` | LOCAL, Kimi K3 Q5-attention | ~4.45 tok/s | **quality-first local reasoning**; slow prefill on a fresh agent session |
+| `kimi-opencode.sh` | LOCAL, Kimi K3 Q5-attention | ~4.49 tok/s | **quality-first local reasoning**; slow prefill on a fresh agent session |
 | `kimi-opencode-together.sh` | Together AI, Kimi K3 | provider speed | K3 with `max` reasoning by default; `KIMI_REASONING_EFFORT=high` to reduce cost/latency |
 | `glm-opencode-together.sh` | Together AI cloud | ~200-350 tok/s | fast everyday coding |
 | `glm-opencode-cloud.sh` | any OpenAI-compatible provider (env) | varies | OpenRouter / DeepInfra / Z.ai / Surplus / etc. |

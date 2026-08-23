@@ -18,12 +18,13 @@
 #   Kimi K3      234s, chained Glob then Read, correct answer
 #
 # K3 is slower than DS4, but it is the quality-first local choice. The current
-# `kimi-k3-q5attn` deployment measured 42.61 tok/s on a fresh 897-token prompt
-# and 4.453 tok/s generation (three forced 128-token samples, 2026-08-22).
-# OpenCode's system prompt plus tool definitions runs well over 10K tokens, so
+# `kimi-k3-q5attn` deployment measured 42.715 tok/s on a fresh 897-token prompt
+# and 4.491 tok/s generation (three forced 128-token samples, 2026-08-23).
+# OpenCode's system prompt plus tool definitions is large, so
 #   EXPECT ROUGHLY
-#   FOUR MINUTES BEFORE THE FIRST TOKEN of a fresh session, every session.
-#   (Measured end to end: 225s for a one-word reply on a cold session.)
+#   THREE TO FOUR MINUTES FOR THE FIRST REPLY of a fresh session.
+#   A 2026-08-23 headless canary evaluated 7,313 prompt tokens and returned its
+#   37-token greeting in 183 seconds; prompt shape and cache state vary.
 #   Silence while the server is evaluating that prompt is normal, and an HTTP
 #   client with a default timeout will give up before the model answers. Do not
 #   confuse it with the older termination bug: before engine `d39033a5`, K3
@@ -91,12 +92,12 @@ elif [ -n "$SERVED" ] && [ "$SERVED" != "$MODEL_ID" ]; then
   echo >&2
 fi
 
-# Say this out loud every time. A five-minute silence before the first token is
+# Say this out loud every time. A multi-minute silence before the first token is
 # indistinguishable from a hang, and treating it as one is the single most
 # likely way to conclude - wrongly - that this script is broken.
-echo "kimi-k3: ~42.6 tok/s prompt processing, ~4.45 tok/s generation. A fresh" >&2
-echo "         session sends 10K+ tokens of system prompt and tools, so the" >&2
-echo "         FIRST reply takes ~4 minutes." >&2
+echo "kimi-k3: ~42.7 tok/s prompt processing, ~4.49 tok/s generation. A fresh" >&2
+echo "         session sends 7K+ tokens of system prompt and tools, so the" >&2
+echo "         FIRST reply usually takes ~3-4 minutes." >&2
 echo "         Quiet prompt evaluation is normal. Watch it:  ssh $GLM_HOST 'sudo journalctl -fu glm-server'" >&2
 echo "         Generation running to 8K without a reply means the engine is older than d39033a5." >&2
 echo >&2

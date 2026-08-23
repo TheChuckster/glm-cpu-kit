@@ -119,8 +119,8 @@ model_list:
   # one-resident-model caveat as every row above.
   #
   # Two things to know before pointing an agent at this:
-  #  - the live Q5-attention row measures ~42.6 PP / ~4.45 TG tok/s, so a fresh
-  #    10K+ OpenCode prompt still takes minutes before the first token;
+  #  - the live Q5-attention row measures ~42.7 PP / ~4.49 TG tok/s, so a fresh
+  #    7K+ OpenCode prompt still takes minutes before the first token;
   #  - the current K3 parser cleanly separates reasoning, content, and tool calls.
   - model_name: kimi-k3
     litellm_params:
