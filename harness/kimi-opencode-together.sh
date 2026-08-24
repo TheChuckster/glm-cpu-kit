@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# OpenCode against Kimi K3 on Together AI, at max reasoning effort by default.
+# OpenCode against Kimi K3 on Together AI, explicitly at max reasoning effort.
 #
 #   ./kimi-opencode-together.sh                 # interactive TUI
 #   ./kimi-opencode-together.sh --continue      # resume the last session
 #   ./kimi-opencode-together.sh run "message"   # headless
 #
-# Override when a task does not need maximum depth:
+# K3 supports low/high/max; max is both this launcher's default and the tier
+# used for Moonshot's published frontier benchmark results. Thinking tokens are
+# billed as output tokens, so override when the task does not need max depth:
 #   KIMI_REASONING_EFFORT=high ./kimi-opencode-together.sh
 set -euo pipefail
 

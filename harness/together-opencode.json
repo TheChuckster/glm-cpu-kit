@@ -8,6 +8,80 @@
         "baseURL": "{env:TOGETHER_BASE_URL}",
         "timeout": false,
         "chunkTimeout": 300000
+      },
+      "models": {
+        "Qwen/Qwen3.8-2.4T-A95B": {
+          "name": "Qwen3.8 2.4T A95B",
+          "family": "qwen3.8",
+          "reasoning": true,
+          "temperature": true,
+          "tool_call": true,
+          "attachment": false,
+          "interleaved": {
+            "field": "reasoning_content"
+          },
+          "cost": {
+            "input": 2.5,
+            "output": 6.25,
+            "cache_read": 0.5
+          },
+          "limit": {
+            "context": 1010000,
+            "output": 262144
+          },
+          "modalities": {
+            "input": ["text"],
+            "output": ["text"]
+          },
+          "status": "active",
+          "variants": {
+            "low": {
+              "reasoningEffort": "low"
+            },
+            "medium": {
+              "reasoningEffort": "medium"
+            },
+            "xhigh": {
+              "reasoningEffort": "xhigh"
+            }
+          }
+        },
+        "deepseek-ai/DeepSeek-V4-Pro-0813": {
+          "name": "DeepSeek V4 Pro 0813",
+          "family": "deepseek",
+          "reasoning": true,
+          "temperature": true,
+          "tool_call": true,
+          "attachment": false,
+          "interleaved": {
+            "field": "reasoning_content"
+          },
+          "cost": {
+            "input": 1.32,
+            "output": 3.96,
+            "cache_read": 0.13
+          },
+          "limit": {
+            "context": 1048576,
+            "output": 384000
+          },
+          "modalities": {
+            "input": ["text"],
+            "output": ["text"]
+          },
+          "status": "active",
+          "variants": {
+            "low": {
+              "reasoningEffort": "low"
+            },
+            "high": {
+              "reasoningEffort": "high"
+            },
+            "max": {
+              "reasoningEffort": "max"
+            }
+          }
+        }
       }
     }
   }

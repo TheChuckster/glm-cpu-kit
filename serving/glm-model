@@ -66,6 +66,10 @@ load_variant() {
     IFS='|' read -r V_NAME V_REPO V_SUBDIR V_PREFIX V_SHARDS V_ALIAS V_DIR V_ENGINE V_OPTS <<<"$row"
 }
 
+is_local_variant() {
+    [[ "$V_REPO" == local:* ]]
+}
+
 # A registry shard count of `?` means "whatever the publisher shipped" - used to
 # pre-stage a variant whose repo has not published yet, so the count cannot be
 # known when the row is written. Resolve it from HuggingFace once and cache it,
@@ -74,6 +78,7 @@ load_variant() {
 # Echoes the count, or nothing if it is unknown AND cannot be determined.
 effective_shards() {
     if [ "$V_SHARDS" != "?" ]; then echo "$V_SHARDS"; return 0; fi
+    is_local_variant && return 1
     local cache="$V_DIR/.shards" n
     if [ -r "$cache" ]; then
         n=$(tr -dc '0-9' < "$cache"); [ -n "$n" ] && { echo "$n"; return 0; }
@@ -159,6 +164,7 @@ is_downloading() {
 
 # Expected sizes from the HuggingFace API, as "filename bytes".
 remote_sizes() {
+    is_local_variant && return 0
     local path="$V_SUBDIR"
     curl -4 -sfL --max-time 60 \
         "https://huggingface.co/api/models/$V_REPO/tree/main/${path}" 2>/dev/null \
@@ -244,6 +250,8 @@ cmd_status() {
 
 cmd_download() {
     load_variant "$1"
+    is_local_variant && die "$V_NAME is a local-only derivative ($V_REPO).
+Populate $V_DIR out of band, then run: glm-model verify $V_NAME"
     mkdir -p "$V_DIR" || die "cannot create $V_DIR"
 
     local n; n=$(effective_shards) || die "$V_NAME: $V_REPO/${V_SUBDIR:-.} publishes nothing
@@ -274,14 +282,23 @@ cmd_verify() {
     load_variant "$1"
     local sizes; sizes=$(remote_sizes)
     if [ -z "$sizes" ]; then
-        echo "could not fetch expected sizes from HuggingFace; checking presence only"
+        if is_local_variant; then
+            echo "local-only derivative $V_REPO; checking registered shard presence"
+        else
+            echo "could not fetch expected sizes from HuggingFace; checking presence only"
+        fi
     fi
 
-    local n; n=$(effective_shards) \
-        || die "$V_NAME: cannot determine the shard count - neither
+    local n
+    if ! n=$(effective_shards); then
+        if is_local_variant; then
+            die "$V_NAME: local-only variants require an explicit numeric shard count in $CONF"
+        fi
+        die "$V_NAME: cannot determine the shard count - neither
 '$V_PREFIX-000NN-of-000MM.gguf' nor '$V_PREFIX.gguf' is published in
 $V_REPO/${V_SUBDIR:-.}.
 Run 'glm-model upstream $V_NAME' to see what the repo actually contains."
+    fi
 
     # Process substitution, not a pipe: a pipe runs the loop in a subshell and
     # `bad=1` would be discarded, so an incomplete variant would verify clean.
@@ -299,7 +316,12 @@ Run 'glm-model upstream $V_NAME' to see what the repo actually contains."
     done < <(shard_names "$n")
     if [ "$bad" -ne 0 ]; then
         rm -f "$(complete_marker)"
-        echo "INCOMPLETE - re-run 'glm-model download $1' (it resumes)" >&2
+        if is_local_variant; then
+            echo "INCOMPLETE local-only derivative - restore every registered shard," >&2
+            echo "then re-run 'glm-model verify $1'" >&2
+        else
+            echo "INCOMPLETE - re-run 'glm-model download $1' (it resumes)" >&2
+        fi
         return 1
     fi
     # Writing the marker here rather than only in cmd_download means a variant
@@ -357,6 +379,12 @@ cmd_upstream() {
         load_variant "$name"
         printf '%s  ->  %s/%s\n' "$V_NAME" "$V_REPO" "${V_SUBDIR:-.}"
 
+        if is_local_variant; then
+            echo "    local-only derivative; no HuggingFace upstream to query"
+            echo
+            continue
+        fi
+
         local quants; quants=$(repo_quants "$V_REPO")
         if [ -z "$quants" ]; then
             echo "    repo publishes no .gguf files yet (or is unreachable)"
@@ -392,6 +420,9 @@ cmd_use() {
     if ! is_downloaded; then
         if is_downloading; then
             die "$V_NAME is still downloading ($(du -shc "$V_DIR"/*.gguf 2>/dev/null | tail -1 | cut -f1) so far). Wait for it to finish."
+        fi
+        if is_local_variant; then
+            die "$V_NAME is not verified complete. Restore every registered shard, then run: glm-model verify $V_NAME"
         fi
         die "$V_NAME is not verified complete. Run: glm-model download $V_NAME (it resumes)"
     fi

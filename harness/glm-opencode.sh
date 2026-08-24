@@ -22,7 +22,7 @@ set -euo pipefail
 CFG_HOME="${GLM_OPENCODE_XDG:-$HOME/.glm-opencode-config}"
 MODEL="${GLM_OPENCODE_MODEL:-local/glm-5.2}"
 OPENCODE="${OPENCODE_BIN:-opencode}"
-: "${GLM_API_KEY:?export GLM_API_KEY (the server's ~/.glm-api-key contents)}"
+: "${GLM_API_KEY:?export GLM_API_KEY (the server-side ~/.glm-api-key contents)}"
 [ -f "$CFG_HOME/opencode/opencode.json" ] || { echo "put opencode.json at $CFG_HOME/opencode/opencode.json"; exit 1; }
 command -v "$OPENCODE" >/dev/null || { echo "opencode not found (set OPENCODE_BIN)"; exit 1; }
 

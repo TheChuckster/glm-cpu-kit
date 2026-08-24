@@ -65,6 +65,25 @@ class Matrix:
             body = exc.read().decode(errors="replace")[:500]
             raise RuntimeError(f"HTTP {exc.code}: {body}") from exc
 
+    def model_identity(self):
+        name = "served model identity"
+        request = urllib.request.Request(
+            f"{self.args.base_url}/models",
+            headers={"Authorization": f"Bearer {self.args.api_key}"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=min(self.args.timeout, 30)) as response:
+                payload = json.load(response)
+            ids = [row.get("id") for row in payload.get("data", []) if isinstance(row, dict)]
+            if ids != [self.args.model]:
+                self.fail(name, f"server reports {ids!r}, expected exactly [{self.args.model!r}]")
+                return False
+            self.pass_(name, ids[0])
+            return True
+        except Exception as exc:
+            self.fail(name, str(exc))
+            return False
+
     def complete(self, payload):
         with self.request(payload) as response:
             return json.load(response)
@@ -344,6 +363,8 @@ def main():
     args = arguments()
     matrix = Matrix(args)
     print(f"K3 live smoke: model={args.model} endpoint={args.base_url}")
+    if not matrix.model_identity():
+        return 1
     matrix.short_chats()
     matrix.streaming_chat()
     prompt, assistant = matrix.tool_calls()

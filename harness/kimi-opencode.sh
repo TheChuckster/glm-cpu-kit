@@ -17,9 +17,10 @@
 #   GLM-5.2      67s,  chained Glob then Read, correct answer
 #   Kimi K3      234s, chained Glob then Read, correct answer
 #
-# K3 is slower than DS4, but it is the quality-first local choice. The current
-# `kimi-k3-q5attn` deployment measured 42.715 tok/s on a fresh 897-token prompt
-# and 4.491 tok/s generation (three forced 128-token samples, 2026-08-23).
+# K3 is slower than DS4, but it is the quality-first local choice. The manually
+# projected `kimi-k3-q5attn-abl` deployment measured 42.868 tok/s on a fresh
+# 897-token prompt and 4.471 tok/s generation (mean of three forced 128-token
+# samples, 2026-08-24), effectively unchanged from the Q5attn source.
 # OpenCode's system prompt plus tool definitions is large, so
 #   EXPECT ROUGHLY
 #   THREE TO FOUR MINUTES FOR THE FIRST REPLY of a fresh session.
@@ -44,14 +45,14 @@
 #   output limit of 8000 is fine; hand-rolled curl calls are where this bites.
 #
 # K3 must be the resident model - only one is, and they are 155-800 GB mlocked:
-#   ssh $GLM_SERVER_HOST 'sudo glm-model use kimi-k3-q5attn'
+#   ssh $GLM_SERVER_HOST 'sudo glm-model use kimi-k3-q5attn-abl'
 #   ssh $GLM_SERVER_HOST 'glm-model status'             # confirm before trusting it
 # (GLM_SERVER_HOST defaults to chuckdancer)
 set -euo pipefail
 
 BASE="${OPENCODE_BASE_URL:-http://127.0.0.1:4000/v1}"
 MODEL="${KIMI_OPENCODE_MODEL:-local/kimi-k3}"
-KIMI_VARIANT="${KIMI_VARIANT:-kimi-k3-q5attn}"
+KIMI_VARIANT="${KIMI_VARIANT:-kimi-k3-q5attn-abl}"
 CFG_HOME="${GLM_OPENCODE_XDG:-$HOME/.glm-opencode-config}"
 
 OPENCODE="${OPENCODE_BIN:-/usr/bin/opencode}"
@@ -111,7 +112,7 @@ fi
 # Say this out loud every time. A multi-minute silence before the first token is
 # indistinguishable from a hang, and treating it as one is the single most
 # likely way to conclude - wrongly - that this script is broken.
-echo "kimi-k3: ~42.7 tok/s prompt processing, ~4.49 tok/s generation. A fresh" >&2
+echo "kimi-k3: ~42.9 tok/s prompt processing, ~4.47 tok/s generation. A fresh" >&2
 echo "         session sends 7K+ tokens of system prompt and tools, so the" >&2
 echo "         FIRST reply usually takes ~3-4 minutes." >&2
 echo "         Quiet prompt evaluation is normal. Watch it:  ssh -F $GLM_SSH_CONFIG $GLM_HOST 'sudo journalctl -fu glm-server'" >&2

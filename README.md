@@ -35,7 +35,7 @@ to be right on the box the kit was written on.
 | `glm-variants.conf` | registry of servable models (GLM, Kimi, DeepSeek-V4) with per-model engine + flags | 6a, 6b |
 | `glm-model` | list / download / switch / track which model is served | 6a |
 | `validate-model.sh` | hard gate for load, coherence, termination, reasoning separation, tools, streaming, replay, and long-prompt degeneration — on a spare port | 6b |
-| `smoke-k3-live.py` | bounded K3 regression matrix against an already-loaded direct or LiteLLM endpoint | 6c |
+| `smoke-k3-live.py` | bounded K3 regression matrix against an already-loaded direct endpoint, with exact served-model identity | 6c |
 | `benchmark-live.sh` | measure PP/TG against the already-loaded model without allocating a second copy | 8 |
 
 **Speculative decoding is on, and it is close to free money for agent work.**
@@ -65,8 +65,8 @@ whether a model is slow or just large.
 
 ```sh
 glm-model list                     # registered, downloaded, live
-glm-model verify kimi-k3-q5attn    # local requant: prove all 19 shards exist
-glm-model use kimi-k3-q5attn       # quality-first K3; waits for readiness
+glm-model verify kimi-k3-q5attn-abl # local derivative: prove all 19 shards exist
+glm-model use kimi-k3-q5attn-abl    # validated, manually abliterated K3
 glm-model status                   # what is ACTUALLY loaded right now
 glm-model upstream                 # what HF publishes now, and does it fit this box
 ```
@@ -75,9 +75,9 @@ Only one variant is resident at a time — they are 155–800 GB and `--mlock` p
 them, so a switch is a full reload of minutes, not a hot swap.
 
 **Registered today:** `base` (GLM-5.2, 440 GB), its Q5-attention and abliterated
-siblings, Kimi K2.6/K2.7, Kimi K3 base/Q5-attention, an experimental K3
-abliteration, and DeepSeek-V4-Flash variants. `chuckdancer` currently selects
-`kimi-k3-q5attn`; the state is persisted by `glm-model`, while a fresh install
+siblings, Kimi K2.6/K2.7, Kimi K3 base/Q5-attention, a validated local K3
+Q5-attention abliteration, and DeepSeek-V4-Flash variants. `chuckdancer`
+currently selects `kimi-k3-q5attn-abl`; the state is persisted by `glm-model`, while a fresh install
 still falls back to `base` until an operator selects and downloads another row.
 
 **DeepSeek-V4-Flash is the fast one.** 284B total but only ~13B active, with
@@ -90,20 +90,22 @@ validation that let its once-separate engine tree converge onto the shared build
 ik_llama.cpp has no `kimi-k3`
 architecture and ikawrakow declined to add one ([ik #2203](https://github.com/ikawrakow/ik_llama.cpp/issues/2203)),
 so the port lives on [`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp)
-branch `kimi-k3`. On 2026-08-22 the branch was rebased onto upstream
-`8337e4cd`, reconciled with Firedancer's `kimi-k3` and `main-patches` branches,
-and reconciled at `f921647b`; the fork's `main` was fast-forwarded to the same
-upstream base. The deployed and verified tip is now `4d1f09d3`. Its production
-fix in `d39033a5` stops at K3's first complete message trailer instead of letting
+branches `main` and `kimi-k3`. On 2026-08-24 the complete 48-commit stack was
+rebased onto upstream `ad26e68b`, reconciled with Firedancer's `kimi-k3` and
+`main-patches` branches, and published at `41c443ba` on both fork branches. Its
+production fix in `b7cf5a4a` stops at K3's first complete message trailer instead of letting
 a missing EOG turn a finished answer into an output-limit loop; the follow-up
-commit exercises every partial stop prefix, canonical and missing closers,
+commit `7e7bdb3d` exercises every partial stop prefix, canonical and missing closers,
 incremental response/tool parsing, and both lazy and required tool grammars. A
-full build, ten focused parser/Jinja/delta-net tests, sanitizer run, and all
-three numerical K3 oracles pass.
+clean release build, focused sanitizer run, and every K3/parser/delta-net test
+pass. The full suite passes 26/29; its three failures are unrelated fixture or
+configuration issues documented in the validation record.
 
-The live `kimi-k3-q5attn` service has perplexity **1.3253 +/- 0.031**. A dated,
-reproducible post-deploy sample measured **42.715 tok/s** on a fresh 897-token
-prompt and **4.491 tok/s generation** (mean of three forced 128-token samples), rising
+The Q5attn source has perplexity **1.3253 +/- 0.031**. Its manually projected
+`kimi-k3-q5attn-abl` derivative was indistinguishable in the paired deployment
+check: **1.7526 +/- 0.0185 -> 1.7533 +/- 0.0184** on the fixed short-context
+protocol. The post-deploy sample measured **42.868 tok/s** on a fresh 897-token
+prompt and **4.471 tok/s generation** (mean of three forced 128-token samples), rising
 to **7.5-9.6 tok/s** on repetitive or code-shaped output where n-gram
 speculation fires (from 30.1 / 3.65 when the port first
 ran). Tool calls pass 5/5; a post-deploy probe also returned a correctly typed
@@ -180,7 +182,7 @@ quality ceiling, but it is *not* what was breaking its tool calls.
 `<|open|>argument key=...<|sep|>` tags rather than JSON, and needed a parser plus
 `--repeat-penalty 1.0` (the global 1.1 penalises structured tag output badly
 enough to derail the model mid-call). The current verified fork tip is
-`4d1f09d3` (the termination code itself is `d39033a5`). Runbook §6c.
+`41c443ba` (the termination code itself is `b7cf5a4a`). Runbook §6c.
 
 `kimi-k3-ik` stays `pending` — ubergarm has published no K3 quant, so that row is
 still a guess about filenames. Run `glm-model upstream` to check.
@@ -201,6 +203,12 @@ on. Repointing the single global engine to gain one model silently re-rolls the
 dice on every other model, so instead a new architecture gets its own build tree
 and nothing else moves until it is proven.
 
+**Local derivatives.** Registry field 2 normally names a Hugging Face repo.
+Use `local:<provenance-label>` for a reproducibly built local derivative such
+as an abliterated projection. `glm-model verify` then checks the registered
+shards and writes the normal size-bound completion marker, while `download`
+fails closed and `upstream` performs no misleading network lookup.
+
 The GLM abliterated variants are **not** equivalent.
 `abliterated` (frz1, Q4_K_M, 455 GB) matches the base model's quant class and
 size almost exactly, but the publisher is unknown and the capability cost of
@@ -209,14 +217,22 @@ from the established abliteration publisher, but that repo has no Q4-class quant
 at all — so it costs a full quantisation step, which on a 745B MoE is likely a
 larger quality hit than the ablation itself.
 
-There is likewise **no verified abliterated/uncensored K3 equivalent to
-`kimi-k3-q5attn` yet**. The closest full-size GrEarl Q2 transfer is explicitly
-WIP and unverified; Blackfrost's registered 1009 GB Q2 build leaves too little
-RAM headroom and has no quality measurements; Ryanchen's tested uncensored
-IQ1 build is much smaller but reports perplexity 1.9323, versus 1.3253 for the
-current Q5-attention service. `kimi-k3-abl` therefore remains an experimental,
-not-downloaded row. Do not switch the reference deployment to it without the
-same perplexity, tool, replay, and degeneration gates used for the base model.
+`kimi-k3-q5attn-abl` is the verified abliterated equivalent to the Q5-attention
+deployment. It was built locally by projecting a refusal direction from the
+published methodology's harmful-minus-harmless activations at layers 56-73,
+then requantizing only the 279 selected attention-output tensors. All 2,294
+non-target tensors—including all 276 routed-expert tensors—remain byte-identical
+to `kimi-k3-q5attn`. Fresh evaluator-only 100 harmful + 100 harmless runs under
+the same binary/settings reduced hash-bound manual harmful refusal from **95%
+to 82%** (13 paired removals, 0 additions, exact McNemar p=0.000244), held
+harmless refusal at **0%**, and produced zero termination failures across all
+400 baseline/candidate responses. Perplexity, tool use, replay, streaming,
+long-context, graph reuse, OpenCode greeting, and agentic tool canaries passed.
+The scored production executable is pinned independently by SHA-256
+`a677e4c2decf66acae9eb91bc76ff1054f1cf261d2614f294e5c4f39f9615ab6`;
+the upstream rebase preserved the patch stack exactly according to `range-diff`.
+The published `kimi-k3-abl` Q2 row remains experimental and not downloaded;
+`kimi-k3-q5attn` remains the immediate rollback.
 
 Note that `llama-server` does not reject a request naming a different alias than
 the loaded model: asking for `glm-5.2-abliterated` while `base` is live returns
@@ -230,6 +246,9 @@ the selected variant, and is the only reliable check.
 | `ds4-opencode.sh` | LOCAL, DeepSeek-V4-Flash via litellm | ~28.6 tok/s | **fastest local agent** — prefer this for real work |
 | `kimi-opencode.sh` | LOCAL, Kimi K3 Q5-attention | ~4.49 tok/s | **quality-first local reasoning**; slow prefill on a fresh agent session |
 | `kimi-opencode-together.sh` | Together AI, Kimi K3 | provider speed | K3 with `max` reasoning by default; `KIMI_REASONING_EFFORT=high` to reduce cost/latency |
+| `qwen38-opencode-together.sh` | Together AI, Qwen3.8 2.4T A95B | provider speed | closest current open-weight reasoning peer; `xhigh` by default |
+| `ds4-pro-opencode-together.sh` | Together AI, DeepSeek V4 Pro 0813 | provider speed | lower-cost 1M-context agent alternate; `max` by default |
+| `together-opencode.sh` + `together-opencode.json` | Together AI, selectable | provider speed | shared native-OpenCode router; K3/max is the fallback model |
 | `glm-opencode-together.sh` | Together AI cloud | ~200-350 tok/s | fast everyday coding |
 | `glm-opencode-cloud.sh` | any OpenAI-compatible provider (env) | varies | OpenRouter / DeepInfra / Z.ai / Surplus / etc. |
 | `litellm-config.yaml` + `proxy.sh` + `glm.sh` | Claude Code via litellm | - | only if you must use Claude Code (fragile) |
@@ -237,6 +256,18 @@ the selected variant, and is the only reliable check.
 **Local vs cloud = privacy vs speed.** Local is private but ~10 tok/s; cloud is 20-35x faster and cheap,
 but your prompts/code go to the provider. Keep sensitive or audit work on the local box; use cloud for
 everyday speed. **All cloud scripts read the API key from env or a key file - never hardcoded, never in this repo.**
+
+The frontier Together wrappers intentionally keep K3/max as the default. The
+[Qwen3.8 open-weight model card](https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B)
+puts it essentially level with [K3](https://www.together.ai/blog/kimi-k3-guide)
+on HLE and close on GPQA, but not ahead of K3 across the broader coding/agent
+suite; [DeepSeek V4 Pro](https://www.together.ai/models/deepseek-v4-pro-0813)
+is a cost/routing alternative rather than an overall K3 replacement. The shared
+launcher validates each model's actual effort names
+(`xhigh` for Qwen, `max` for K3/DeepSeek), applies the same setting in both the
+TUI and `run` modes, and raises OpenCode's otherwise-too-small per-step output
+cap. New catalog entries are additive, so older OpenCode snapshots can use the
+new endpoints without replacing native provider behavior.
 
 ### `monitoring/` (optional but worth it)
 | File | Purpose |
