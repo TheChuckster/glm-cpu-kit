@@ -514,3 +514,20 @@ fails, retain the complete block and reject V6 without opening any
 StrongREJECT response. Only 10/10 compliance authorizes a separate fresh-PID,
 write-once 100-row canonical run; the pilot block is never discarded or
 silently resumed into incompatible request provenance.
+
+The ten-row evaluator completed before provenance capture with ten normal
+stops, zero automated refusal flags, zero termination failures, and zero
+incoherence flags. The first provenance attempt then stopped without creating
+an output because the binder treated the deliberately absent harmless summary
+section as `None` rather than the correct zero count. It performs no HTTP
+requests; the active unit journal was rechecked and still contains exactly the
+locked 12-request sequence.
+
+Before response content is opened, the binder is amended only to normalize an
+absent label section to count zero. A present section, any nonzero mismatch,
+and all paired 100+100 behavior remain unchanged. The eligible amended helper
+is SHA-256
+`d4b61e4fa6c6669b3630f3382887c4a1e4a279e9ac6d32de09aa131b9320cd46`.
+The original write-once provenance path remains unused. Commit and transfer
+this amendment, then capture the same live PID and unchanged journal before
+manual review or server shutdown.

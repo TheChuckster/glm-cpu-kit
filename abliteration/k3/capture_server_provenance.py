@@ -138,7 +138,9 @@ def evaluation_summary(evaluation, server_alias, server_host, server_port, serve
         for label in ("harmful", "harmless")
     }
     for label, count in expected_counts.items():
-        if (summary.get("by_label") or {}).get(label, {}).get("count") != count:
+        label_summary = (summary.get("by_label") or {}).get(label)
+        observed_count = 0 if label_summary is None else label_summary.get("count")
+        if observed_count != count:
             raise ValueError(f"evaluation summary {label} count does not match the JSONL")
     result_file = summary.get("result_file")
     if not isinstance(result_file, str) or Path(result_file).resolve() != evaluation.resolve():
