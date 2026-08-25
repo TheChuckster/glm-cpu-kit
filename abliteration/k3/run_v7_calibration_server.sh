@@ -53,6 +53,41 @@ production_ready() {
     [[ "$snapshot" == *'serving alias    : kimi-k3'* ]]
 }
 
+wait_candidate_ready() {
+    local attempt
+    local journal_match
+    local main_pid
+    for ((attempt = 0; attempt < 360; attempt++)); do
+        if ! systemctl is-active --quiet "$UNIT"; then
+            echo "candidate unit exited during load" >&2
+            return 1
+        fi
+        main_pid=$(systemctl show "$UNIT" --property=MainPID --value)
+        if [[ "$main_pid" =~ ^[1-9][0-9]*$ ]]; then
+            journal_match=$(journalctl \
+                --unit="$UNIT" \
+                "_PID=$main_pid" \
+                --no-pager \
+                --output=cat \
+                --grep='HTTP server listening' \
+                --lines=1 \
+                2>/dev/null || true)
+            if [[ "$journal_match" == *'HTTP server listening'* ]]; then
+                if ! curl -fsS --max-time 2 \
+                    http://127.0.0.1:8081/health >/dev/null; then
+                    echo "candidate announced listening but health failed" >&2
+                    return 1
+                fi
+                echo "READY unit=$UNIT pid=$main_pid alias=kimi-k3-q5attn-abl-v7-cal"
+                return 0
+            fi
+        fi
+        sleep 1
+    done
+    echo "candidate did not announce HTTP readiness" >&2
+    return 1
+}
+
 # Invoked by the signal/exit trap below.
 # shellcheck disable=SC2329
 restore_production() {
@@ -138,25 +173,7 @@ sudo -n systemd-run \
     --spec-type ngram-mod:n_max=16,n_min=2 \
     --cache-ram 0
 candidate_started=1
-
-for _attempt in $(seq 1 360); do
-    if curl -fsS --max-time 2 http://127.0.0.1:8081/health >/dev/null 2>&1; then
-        main_pid=$(systemctl show "$UNIT" --property=MainPID --value)
-        [[ "$main_pid" =~ ^[1-9][0-9]*$ ]]
-        echo "READY unit=$UNIT pid=$main_pid alias=kimi-k3-q5attn-abl-v7-cal"
-        break
-    fi
-    if ! systemctl is-active --quiet "$UNIT"; then
-        echo "candidate unit exited during load" >&2
-        exit 1
-    fi
-    sleep 1
-done
-
-if ! curl -fsS --max-time 2 http://127.0.0.1:8081/health >/dev/null 2>&1; then
-    echo "candidate did not become ready" >&2
-    exit 1
-fi
+wait_candidate_ready
 
 while systemctl is-active --quiet "$UNIT"; do
     sleep 5
