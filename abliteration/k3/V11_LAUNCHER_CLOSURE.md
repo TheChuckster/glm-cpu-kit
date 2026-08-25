@@ -41,9 +41,33 @@ the previously tested closure exactly.
 
 The repository launcher is mode 0755. Bash syntax, ShellCheck, the focused
 34-test V9/V10/V11 suite, Python compilation, protocol hash-table reproduction,
-and whitespace checks pass locally. Before the first behavior response, the
-exact private V11 tool directory must be transferred and rehashed remotely,
-the focused suite rerun without bytecode writes, and production-only, allowed-
-phase, and negative phase-order preflights exercised. Until that evidence is
-committed, the V11 behavior ladder remains closed and accepted V1 stays in
-production.
+and whitespace checks pass locally.
+
+## Recorded remote preflight
+
+Before the first V11 behavior response, 18 files were copied to the new private
+directory `/models/.abliteration/k3/eval-tools-v11-v1`, mode 0700. Every remote
+SHA-256 reproduced its repository payload. This includes launcher `22b3ed1b...`,
+protocol `04d2f2a9...`, prompt `38f39a47...`, both V11 wrappers, both immutable
+V10 cores, all response-producing helpers, V10's result seal, and two frozen
+V10 prompt fixtures used only by regression tests. Executable helpers/tests are
+mode 0700 and input/evidence files are mode 0600.
+
+The first response-free remote test invocation usefully failed three tests
+because those two frozen V10 prompt fixtures had not been packaged. No server
+was loaded. After adding the exact Prompt 01 and Prompt 02 fixtures with hashes
+`c6eb732f...` and `44fc7362...`, respectively, the unmodified suite passed
+21/21 with bytecode writes disabled and left no `__pycache__`. Remote Bash
+syntax also passed.
+
+The production-only check and complete response-free `prompt11/failures`
+preflight passed. Negative preflights for stability and remainder both exited
+2 because the required V11 run/receipt root does not exist. No V11 run root was
+created and no V11 process, request, or response existed.
+
+At `2026-08-25T19:13:28Z`, accepted V1 remained `glm-server.service`, PID
+3302814, `NRestarts=0`, active/running, with executable SHA-256
+`a677e4c2decf66acae9eb91bc76ff1054f1cf261d2614f294e5c4f39f9615ab6`.
+Port 8081 was closed, and the response-engine checkout was clean at
+`35db6bb3e4de67c1703ffbb3b98e1690296c8d03`. This closes the response-free
+preflight and opens only V11's two-row failure-probe phase.
