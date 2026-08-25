@@ -2,6 +2,7 @@
 """Run bounded, resumable held-out refusal/benign checks through the live API."""
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -46,8 +47,16 @@ def arguments():
     parser.add_argument("--max-tokens", type=int, default=2048,
                         help="K3 can spend substantial tokens reasoning before a clean stop")
     parser.add_argument("--timeout", type=int, default=1800)
+    parser.add_argument(
+        "--request-attempts", type=int, default=3,
+        help="maximum attempts per row; use 1 for no-retry protocols",
+    )
     parser.add_argument("--limit-per-dataset", type=int, default=0)
     parser.add_argument("--seed", type=int, default=20260823)
+    parser.add_argument(
+        "--system-prompt-file", type=Path,
+        help="prepend one exact UTF-8 system message and bind its raw SHA-256",
+    )
     args = parser.parse_args()
     args.base_url = args.base_url.rstrip("/")
     args.api_key_file = args.api_key_file.expanduser()
@@ -55,9 +64,41 @@ def arguments():
         if not args.api_key_file.is_file():
             parser.error(f"API key not supplied and file is unreadable: {args.api_key_file}")
         args.api_key = args.api_key_file.read_text().strip()
-    if args.max_tokens < 1 or args.timeout < 1 or args.limit_per_dataset < 0:
-        parser.error("token/timeout limits must be positive and dataset limit non-negative")
+    if (
+        args.max_tokens < 1
+        or args.timeout < 1
+        or args.request_attempts < 1
+        or args.limit_per_dataset < 0
+    ):
+        parser.error(
+            "token/timeout/attempt limits must be positive and dataset limit non-negative"
+        )
+    args.system_prompt = None
+    args.system_prompt_sha256 = None
+    if args.system_prompt_file is not None:
+        try:
+            args.system_prompt, args.system_prompt_sha256 = load_system_prompt(
+                args.system_prompt_file
+            )
+        except (OSError, UnicodeError, ValueError) as exc:
+            parser.error(str(exc))
     return args
+
+
+def load_system_prompt(path):
+    raw = path.read_bytes()
+    if not raw:
+        raise ValueError(f"system prompt is empty: {path}")
+    if len(raw) > 16 * 1024:
+        raise ValueError(f"system prompt exceeds 16 KiB: {path}")
+    if b"\x00" in raw or b"\r" in raw:
+        raise ValueError(f"system prompt contains a NUL or CR byte: {path}")
+    if not raw.endswith(b"\n") or raw.endswith(b"\n\n"):
+        raise ValueError(f"system prompt must have exactly one terminal LF: {path}")
+    text = raw[:-1].decode("utf-8")
+    if not text or text != text.strip():
+        raise ValueError(f"system prompt has leading or trailing whitespace: {path}")
+    return text, hashlib.sha256(raw).hexdigest()
 
 
 def load_datasets(paths, limit):
@@ -144,15 +185,23 @@ def classify(row, response, max_tokens):
     }
 
 
-def request(args, row, index):
-    payload = {
+def build_payload(args, row, index):
+    messages = []
+    if args.system_prompt is not None:
+        messages.append({"role": "system", "content": args.system_prompt})
+    messages.append({"role": "user", "content": row["instruction"]})
+    return {
         "model": args.model,
         "seed": args.seed + index,
         "temperature": 0,
         "max_tokens": args.max_tokens,
         "stream": False,
-        "messages": [{"role": "user", "content": row["instruction"]}],
+        "messages": messages,
     }
+
+
+def request(args, row, index):
+    payload = build_payload(args, row, index)
     request_ = urllib.request.Request(
         f"{args.base_url}/chat/completions",
         data=json.dumps(payload).encode(),
@@ -162,7 +211,7 @@ def request(args, row, index):
         },
     )
     last_error = None
-    for attempt in range(3):
+    for attempt in range(args.request_attempts):
         try:
             started = time.monotonic()
             with urllib.request.urlopen(request_, timeout=args.timeout) as response:
@@ -171,9 +220,11 @@ def request(args, row, index):
             return result
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             last_error = exc
-            if attempt < 2:
+            if attempt + 1 < args.request_attempts:
                 time.sleep(2 ** attempt)
-    raise RuntimeError(f"request failed after three attempts: {last_error}")
+    raise RuntimeError(
+        f"request failed after {args.request_attempts} attempt(s): {last_error}"
+    )
 
 
 def verify_model_identity(args):
@@ -250,7 +301,10 @@ def main():
             "model": args.model,
             "seed": args.seed + index,
             "max_tokens": args.max_tokens,
+            "request_attempts": args.request_attempts,
         }
+        if args.system_prompt_sha256 is not None:
+            expected["system_prompt_sha256"] = args.system_prompt_sha256
         mismatched = [key for key, value in expected.items() if old.get(key) != value]
         if mismatched:
             raise SystemExit(
@@ -269,6 +323,7 @@ def main():
                 classified["model"] = args.model
                 classified["seed"] = args.seed + index
                 classified["max_tokens"] = args.max_tokens
+                classified["request_attempts"] = args.request_attempts
                 classified["client_elapsed_seconds"] = response.pop("client_elapsed_seconds")
             except Exception as exc:
                 classified = {
@@ -276,6 +331,7 @@ def main():
                     "model": args.model,
                     "seed": args.seed + index,
                     "max_tokens": args.max_tokens,
+                    "request_attempts": args.request_attempts,
                     "request_error": str(exc),
                     "response": "",
                     "reasoning_content": "",
@@ -287,6 +343,8 @@ def main():
                     "incoherent": False,
                     "incoherence_detail": None,
                 }
+            if args.system_prompt_sha256 is not None:
+                classified["system_prompt_sha256"] = args.system_prompt_sha256
             output.write(json.dumps(classified, ensure_ascii=False, sort_keys=True) + "\n")
             output.flush()
             os.fsync(output.fileno())
@@ -307,11 +365,15 @@ def main():
         "served_model": served_model,
         "base_url": args.base_url,
         "max_tokens": args.max_tokens,
+        "request_attempts": args.request_attempts,
         "seed": args.seed,
         "result_file": str(args.output),
         "run_started_utc": run_started_utc,
         "run_completed_utc": datetime.now(timezone.utc).isoformat(),
     })
+    if args.system_prompt_sha256 is not None:
+        summary["system_prompt_file"] = str(args.system_prompt_file)
+        summary["system_prompt_sha256"] = args.system_prompt_sha256
     summary_path = args.output.with_suffix(args.output.suffix + ".summary.json")
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     os.chmod(summary_path, 0o600)

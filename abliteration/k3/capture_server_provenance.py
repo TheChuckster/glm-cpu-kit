@@ -160,6 +160,30 @@ def evaluation_summary(evaluation, server_alias, server_host, server_port, serve
     if not isinstance(summary.get("seed"), int) or not isinstance(
             summary.get("max_tokens"), int):
         raise ValueError("evaluation summary seed or max_tokens is not an integer")
+    request_attempts = summary.get("request_attempts")
+    if request_attempts is not None and (
+        not isinstance(request_attempts, int)
+        or isinstance(request_attempts, bool)
+        or request_attempts < 1
+    ):
+        raise ValueError("evaluation summary request_attempts is not a positive integer")
+    system_prompt_sha256 = summary.get("system_prompt_sha256")
+    if system_prompt_sha256 is not None and (
+        not isinstance(system_prompt_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", system_prompt_sha256) is None
+    ):
+        raise ValueError("evaluation summary system-prompt SHA-256 is invalid")
+    system_prompt_file = summary.get("system_prompt_file")
+    if (system_prompt_sha256 is None) != (system_prompt_file is None):
+        raise ValueError("evaluation summary has an incomplete system-prompt identity")
+    system_prompt = None
+    if system_prompt_sha256 is not None:
+        if not isinstance(system_prompt_file, str):
+            raise ValueError("evaluation summary system-prompt path is invalid")
+        prompt_path = Path(system_prompt_file).resolve(strict=True)
+        system_prompt = artifact_record(prompt_path)
+        if system_prompt["sha256"] != system_prompt_sha256:
+            raise ValueError("evaluation summary system-prompt file hash differs")
     run_started = parse_utc(summary.get("run_started_utc"), "run_started_utc")
     run_completed = parse_utc(summary.get("run_completed_utc"), "run_completed_utc")
     server_started_parsed = parse_utc(server_started, "server_started_utc")
@@ -174,6 +198,21 @@ def evaluation_summary(evaluation, server_alias, server_host, server_port, serve
             raise ValueError(
                 f"evaluation row {row.get('id')!r} token limit does not match the summary"
             )
+        if request_attempts is not None and row.get("request_attempts") != request_attempts:
+            raise ValueError(
+                f"evaluation row {row.get('id')!r} attempt limit does not match the summary"
+            )
+        if (
+            system_prompt_sha256 is not None
+            and row.get("system_prompt_sha256") != system_prompt_sha256
+        ):
+            raise ValueError(
+                f"evaluation row {row.get('id')!r} system prompt does not match the summary"
+            )
+        if system_prompt_sha256 is None and "system_prompt_sha256" in row:
+            raise ValueError(
+                f"evaluation row {row.get('id')!r} has an unbound system prompt"
+            )
     configuration = {
         "base_url": summary["base_url"],
         "max_tokens": summary["max_tokens"],
@@ -183,13 +222,17 @@ def evaluation_summary(evaluation, server_alias, server_host, server_port, serve
         "served_model": summary["served_model"],
         "total": summary["total"],
     }
+    if request_attempts is not None:
+        configuration["request_attempts"] = request_attempts
+    if system_prompt_sha256 is not None:
+        configuration["system_prompt_sha256"] = system_prompt_sha256
     normalized = {
         **configuration,
         "model": "<MODEL>",
         "result_file": "<EVALUATION>",
         "served_model": "<MODEL>",
     }
-    return {
+    result = {
         **artifact_record(summary_path),
         "configuration": configuration,
         "normalized_configuration": normalized,
@@ -199,6 +242,9 @@ def evaluation_summary(evaluation, server_alias, server_host, server_port, serve
             "evaluation_completed_utc": summary["run_completed_utc"],
         },
     }
+    if system_prompt is not None:
+        result["system_prompt"] = system_prompt
+    return result
 
 
 def unit_properties(unit):
@@ -330,6 +376,10 @@ def main():
         summary = evaluation_summary(
             args.evaluation, server_alias, server_host, server_port, server_started
         )
+        if "system_prompt" in summary and summary["system_prompt"] not in protocol_artifacts:
+            raise ValueError(
+                "evaluation system prompt must also be an exact protocol artifact"
+            )
         prefix = None
         if args.request_prefix:
             loaded = json.loads(args.request_prefix.read_text())

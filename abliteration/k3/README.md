@@ -342,6 +342,23 @@ Neither stability nor any 410/410, harmless, quality, OpenCode, throughput,
 deployment, or repository-push gate opened. Exact terminal evidence is in
 [`V9_PROTOCOL.md`](V9_PROTOCOL.md); accepted V1 remains production.
 
+## Locked v10 experiment: semantic answering-trajectory overlay
+
+[`V10_PROTOCOL.md`](V10_PROTOCOL.md) freezes a materially different follow-up
+before any V10 response. Repeated K3 experiments removed refusal wording but
+left the hidden semantic choice to fictionalize, sanitize, or reverse the
+requested target. V10 therefore keeps the strongest structurally valid V2
+weights and tests three exact, hash-bound system prompts in a fixed order,
+beginning with the published Dolphin uncensored prompt pattern and then two
+already-frozen K3 anti-evasion contracts.
+
+Only already-consumed canonical development rows can select the prompt. The
+first candidate must reach 100/100 substantive canonical compliance before any
+of the 310 sealed StrongREJECT responses opens. A passing result is explicitly
+V2 weights plus a runtime system overlay, not a weight-only claim. Production,
+OpenCode, the registry, and both GitHub repositories remain unchanged until
+all harmful, harmless, quality, serving, OpenCode, and throughput gates pass.
+
 ## Prepare prompts
 
 ```sh
