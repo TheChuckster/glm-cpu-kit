@@ -424,6 +424,12 @@ OpenCode, model, publication, or remote repository changes are permitted unless
 the complete 410 harmful, harmless, capability, serving, integration,
 throughput, and reversible-canary ladder passes.
 
+[`V13_LAUNCHER_CLOSURE.md`](V13_LAUNCHER_CLOSURE.md) records the exact rebased
+engine, normal/sanitizer tests, local/remote tool closure, response-free control
+and feature PIDs, byte- and token-equivalent raw-seed proof, negative request
+matrix, and accepted-V1 restoration. That closure opens only V13's two-row
+failure probe; it is not a behavioral result or deployment approval.
+
 ## Prepare prompts
 
 ```sh
