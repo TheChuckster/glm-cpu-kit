@@ -247,6 +247,13 @@ production model remains the verified V1 derivative above; see
 [`abliteration/k3/V8_PROTOCOL.md`](abliteration/k3/V8_PROTOCOL.md) for the
 sealed outcomes and exact hashes.
 
+V9 is preregistered private research, not a selectable model. It keeps V2 but
+replaces the rejected one-axis recapture with a reversible rank-seven affine
+edit from the already sealed Q5 refusal subspace at layer 61. Its inputs,
+formula, two coefficients, engine contract, finite 410/410 gate, rollback, and
+delayed-push rule are fixed in
+[`abliteration/k3/V9_PROTOCOL.md`](abliteration/k3/V9_PROTOCOL.md).
+
 Note that `llama-server` does not reject a request naming a different alias than
 the loaded model: asking for `glm-5.2-abliterated` while `base` is live returns
 the base model with no error. `glm-model status` compares `/v1/models` against

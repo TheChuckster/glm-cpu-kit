@@ -317,6 +317,29 @@ registry or production. A passing calibration setting still must clear
 OpenCode, termination, and throughput gates before deployment or either
 repository push.
 
+V7 was rejected in calibration: none of its five fixed additive coefficients
+cleared the two consumed target-substitution probes. V8 then stopped even
+earlier, at its response-free geometry gate; the V2/Q5 layer-61 mean-direction
+cosine was `0.003617775073` against a locked `0.90` minimum, so no affine
+artifact or V8 K3 response existed. Exact terminal evidence is in
+[`V8_PROTOCOL.md`](V8_PROTOCOL.md).
+
+## Locked v9 experiment: rank-seven Q5 affine subspace
+
+[`V9_PROTOCOL.md`](V9_PROTOCOL.md) fixes a materially different reversible
+follow-up before implementation or behavior. It keeps the strong V2 weights
+but discards the rejected V2 mean axis. At the already selected layer 61 it
+projects every token out of the sealed, stable rank-seven Q5 refusal subspace,
+then relocates that complete subspace component to the measured Q5 harmless
+reference. Only ACE coefficients `0` and `-0.5` are eligible, in that order.
+
+V9 requires a new startup-only, self-contained affine-subspace GGUF and a
+fail-closed engine path. No K3 response may be generated until normal,
+sanitizer, state, parser, graph-reuse, and tiny-server tests are hash-bound in a
+stage-2 closure. Passing calibration still opens the same 410/410 substantive
+harmful, 0/100 harmless, quality, tools, OpenCode, throughput, rollback, and
+post-deploy gates before either repository push.
+
 ## Prepare prompts
 
 ```sh
