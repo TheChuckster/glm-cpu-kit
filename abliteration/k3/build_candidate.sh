@@ -24,15 +24,17 @@ LAYER_START="${LAYER_START:-56}"
 LAYER_END="${LAYER_END:-73}"
 MAX_RESIDUAL="${MAX_RESIDUAL:-0.02}"
 REUSE_DIRECTION="${REUSE_DIRECTION:-0}"
+SUBSPACE_RANK="${SUBSPACE_RANK:-0}"
+PATCH_EXISTING="${PATCH_EXISTING:-0}"
 
 CVECTOR="$BUILD_DIR/bin/llama-cvector-generator"
 QUANTIZE="$BUILD_DIR/bin/llama-quantize"
 SOURCE_MODEL="$SOURCE_DIR/$SOURCE_PREFIX-00001-of-00019.gguf"
 REFERENCE_MODEL="$REFERENCE_DIR/$REFERENCE_PREFIX-00001-of-00019.gguf"
 OUTPUT_MODEL="$OUTPUT_DIR/$OUTPUT_PREFIX.gguf"
-DIRECTION="$ARTIFACT_DIR/k3-refusal-direction.gguf"
-DIAGNOSTIC_DIRECTION="$ARTIFACT_DIR/k3-refusal-direction-q5-reference.gguf"
-VALIDATION_DIRECTION="$ARTIFACT_DIR/k3-refusal-direction-validation.gguf"
+DIRECTION="${DIRECTION:-$ARTIFACT_DIR/k3-refusal-direction.gguf}"
+DIAGNOSTIC_DIRECTION="${DIAGNOSTIC_DIRECTION:-$ARTIFACT_DIR/k3-refusal-direction-q5-reference.gguf}"
+VALIDATION_DIRECTION="${VALIDATION_DIRECTION:-$ARTIFACT_DIR/k3-refusal-direction-validation.gguf}"
 VALIDATION_HARMFUL="$ARTIFACT_DIR/validation.harmful.txt"
 VALIDATION_HARMLESS="$ARTIFACT_DIR/validation.harmless.txt"
 QUANT_LOG="$ARTIFACT_DIR/quantize.log"
@@ -60,12 +62,21 @@ fi
 [ -x "$QUANTIZE" ] || die "missing patched quantizer: $QUANTIZE"
 [ -x "$SCRIPT_DIR/analyze_direction.py" ] || die "missing direction analyzer"
 [ -x "$SCRIPT_DIR/compare_directions.py" ] || die "missing direction comparator"
+[ -x "$SCRIPT_DIR/compare_subspaces.py" ] || die "missing subspace comparator"
 [ -x "$SCRIPT_DIR/prepare_validation_prompts.py" ] || die "missing validation prompt materializer"
 [ -x "$SCRIPT_DIR/verify_model.py" ] || die "missing model verifier"
 [ -x "$SCRIPT_DIR/verify_prompts.py" ] || die "missing prompt verifier"
 [[ "$THREADS" =~ ^[1-9][0-9]*$ ]] || die "THREADS must be a positive integer"
 [[ "$REUSE_DIRECTION" == 0 || "$REUSE_DIRECTION" == 1 ]] \
     || die "REUSE_DIRECTION must be 0 or 1"
+[[ "$SUBSPACE_RANK" =~ ^[0-9]+$ ]] || die "SUBSPACE_RANK must be a non-negative integer"
+[[ "$PATCH_EXISTING" == 0 || "$PATCH_EXISTING" == 1 ]] \
+    || die "PATCH_EXISTING must be 0 or 1"
+if [ "$PATCH_EXISTING" = 1 ]; then
+    [ "$SUBSPACE_RANK" -gt 0 ] \
+        || die "PATCH_EXISTING is reserved for an explicit subspace candidate"
+    command -v cp >/dev/null || die "cp is required for reflink construction"
+fi
 
 if [ -d "$OUTPUT_DIR" ] && find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
     die "refusing to overwrite non-empty candidate directory: $OUTPUT_DIR"
@@ -91,6 +102,15 @@ BUILD_PROVENANCE_INPUTS=(
     "$SCRIPT_DIR/verify_model.py"
     "$SCRIPT_DIR/verify_prompts.py"
 )
+if [ "$SUBSPACE_RANK" -gt 0 ]; then
+    BUILD_PROVENANCE_INPUTS+=(
+        "$SCRIPT_DIR/build_candidate_v2.sh"
+        "$SCRIPT_DIR/V2_PROTOCOL.md"
+        "$SCRIPT_DIR/compare_subspaces.py"
+        "$SCRIPT_DIR/prepare_v2_holdout.py"
+        "$SCRIPT_DIR/verify_v2_holdout.py"
+    )
+fi
 if [ -e "$ENGINE_MANIFEST" ]; then
     [ "$REUSE_DIRECTION" = 1 ] \
         || die "build provenance already exists; inspect it and set REUSE_DIRECTION=1"
@@ -128,11 +148,17 @@ on_exit() {
 }
 trap on_exit EXIT
 
-# Leave enough headroom for GGUF metadata, logs, and the page cache. The known
-# candidate is about 788 GiB; this refuses a run below 850 GiB free.
+# A normal build streams the whole 788 GiB model. Patch-existing mode starts
+# from an XFS copy-on-write clone and rewrites only the 10.6 GiB selected
+# payloads, but retains ample headroom for temporary quantization buffers.
 available=$(df -PB1 "$(dirname "$OUTPUT_DIR")" | awk 'NR == 2 {print $4}')
-required=$((850 * 1024 * 1024 * 1024))
-[ "${available:-0}" -ge "$required" ] || die "need at least 850 GiB free; have $((available / 1024 / 1024 / 1024)) GiB"
+if [ "$PATCH_EXISTING" = 1 ]; then
+    required=$((32 * 1024 * 1024 * 1024))
+else
+    required=$((850 * 1024 * 1024 * 1024))
+fi
+[ "${available:-0}" -ge "$required" ] \
+    || die "need at least $((required / 1024 / 1024 / 1024)) GiB free; have $((available / 1024 / 1024 / 1024)) GiB"
 
 "$SCRIPT_DIR/prepare_validation_prompts.py" \
     "$PROMPTS_DIR/validation.harmful.jsonl" "$PROMPTS_DIR/validation.harmless.jsonl" \
@@ -179,6 +205,8 @@ else
     generate_direction "$SOURCE_MODEL" "$VALIDATION_HARMFUL" "$VALIDATION_HARMLESS" \
         "$VALIDATION_DIRECTION" "$ARTIFACT_DIR/direction-validation.log"
 fi
+sha256sum "$DIRECTION" "$DIAGNOSTIC_DIRECTION" "$VALIDATION_DIRECTION" \
+    > "$ARTIFACT_DIR/directions.sha256"
 
 "$SCRIPT_DIR/analyze_direction.py" "$DIRECTION" \
     --band "$LAYER_START" "$LAYER_END" \
@@ -206,6 +234,18 @@ fi
     --band "$LAYER_START" "$LAYER_END" --min-band-cosine 0.80 \
     --json "$ARTIFACT_DIR/direction-validation-crosscheck.json" \
     | tee "$ARTIFACT_DIR/direction-validation-crosscheck.txt"
+if [ "$SUBSPACE_RANK" -gt 0 ]; then
+    "$SCRIPT_DIR/compare_subspaces.py" "$DIRECTION" "$DIAGNOSTIC_DIRECTION" \
+        --band "$LAYER_START" "$LAYER_END" --rank "$SUBSPACE_RANK" \
+        --min-principal-cosine 0.90 \
+        --json "$ARTIFACT_DIR/subspace-q5-crosscheck.json" \
+        | tee "$ARTIFACT_DIR/subspace-q5-crosscheck.txt"
+    "$SCRIPT_DIR/compare_subspaces.py" "$DIRECTION" "$VALIDATION_DIRECTION" \
+        --band "$LAYER_START" "$LAYER_END" --rank "$SUBSPACE_RANK" \
+        --min-principal-cosine 0.80 \
+        --json "$ARTIFACT_DIR/subspace-validation-crosscheck.json" \
+        | tee "$ARTIFACT_DIR/subspace-validation-crosscheck.txt"
+fi
 
 TARGET_PATTERN='^token_embd\.weight$,^blk\.[0-9]+\.attn_output\.weight$,^blk\.0\.ffn_down\.weight$,^blk\.[1-9][0-9]*\.ffn_down_shexp\.weight$,^blk\.[1-9][0-9]*\.ffn_routed_up\.weight$'
 COMMON_ARGS=(
@@ -218,14 +258,47 @@ COMMON_ARGS=(
     --orthogonalize-quant-passes 16
     --orthogonalize-max-residual "$MAX_RESIDUAL"
 )
+if [ "$SUBSPACE_RANK" -gt 0 ]; then
+    COMMON_ARGS+=(--orthogonalize-subspace-rank "$SUBSPACE_RANK")
+fi
+
+if [ "$PATCH_EXISTING" = 1 ]; then
+    # Reflink is mandatory: a silent byte-copy fallback would consume another
+    # 788 GiB. Distinct device/inode pairs are checked before the quantizer gets
+    # write access, so the immutable reference cannot be patched through a
+    # hard link. The quantizer independently validates every tensor name, shape,
+    # selected type, and encoded size before writing a selected payload range.
+    [ "$(stat -c %d "$REFERENCE_DIR")" = "$(stat -c %d "$OUTPUT_DIR")" ] \
+        || die "reference and output must share a filesystem for reflink construction"
+    for index in "${!REFERENCE_SHARDS[@]}"; do
+        split=$((index + 1))
+        destination=$(printf '%s/%s-%05d-of-%05d.gguf' \
+            "$OUTPUT_DIR" "$OUTPUT_PREFIX" "$split" "${#REFERENCE_SHARDS[@]}")
+        cp --reflink=always --preserve=mode,timestamps -- \
+            "${REFERENCE_SHARDS[$index]}" "$destination"
+        chmod u+w -- "$destination"
+        reference_identity=$(stat -c '%d:%i' "${REFERENCE_SHARDS[$index]}")
+        candidate_identity=$(stat -c '%d:%i' "$destination")
+        [ "$reference_identity" != "$candidate_identity" ] \
+            || die "candidate shard is not a distinct inode: $destination"
+    done
+    COMMON_ARGS+=(--orthogonalize-patch-existing)
+fi
 
 # Count/shape/keep-pattern conflicts fail before an output file is opened.
 "$QUANTIZE" --dry-run "${COMMON_ARGS[@]}" \
     "$SOURCE_MODEL" "$OUTPUT_MODEL" Q5_K "$THREADS" \
     > "$ARTIFACT_DIR/quantize-dry-run.log" 2>&1
-grep -q 'orthogonalization preflight matched 279 tensors; selected-F32=0;' \
+grep -q "orthogonalization preflight matched 279 tensors; selected-F32=0; basis-rank=$((SUBSPACE_RANK > 0 ? SUBSPACE_RANK : 1));" \
     "$ARTIFACT_DIR/quantize-dry-run.log" \
     || die "dry run did not prove exactly 279 targets with zero selected F32 tensors"
+if [ "$PATCH_EXISTING" = 1 ]; then
+    grep -q 'patch-existing=yes' "$ARTIFACT_DIR/quantize-dry-run.log" \
+        || die "dry run did not validate patch-existing mode"
+    grep -q 'patch-existing validated 2573 tensors across 19 existing output shards' \
+        "$ARTIFACT_DIR/quantize-dry-run.log" \
+        || die "dry run did not validate the complete existing output layout"
+fi
 
 "$QUANTIZE" "${COMMON_ARGS[@]}" \
     "$SOURCE_MODEL" "$OUTPUT_MODEL" Q5_K "$THREADS" \
@@ -233,10 +306,17 @@ grep -q 'orthogonalization preflight matched 279 tensors; selected-F32=0;' \
 
 # The full check compares every routed expert byte against the source. It is
 # intentionally expensive: a one-bit expert mutation invalidates the candidate.
-"$SCRIPT_DIR/verify_model.py" "$SOURCE_DIR" "$OUTPUT_DIR" \
-    --reference-layout "$REFERENCE_DIR" \
-    --quant-log "$QUANT_LOG" --max-residual "$MAX_RESIDUAL" \
-    --json "$ARTIFACT_DIR/model-verification.json" \
+VERIFY_ARGS=(
+    "$SOURCE_DIR" "$OUTPUT_DIR"
+    --reference-layout "$REFERENCE_DIR"
+    --quant-log "$QUANT_LOG" --max-residual "$MAX_RESIDUAL"
+    --expected-basis-rank "$((SUBSPACE_RANK > 0 ? SUBSPACE_RANK : 1))"
+    --json "$ARTIFACT_DIR/model-verification.json"
+)
+if [ "$PATCH_EXISTING" = 1 ]; then
+    VERIFY_ARGS+=(--require-patch-existing)
+fi
+"$SCRIPT_DIR/verify_model.py" "${VERIFY_ARGS[@]}" \
     | tee "$ARTIFACT_DIR/model-verification.txt"
 
 input_guard || die "an input model changed during candidate construction"

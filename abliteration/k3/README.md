@@ -135,6 +135,36 @@ normal Q5-attention quantization. Routed expert banks (`*_exps.*`) are copied
 byte-for-byte. In particular, `ffn_routed_down` and all 896 expert banks are
 never projected.
 
+## Locked v2 experiment: multi-direction refusal subspace
+
+The accepted v1 remains production. Its complete manual audit found 18/100
+substantive harmful compliance, 19/100 mixed responses, and 63/100 refusals;
+mixed and refusal therefore give an 82% conservative refusal rate. The residual
+failures span the benchmark categories rather than one narrow topic.
+
+The v1 layer directions also are not effectively one-dimensional: across the
+fixed 56--73 band, the band mean is almost the first principal direction but
+that component captures only 43.2% of normalized layer-direction energy. The
+first ten components capture 95.3884%. Their subspaces reproduce across the
+independent Q5 extraction (minimum principal cosine 0.965558) and held-out
+32+32 validation extraction (0.849392).
+
+[`V2_PROTOCOL.md`](V2_PROTOCOL.md) locks a rank-10, same-target intervention
+and a 0% **substantive** refusal gate before any v2 output is generated or
+scored. Run only its fixed wrapper:
+
+```sh
+./abliteration/k3/build_candidate_v2.sh
+```
+
+V2 uses the pristine Q5 model as an XFS copy-on-write template. The selected
+279 payloads occupy only 10.53 GiB, so the patched quantizer validates all
+2,573 tensors and overwrites only those payload ranges instead of allocating a
+second physical 788 GiB copy. The builder requires `cp --reflink=always`,
+distinct source/candidate inodes, complete layout and type/size agreement, and
+the same post-build byte verifier as v1. It does not select or restart a live
+model.
+
 ## Prepare prompts
 
 ```sh

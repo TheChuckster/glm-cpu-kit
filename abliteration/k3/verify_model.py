@@ -256,12 +256,31 @@ def require_payloads_differ(left, right, names, chunk_size=16 * 1024 * 1024):
     return changed
 
 
-def check_quant_log(path, targets, max_residual):
+def check_quant_log(path, targets, max_residual, expected_basis_rank=None,
+                    require_patch_existing=False):
     text = path.read_text(errors="replace")
     if "failed to quantize" in text:
         raise ValueError(f"quantization log reports failure: {path}")
     if "orthogonalization preflight matched 279 tensors" not in text:
         raise ValueError("quantization log lacks the exact 279-tensor preflight")
+    if expected_basis_rank is not None:
+        marker = f"basis-rank={expected_basis_rank};"
+        if marker not in text:
+            raise ValueError(f"quantization log lacks expected {marker}")
+    patched = re.findall(
+        r"orthogonalize: (\S+) patched-existing shard=\d+ offset=\d+ bytes=\d+", text)
+    if require_patch_existing:
+        if "patch-existing=yes" not in text:
+            raise ValueError("quantization log does not declare patch-existing mode")
+        if len(patched) != len(set(patched)):
+            raise ValueError("quantization log contains duplicate patch-existing writes")
+        if set(patched) != targets:
+            missing = sorted(targets - set(patched))[:5]
+            extra = sorted(set(patched) - targets)[:5]
+            raise ValueError(
+                f"patch-existing write set mismatch: missing={missing}, extra={extra}")
+    elif patched:
+        raise ValueError("unexpected patch-existing writes in a full-output quantization log")
     matches = re.findall(r"orthogonalize: (\S+) post-quant-residual=([0-9.]+)%", text)
     observed = {}
     for name, value in matches:
@@ -279,7 +298,7 @@ def check_quant_log(path, targets, max_residual):
             f"{worst_name} retained source component {100 * worst:.6f}% "
             f"exceeds {100 * max_residual:.6f}%"
         )
-    return observed, worst_name, worst
+    return observed, worst_name, worst, patched
 
 
 def main():
@@ -294,6 +313,8 @@ def main():
     )
     parser.add_argument("--quant-log", type=Path, required=True)
     parser.add_argument("--max-residual", type=float, default=0.02)
+    parser.add_argument("--expected-basis-rank", type=int)
+    parser.add_argument("--require-patch-existing", action="store_true")
     parser.add_argument("--skip-expert-bytes", action="store_true", help="skip source/candidate routed-expert byte checks during development")
     parser.add_argument("--skip-reference-bytes", action="store_true", help="skip exact A/B payload checks during development")
     parser.add_argument("--json", type=Path)
@@ -304,6 +325,8 @@ def main():
         parser.error("source, candidate, and reference-layout directories must all differ")
     if not (0 <= args.max_residual <= 1):
         parser.error("--max-residual must be in [0, 1]")
+    if args.expected_basis_rank is not None and args.expected_basis_rank < 1:
+        parser.error("--expected-basis-rank must be positive")
 
     source_paths, source_metadata, source = load_model(args.source)
     candidate_paths, candidate_metadata, candidate = load_model(args.candidate)
@@ -355,7 +378,9 @@ def main():
     if forbidden:
         raise AssertionError(f"target recipe includes forbidden expert tensor(s): {forbidden}")
 
-    observed, worst_name, worst = check_quant_log(args.quant_log, targets, args.max_residual)
+    observed, worst_name, worst, patched = check_quant_log(
+        args.quant_log, targets, args.max_residual,
+        args.expected_basis_rank, args.require_patch_existing)
     unchanged_names = set(candidate) - targets
     unchanged_bytes = sum(reference[name].size for name in unchanged_names)
     unchanged_fingerprint = None
@@ -385,6 +410,9 @@ def main():
         ).hexdigest(),
         "tensor_count": len(source),
         "projected_tensor_count": len(targets),
+        "basis_rank": args.expected_basis_rank,
+        "patch_existing": args.require_patch_existing,
+        "patch_existing_payload_writes": len(patched),
         "projected_tensors_differ_from_reference": (
             None if args.skip_reference_bytes else len(changed_targets)
         ),
