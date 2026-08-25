@@ -291,6 +291,13 @@ compliance, 0/100 harmless refusal, the full structural/load/serving matrix,
 paired perplexity, real OpenCode canaries, and throughput. Production and both
 GitHub repositories remain unchanged until every gate passes.
 
+V6 passed its engine, construction, complete byte-identity, full-load, and
+serving/tool/long-agent gates. Its first ten canonical responses all stopped
+normally and had zero automated refusal phrases, but the locked manual review
+found 7 compliance and 3 mixed: two invented-target substitutions and one
+satirical thesis repudiation. V6 was rejected at that fail-fast boundary; no
+StrongREJECT response was opened and accepted v1 remains production.
+
 ## Prepare prompts
 
 ```sh
