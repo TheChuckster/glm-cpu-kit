@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+import platform
 import stat
 import struct
 import sys
@@ -76,6 +77,49 @@ def sha256(path):
         for block in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def dependency_manifest(gguf_py):
+    package = gguf_py / "gguf"
+    if gguf_py.is_symlink() or package.is_symlink() or not package.is_dir():
+        raise ValueError(f"invalid or symbolic GGUF Python package: {gguf_py}")
+    files = {}
+    for path in sorted(package.rglob("*.py")):
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"invalid or symbolic GGUF Python source: {path}")
+        relative = path.relative_to(gguf_py).as_posix()
+        files[relative] = {
+            "bytes": path.stat().st_size,
+            "sha256": sha256(path),
+        }
+    if not files:
+        raise ValueError(f"GGUF Python package contains no sources: {gguf_py}")
+    canonical = hashlib.sha256()
+    for relative, record in files.items():
+        canonical.update(
+            (f"{relative}\0{record['bytes']}\0{record['sha256']}\n").encode("utf-8"))
+    helper = Path(__file__).resolve()
+    return {
+        "builder": {
+            "bytes": helper.stat().st_size,
+            "sha256": sha256(helper),
+        },
+        "python": {
+            "implementation": platform.python_implementation(),
+            "version": platform.python_version(),
+            "byteorder": sys.byteorder,
+            "machine": platform.machine(),
+            "system": platform.system(),
+        },
+        "numpy": {
+            "version": np.__version__,
+        },
+        "gguf_python": {
+            "canonical_source_tree_sha256": canonical.hexdigest(),
+            "source_file_count": len(files),
+            "source_files": files,
+        },
+    }
 
 
 def payload_sha256(values, dtype="<f4"):
@@ -287,11 +331,17 @@ def offset_span_residual(basis, offset):
 
 
 def write_affine_subspace(path, basis, offset, alpha, gguf_py):
-    sys.path.insert(0, str(gguf_py))
+    sys.path.insert(0, str(gguf_py.resolve()))
     try:
-        from gguf import GGUFWriter
+        import gguf
     except ImportError as exc:
         raise ValueError(f"cannot import GGUFWriter from {gguf_py}") from exc
+    package = (gguf_py / "gguf").resolve()
+    module = Path(gguf.__file__).resolve()
+    if not module.is_relative_to(package):
+        raise ValueError(
+            f"loaded GGUF Python module {module} is outside dependency tree {package}")
+    GGUFWriter = gguf.GGUFWriter
     writer = GGUFWriter(path, "controlvectorsubspace")
     writer.add_string("controlvectorsubspace.model_hint", "kimi-k3")
     writer.add_string("controlvectorsubspace.method", METHOD_VERSION)
@@ -371,6 +421,8 @@ def main():
     if args.output.exists():
         raise ValueError(f"refusing to reuse output path: {args.output}")
 
+    dependencies = dependency_manifest(args.gguf_py)
+
     positive, negative = load_capture(args.q5_capture)
     basis_f32 = load_basis(args.q5_basis)
     source_manifest = validate_basis_manifest(
@@ -403,8 +455,16 @@ def main():
         validate_affine_subspace(path, basis_f32, offsets[filename], alpha)
         artifact_paths[filename] = path
 
+    if (sha256(args.q5_capture) != EXPECTED_CAPTURE_SHA256
+            or sha256(args.q5_basis) != EXPECTED_BASIS_SHA256
+            or sha256(args.q5_basis_manifest) != EXPECTED_BASIS_MANIFEST_SHA256):
+        raise ValueError("sealed source changed during construction")
+    if dependency_manifest(args.gguf_py) != dependencies:
+        raise ValueError("construction dependency changed during construction")
+
     manifest = {
         "method_version": METHOD_VERSION,
+        "dependencies": dependencies,
         "layer": LAYER,
         "width": WIDTH,
         "rank": RANK,

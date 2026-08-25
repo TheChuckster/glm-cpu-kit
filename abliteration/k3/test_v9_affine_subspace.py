@@ -171,6 +171,14 @@ class V9AffineSubspaceTests(unittest.TestCase):
         manifest = json.loads((output / "manifest.json").read_text())
         self.assertEqual(manifest["alphas_in_locked_order"], [0.0, -0.5])
         self.assertEqual(manifest["rank"], self.rank)
+        self.assertEqual(
+            manifest["dependencies"]["builder"]["sha256"],
+            affine.sha256(Path(affine.__file__).resolve()))
+        self.assertGreater(
+            manifest["dependencies"]["gguf_python"]["source_file_count"], 0)
+        self.assertEqual(
+            len(manifest["dependencies"]["gguf_python"]["source_files"]),
+            manifest["dependencies"]["gguf_python"]["source_file_count"])
         self.assertEqual(oct(output.stat().st_mode & 0o777), "0o700")
         for path in output.iterdir():
             self.assertEqual(oct(path.stat().st_mode & 0o777), "0o600")
