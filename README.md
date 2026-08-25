@@ -244,6 +244,12 @@ remains the verified V1 derivative above; see
 [`abliteration/k3/V7_PROTOCOL.md`](abliteration/k3/V7_PROTOCOL.md) for the
 sealed outcome and exact hashes.
 
+V8 is preregistered research, not a selectable model. It tests affine concept
+editing at the previously geometry-selected layer 61: project away the prompt's
+remaining refusal-axis component, then relocate it to the measured non-refusal
+mean. Its fixed method and fail-fast gates are in
+[`abliteration/k3/V8_PROTOCOL.md`](abliteration/k3/V8_PROTOCOL.md).
+
 Note that `llama-server` does not reject a request naming a different alias than
 the loaded model: asking for `glm-5.2-abliterated` while `base` is live returns
 the base model with no error. `glm-model status` compares `/v1/models` against
