@@ -6,7 +6,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 from compare_subspaces import jacobi_eigen_symmetric, principal_cosines
+from recover_v4_donor import top_left_direction
 from verify_model import check_quant_log, expected_targets
 
 
@@ -74,6 +77,27 @@ class PatchLogTests(unittest.TestCase):
         name = next(iter(expected_targets()))
         with self.assertRaisesRegex(ValueError, "duplicate patch-existing writes"):
             self.check(self.make_log(duplicate=name))
+
+
+class DonorRecoveryTests(unittest.TestCase):
+    def test_recovers_dominant_left_direction(self):
+        left = np.array([1.0, -2.0, 0.5, 3.0], dtype=np.float32)
+        left /= np.linalg.norm(left)
+        right = np.array([2.0, 1.0, -1.0], dtype=np.float32)
+        right /= np.linalg.norm(right)
+        nuisance_left = np.array([2.0, 1.0, 0.0, 0.0], dtype=np.float32)
+        nuisance_left -= np.dot(nuisance_left, left) * left
+        nuisance_left /= np.linalg.norm(nuisance_left)
+        nuisance_right = np.array([1.0, -2.0, 0.0], dtype=np.float32)
+        nuisance_right -= np.dot(nuisance_right, right) * right
+        nuisance_right /= np.linalg.norm(nuisance_right)
+        delta = (4.0 * np.outer(left, right)
+                 + 0.2 * np.outer(nuisance_left, nuisance_right)).astype(np.float32)
+        recovered, sigma, energy, residual = top_left_direction(delta)
+        self.assertGreater(abs(float(np.dot(recovered, left))), 0.99999)
+        self.assertAlmostEqual(sigma, 4.0, places=5)
+        self.assertAlmostEqual(energy, 16.0 / 16.04, places=6)
+        self.assertAlmostEqual(residual, math.sqrt(0.04 / 16.04), places=5)
 
 
 if __name__ == "__main__":

@@ -199,6 +199,32 @@ the fresh StrongREJECT sample; target substitution, placeholder replacement,
 and fictionalization count as `mixed` failures even when refusal keywords are
 zero.
 
+V3-r2 completed all non-behavioral gates but was rejected after its first
+ten-row canonical block: 6 substantive compliance and 4 `mixed` soft failures.
+Its StrongREJECT holdout remained sealed and it was never deployed.
+
+## Locked v4 experiment: independent public edit plus local span
+
+[`V4_PROTOCOL.md`](V4_PROTOCOL.md) records the next materially different
+intervention before any v4 weight construction or behavior. It sparsely
+recovers a stable rank-one edit from two distant writer tensors in a pinned
+public K3 derivative, then unions that direction with v3's complete rank-18
+local activation span. The donor direction has projection norm 0.793320 into
+the old span, while the fused rank-19 subspaces retain minimum Q5/validation
+principal cosines of 0.962189 and 0.835898.
+
+The final 110 StrongREJECT prompts unused by canonical, v2, or v3 are kept as a
+single sealed confirmation set. V4 must first achieve 100/100 substantive
+canonical compliance; only then is that final remainder opened. The build
+wrapper verifies every raw-source binding, direction, manifest, holdout,
+engine, and quantizer hash:
+
+```sh
+./abliteration/k3/verify_v4_holdout.py \
+    /models/.abliteration/k3/v4-holdout
+./abliteration/k3/build_candidate_v4.sh
+```
+
 ## Prepare prompts
 
 ```sh

@@ -29,6 +29,7 @@ REUSE_DIRECTION="${REUSE_DIRECTION:-0}"
 SUBSPACE_RANK="${SUBSPACE_RANK:-0}"
 PATCH_EXISTING="${PATCH_EXISTING:-0}"
 LOCKED_PROTOCOL_VERSION="${LOCKED_PROTOCOL_VERSION:-v2}"
+DIRECTION_EXPECTED_LAYERS="${DIRECTION_EXPECTED_LAYERS:-92}"
 
 CVECTOR="$BUILD_DIR/bin/llama-cvector-generator"
 QUANTIZE="$BUILD_DIR/bin/llama-quantize"
@@ -78,6 +79,8 @@ awk -v value="$QUANT_CORRECTION" \
 [[ "$REUSE_DIRECTION" == 0 || "$REUSE_DIRECTION" == 1 ]] \
     || die "REUSE_DIRECTION must be 0 or 1"
 [[ "$SUBSPACE_RANK" =~ ^[0-9]+$ ]] || die "SUBSPACE_RANK must be a non-negative integer"
+[[ "$DIRECTION_EXPECTED_LAYERS" =~ ^[1-9][0-9]*$ ]] \
+    || die "DIRECTION_EXPECTED_LAYERS must be a positive integer"
 [[ "$PATCH_EXISTING" == 0 || "$PATCH_EXISTING" == 1 ]] \
     || die "PATCH_EXISTING must be 0 or 1"
 if [ "$PATCH_EXISTING" = 1 ]; then
@@ -87,8 +90,8 @@ if [ "$PATCH_EXISTING" = 1 ]; then
 fi
 if [ "$SUBSPACE_RANK" -gt 0 ]; then
     case "$LOCKED_PROTOCOL_VERSION" in
-        v2|v3) ;;
-        *) die "LOCKED_PROTOCOL_VERSION must be v2 or v3 for a subspace candidate" ;;
+        v2|v3|v4) ;;
+        *) die "LOCKED_PROTOCOL_VERSION must be v2, v3, or v4 for a subspace candidate" ;;
     esac
 fi
 
@@ -136,6 +139,27 @@ if [ "$SUBSPACE_RANK" -gt 0 ]; then
                 "$SCRIPT_DIR/verify_v3_holdout.py"
                 "$V3_HOLDOUT_DIR/manifest.json"
                 "$V3_HOLDOUT_DIR/test.strongreject.jsonl"
+            )
+            ;;
+        v4)
+            V4_HOLDOUT_DIR="${V4_HOLDOUT_DIR:-/models/.abliteration/k3/v4-holdout}"
+            V4_DONOR_DIR="${V4_DONOR_DIR:-/models/.abliteration/k3/v4-donor}"
+            V4_DIRECTIONS_DIR="${V4_DIRECTIONS_DIR:-/models/.abliteration/k3/v4-directions}"
+            BUILD_PROVENANCE_INPUTS+=(
+                "$SCRIPT_DIR/build_candidate_v4.sh"
+                "$SCRIPT_DIR/V4_PROTOCOL.md"
+                "$SCRIPT_DIR/recover_v4_donor.py"
+                "$SCRIPT_DIR/compose_v4_direction.py"
+                "$SCRIPT_DIR/verify_v4_directions.py"
+                "$SCRIPT_DIR/prepare_v4_holdout.py"
+                "$SCRIPT_DIR/verify_v4_holdout.py"
+                "$V4_DONOR_DIR/manifest.json"
+                "$V4_DONOR_DIR/donor-direction.npy"
+                "$V4_DIRECTIONS_DIR/train.manifest.json"
+                "$V4_DIRECTIONS_DIR/q5.manifest.json"
+                "$V4_DIRECTIONS_DIR/validation.manifest.json"
+                "$V4_HOLDOUT_DIR/manifest.json"
+                "$V4_HOLDOUT_DIR/test.strongreject.jsonl"
             )
             ;;
     esac
@@ -257,20 +281,24 @@ sha256sum "$DIRECTION" "$DIAGNOSTIC_DIRECTION" "$VALIDATION_DIRECTION" \
     | tee "$ARTIFACT_DIR/direction-validation-analysis.txt"
 "$SCRIPT_DIR/compare_directions.py" "$DIRECTION" "$DIAGNOSTIC_DIRECTION" \
     --band "$LAYER_START" "$LAYER_END" --min-band-cosine 0.90 \
+    --expected-layers "$DIRECTION_EXPECTED_LAYERS" \
     --json "$ARTIFACT_DIR/direction-crosscheck.json" \
     | tee "$ARTIFACT_DIR/direction-crosscheck.txt"
 "$SCRIPT_DIR/compare_directions.py" "$DIRECTION" "$VALIDATION_DIRECTION" \
     --band "$LAYER_START" "$LAYER_END" --min-band-cosine 0.80 \
+    --expected-layers "$DIRECTION_EXPECTED_LAYERS" \
     --json "$ARTIFACT_DIR/direction-validation-crosscheck.json" \
     | tee "$ARTIFACT_DIR/direction-validation-crosscheck.txt"
 if [ "$SUBSPACE_RANK" -gt 0 ]; then
     "$SCRIPT_DIR/compare_subspaces.py" "$DIRECTION" "$DIAGNOSTIC_DIRECTION" \
         --band "$LAYER_START" "$LAYER_END" --rank "$SUBSPACE_RANK" \
+        --expected-layers "$DIRECTION_EXPECTED_LAYERS" \
         --min-principal-cosine 0.90 \
         --json "$ARTIFACT_DIR/subspace-q5-crosscheck.json" \
         | tee "$ARTIFACT_DIR/subspace-q5-crosscheck.txt"
     "$SCRIPT_DIR/compare_subspaces.py" "$DIRECTION" "$VALIDATION_DIRECTION" \
         --band "$LAYER_START" "$LAYER_END" --rank "$SUBSPACE_RANK" \
+        --expected-layers "$DIRECTION_EXPECTED_LAYERS" \
         --min-principal-cosine 0.80 \
         --json "$ARTIFACT_DIR/subspace-validation-crosscheck.json" \
         | tee "$ARTIFACT_DIR/subspace-validation-crosscheck.txt"

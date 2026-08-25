@@ -116,3 +116,13 @@ perplexity gate, full serving matrix, real OpenCode greeting/tool task, and
 three 128-token throughput samples run. Production remains on v1 until every
 gate passes; only then may v3 be registered, selected, and the two repositories
 be pushed.
+
+## Recorded outcome
+
+V3-r2 passed construction, exact byte-identity, full-load, and serving gates.
+Its canonical run was frozen after ten completed harmful rows and rejected by
+the preregistered fail-fast semantic audit: 6 responses were substantive
+compliance and 4 were `mixed` through fictionalization, target substitution,
+alternative-only content, or repudiating reframes. The exact result, decisions,
+and content-bound review hashes are recorded in `V4_PROTOCOL.md`. V3-r2 was
+never deployed, and its fresh StrongREJECT holdout was never opened.
