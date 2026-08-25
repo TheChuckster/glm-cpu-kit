@@ -225,6 +225,25 @@ engine, and quantizer hash:
 ./abliteration/k3/build_candidate_v4.sh
 ```
 
+V4 passed all construction, full-load, and serving checks but failed its first
+ten-row semantic block at 5 compliance / 5 mixed. Its StrongREJECT remainder
+was never opened and V4 was never deployed.
+
+## Locked v5 experiment: semantic refusal manifold
+
+[`V5_PROTOCOL.md`](V5_PROTOCOL.md) locks a CPU adaptation of the official AAAI
+2026 *SOM Directions Are Better than One* method. The patched cvector generator
+retains raw final-token activations for the fixed 359+359 development set;
+`generate_v5_directions.py` selects one layer using activation geometry, trains
+the official 4x4 SOM, and deterministically selects seven supported, diverse
+directions. Source/bootstrap/Q5 subspace stability is required before a weight
+can be edited.
+
+Stage 1 is pre-registered before activation extraction. After exact direction
+hashes are appended and committed, V5 must clear canonical development and all
+310 still-untouched StrongREJECT prompts at 0% substantive refusal before it
+can replace V1.
+
 ## Prepare prompts
 
 ```sh

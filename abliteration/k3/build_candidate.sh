@@ -90,8 +90,8 @@ if [ "$PATCH_EXISTING" = 1 ]; then
 fi
 if [ "$SUBSPACE_RANK" -gt 0 ]; then
     case "$LOCKED_PROTOCOL_VERSION" in
-        v2|v3|v4) ;;
-        *) die "LOCKED_PROTOCOL_VERSION must be v2, v3, or v4 for a subspace candidate" ;;
+        v2|v3|v4|v5) ;;
+        *) die "LOCKED_PROTOCOL_VERSION must be v2, v3, v4, or v5 for a subspace candidate" ;;
     esac
 fi
 
@@ -158,6 +158,33 @@ if [ "$SUBSPACE_RANK" -gt 0 ]; then
                 "$V4_DIRECTIONS_DIR/train.manifest.json"
                 "$V4_DIRECTIONS_DIR/q5.manifest.json"
                 "$V4_DIRECTIONS_DIR/validation.manifest.json"
+                "$V4_HOLDOUT_DIR/manifest.json"
+                "$V4_HOLDOUT_DIR/test.strongreject.jsonl"
+            )
+            ;;
+        v5)
+            V2_HOLDOUT_DIR="${V2_HOLDOUT_DIR:-/models/.abliteration/k3/v2-holdout}"
+            V3_HOLDOUT_DIR="${V3_HOLDOUT_DIR:-/models/.abliteration/k3/v3-holdout}"
+            V4_HOLDOUT_DIR="${V4_HOLDOUT_DIR:-/models/.abliteration/k3/v4-holdout}"
+            V5_CAPTURE_DIR="${V5_CAPTURE_DIR:-/models/.abliteration/k3/v5-capture}"
+            V5_DIRECTIONS_DIR="${V5_DIRECTIONS_DIR:-/models/.abliteration/k3/v5-directions}"
+            BUILD_PROVENANCE_INPUTS+=(
+                "$SCRIPT_DIR/build_candidate_v5.sh"
+                "$SCRIPT_DIR/V5_PROTOCOL.md"
+                "$SCRIPT_DIR/capture_v5_directions.sh"
+                "$SCRIPT_DIR/generate_v5_directions.py"
+                "$SCRIPT_DIR/verify_v5_directions.py"
+                "$SCRIPT_DIR/prepare_v5_prompts.py"
+                "$SCRIPT_DIR/verify_v5_prompts.py"
+                "$SCRIPT_DIR/v5-requirements.txt"
+                "$V5_CAPTURE_DIR/engine-and-method.sha256"
+                "$V5_DIRECTIONS_DIR/train.manifest.json"
+                "$V5_DIRECTIONS_DIR/q5.manifest.json"
+                "$V5_DIRECTIONS_DIR/verification.json"
+                "$V2_HOLDOUT_DIR/manifest.json"
+                "$V2_HOLDOUT_DIR/test.strongreject.jsonl"
+                "$V3_HOLDOUT_DIR/manifest.json"
+                "$V3_HOLDOUT_DIR/test.strongreject.jsonl"
                 "$V4_HOLDOUT_DIR/manifest.json"
                 "$V4_HOLDOUT_DIR/test.strongreject.jsonl"
             )
