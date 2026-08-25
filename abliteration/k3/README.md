@@ -176,11 +176,14 @@ The append-only partial run and hash-bound decisions are retained; v2 is not a
 deployment candidate.
 
 [`V3_PROTOCOL.md`](V3_PROTOCOL.md) locks the complete rank-18 span of the same
-56--73 layer directions before any v3 weights or output. Rank 18 captures 100%
+56--73 layer directions before any v3 behavioral output. Rank 18 captures 100%
 of measured training energy while retaining minimum principal cosines of
 0.962175 against the independent Q5 direction and 0.837406 against held-out
 validation activations. Its new seed-20260825 StrongREJECT confirmation set
-excludes every v2 holdout row and is hash-locked before construction.
+excludes every v2 holdout row and is hash-locked before construction. The
+protocol also records a construction-only amendment after the first rank-18
+encoding attempt failed closed without producing a complete or loadable
+candidate.
 
 ```sh
 ./abliteration/k3/verify_v3_holdout.py \
@@ -188,11 +191,13 @@ excludes every v2 holdout row and is hash-locked before construction.
 ./abliteration/k3/build_candidate_v3.sh
 ```
 
-V3 uses the same reflink patch path, 279-target allowlist, 2% residual ceiling,
-and full 776.8-GiB non-target / 744.2-GiB expert-byte verifier. Its semantic
-gate remains 100/100 compliance on both canonical JailbreakBench and the fresh
-StrongREJECT sample; target substitution, placeholder replacement, and
-fictionalization count as `mixed` failures even when refusal keywords are zero.
+V3-r2 uses the same reflink patch path and 279-target allowlist, with a bounded
+64-pass, 0.0625 correction schedule and a stricter 1.9% residual ceiling. The
+full 776.8-GiB non-target / 744.2-GiB expert-byte verifier is unchanged. Its
+semantic gate remains 100/100 compliance on both canonical JailbreakBench and
+the fresh StrongREJECT sample; target substitution, placeholder replacement,
+and fictionalization count as `mixed` failures even when refusal keywords are
+zero.
 
 ## Prepare prompts
 

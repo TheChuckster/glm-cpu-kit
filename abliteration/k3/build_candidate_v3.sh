@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Locked full-band rank-18 K3 v3 experiment. V2 reduced keyword refusals to
 # zero in its first ten canonical rows but failed the stricter substantive gate
-# through target substitution. V3 is fixed before any v3 weights or responses.
+# through target substitution. The construction-only r2 amendment is recorded
+# in V3_PROTOCOL.md before any v3 model load or behavioral response.
 set -euo pipefail
 umask 077
 
@@ -27,14 +28,17 @@ check_hash 7e94d9256a9f55779252e9c2fd8cab67cafeeee78be1623f8a5c8849e6592246 "$VA
 "$SCRIPT_DIR/verify_v3_holdout.py" "$V3_HOLDOUT_DIR"
 
 export DIRECTION DIAGNOSTIC_DIRECTION VALIDATION_DIRECTION V3_HOLDOUT_DIR
-export IK_DIR=/home/chuck/ik_llama.cpp-v2
-export BUILD_DIR=/home/chuck/ik_llama.cpp-v2/build-abliteration
+export IK_DIR=/home/chuck/ik_llama.cpp-v3r2
+export BUILD_DIR=/home/chuck/ik_llama.cpp-v3r2/build-abliteration
 export REUSE_DIRECTION=1
 export SUBSPACE_RANK=18
 export PATCH_EXISTING=1
 export LOCKED_PROTOCOL_VERSION=v3
-export OUTPUT_DIR=/models/Kimi-K3-Q5attn-Abliterated-V3
-export OUTPUT_PREFIX=Kimi-K3-Q5attn-Abliterated-V3
-export ARTIFACT_DIR=/models/.abliteration/k3/v3
+export QUANT_PASSES=64
+export QUANT_CORRECTION=0.0625
+export MAX_RESIDUAL=0.019
+export OUTPUT_DIR=/models/Kimi-K3-Q5attn-Abliterated-V3-R2
+export OUTPUT_PREFIX=Kimi-K3-Q5attn-Abliterated-V3-R2
+export ARTIFACT_DIR=/models/.abliteration/k3/v3-r2
 
 exec "$SCRIPT_DIR/build_candidate.sh"

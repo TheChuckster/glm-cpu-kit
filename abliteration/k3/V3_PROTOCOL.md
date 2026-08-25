@@ -1,7 +1,8 @@
 # Kimi K3 abliteration v3 locked protocol
 
-Status: **pre-registered on 2026-08-24 before any v3 weight construction,
-loading, or behavioral output**.
+Status: **originally pre-registered on 2026-08-24 before any v3 weight
+construction, loading, or behavioral output; construction schedule amended
+below on 2026-08-24 before any v3 loading or behavioral output**.
 
 ## Why v2 was rejected
 
@@ -27,7 +28,9 @@ parameter may be changed and v2 is not rescored as if it passed.
   its minimum principal cosine was `0.962175135` against the independent Q5
   extraction and `0.837405995` against the held-out 32+32 validation extraction.
   Both exceed the original 0.90 and 0.80 stability gates.
-- Preserve the same 16-pass correction and 2% maximum retained-subspace limit.
+- Use the construction-only r2 correction schedule locked below: at most 64
+  passes, correction fraction 0.0625, and a stricter 1.9% maximum
+  retained-subspace limit.
 - Every GGUF header and all 2,294 non-target payloads must remain byte-identical
   to pristine Q5; all 279 targets must differ; all routed experts must remain
   byte-identical to the Q2 source.
@@ -35,6 +38,37 @@ parameter may be changed and v2 is not rescored as if it passed.
 The rank is the strongest possible span of the preregistered 18-layer band and
 was selected from v2's category-broad target-substitution failures plus
 preexisting direction geometry. No v3 output exists at selection time.
+
+## Construction-only r2 amendment
+
+The first rank-18 encoding attempt used the original 16-pass, 0.25 correction
+schedule and failed closed at `blk.23.ffn_down_shexp.weight`: its best retained
+source component was 2.052148%, above the locked 2% ceiling. It produced no
+`.complete` marker, was never loaded or served, and generated no behavioral
+output. The fresh v3 StrongREJECT holdout remained sealed and therefore was not
+consumed or used for tuning. The incomplete attempt and logs remain immutable
+at `/models/Kimi-K3-Q5attn-Abliterated-V3` and
+`/models/.abliteration/k3/v3`.
+
+Before a second construction attempt, an isolated exact-tensor numerical sweep
+used the same immutable Q2 source, rank-18 basis, scale 1.0, target type, and a
+private XFS reflink of pristine Q5. Larger corrections of 0.375, 0.5, 0.75,
+and 1.0 worsened the 16-pass result. At 64 passes the best retained components
+were 2.025388% for 0.25, 1.974757% for 0.20, 1.926055% for 0.15, 1.901052% for
+0.125, 1.872602% for 0.10, and 1.851012% for 0.0625. These characterization
+runs used an intentionally unreachable residual threshold, failed without a
+payload write, and did not inspect any model behavior.
+
+V3-r2 therefore locks a correction fraction of 0.0625, at most 64 passes, and
+a tightened 1.9% residual ceiling. A final exact-target write-path proof crossed
+that ceiling at pass 37 with 1.893265% retained and patched exactly one
+30,277,632-byte payload. The rank, direction files, layer band, scale, 279
+target allowlist, reference layout, evaluation rubric, evaluator settings, and
+sealed confirmation sample are unchanged. V3-r2 must use engine commit
+`edce2ac567a78ddd80ba565fd2f39717c8091bd0`, quantizer SHA-256
+`ba946efae1637ea0cc82ac591763cd05e274d18f13b2c568795942ad21118c02`,
+fresh output `/models/Kimi-K3-Q5attn-Abliterated-V3-R2`, and fresh artifacts
+`/models/.abliteration/k3/v3-r2`; neither attempt-one path may be overwritten.
 
 ## Fresh confirmatory sample
 

@@ -23,6 +23,8 @@ THREADS="${THREADS:-64}"
 LAYER_START="${LAYER_START:-56}"
 LAYER_END="${LAYER_END:-73}"
 MAX_RESIDUAL="${MAX_RESIDUAL:-0.02}"
+QUANT_PASSES="${QUANT_PASSES:-16}"
+QUANT_CORRECTION="${QUANT_CORRECTION:-0.25}"
 REUSE_DIRECTION="${REUSE_DIRECTION:-0}"
 SUBSPACE_RANK="${SUBSPACE_RANK:-0}"
 PATCH_EXISTING="${PATCH_EXISTING:-0}"
@@ -68,6 +70,11 @@ fi
 [ -x "$SCRIPT_DIR/verify_model.py" ] || die "missing model verifier"
 [ -x "$SCRIPT_DIR/verify_prompts.py" ] || die "missing prompt verifier"
 [[ "$THREADS" =~ ^[1-9][0-9]*$ ]] || die "THREADS must be a positive integer"
+[[ "$QUANT_PASSES" =~ ^[1-9][0-9]*$ ]] && [ "$QUANT_PASSES" -le 64 ] \
+    || die "QUANT_PASSES must be an integer in [1, 64]"
+awk -v value="$QUANT_CORRECTION" \
+    'BEGIN { exit !(value ~ /^[0-9]+([.][0-9]+)?$/ && value > 0 && value <= 1) }' \
+    || die "QUANT_CORRECTION must be a decimal in (0, 1]"
 [[ "$REUSE_DIRECTION" == 0 || "$REUSE_DIRECTION" == 1 ]] \
     || die "REUSE_DIRECTION must be 0 or 1"
 [[ "$SUBSPACE_RANK" =~ ^[0-9]+$ ]] || die "SUBSPACE_RANK must be a non-negative integer"
@@ -277,7 +284,8 @@ COMMON_ARGS=(
     --orthogonalize-pattern "$TARGET_PATTERN"
     --orthogonalize-scale 1.0
     --orthogonalize-expected-count 279
-    --orthogonalize-quant-passes 16
+    --orthogonalize-quant-passes "$QUANT_PASSES"
+    --orthogonalize-quant-correction "$QUANT_CORRECTION"
     --orthogonalize-max-residual "$MAX_RESIDUAL"
 )
 if [ "$SUBSPACE_RANK" -gt 0 ]; then
@@ -314,6 +322,10 @@ fi
 grep -q "orthogonalization preflight matched 279 tensors; selected-F32=0; basis-rank=$((SUBSPACE_RANK > 0 ? SUBSPACE_RANK : 1));" \
     "$ARTIFACT_DIR/quantize-dry-run.log" \
     || die "dry run did not prove exactly 279 targets with zero selected F32 tensors"
+printf -v QUANT_CORRECTION_LOGGED '%.4f' "$QUANT_CORRECTION"
+grep -q "quant-passes $QUANT_PASSES; correction $QUANT_CORRECTION_LOGGED;" \
+    "$ARTIFACT_DIR/quantize-dry-run.log" \
+    || die "dry run did not prove the locked quantization correction schedule"
 if [ "$PATCH_EXISTING" = 1 ]; then
     grep -q 'patch-existing=yes' "$ARTIFACT_DIR/quantize-dry-run.log" \
         || die "dry run did not validate patch-existing mode"
