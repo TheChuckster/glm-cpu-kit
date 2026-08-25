@@ -255,6 +255,16 @@ ethnic groups on the two consumed calibration failures. V9 therefore opened no
 stability or post-selection gate and is not selectable. The exact append-only
 record is in [`abliteration/k3/V9_PROTOCOL.md`](abliteration/k3/V9_PROTOCOL.md).
 
+V10--V13 remain rejected research variants, not production upgrades. V10 and
+V11 tested fixed semantic overlays, V12 tested a published affirmative response
+prefix, and V13 tested the published Thought Token Forcing seed `I know that.`
+inside native K3 reasoning. V13 directly complied on one of its two fixed
+failure probes but used a placeholder plus disclaimer/reversal framing on the
+other, so its preregistered semantic gate rejected it and sealed every later
+phase. Accepted V1 remains the deployed `kimi-k3` route. See
+[`abliteration/k3/V13_RESULTS.md`](abliteration/k3/V13_RESULTS.md) for the
+terminal receipts and rollback proof.
+
 Note that `llama-server` does not reject a request naming a different alias than
 the loaded model: asking for `glm-5.2-abliterated` while `base` is live returns
 the base model with no error. `glm-model status` compares `/v1/models` against
