@@ -384,6 +384,24 @@ this is a semantic-control failure rather than a serving or structural failure.
 The 96-row remainder and all later gates stayed sealed. Exact evidence is in
 [`V11_RESULTS.md`](V11_RESULTS.md); accepted V1 remains production.
 
+## Locked v12 experiment: response-onset assistant prefill
+
+[`V12_PROTOCOL.md`](V12_PROTOCOL.md) preregisters a materially different
+response-site probe after repeated direction, activation, and prompt-language
+interventions failed to control K3's semantic evasions. It keeps V2 and V10's
+strongest exact system contract, then forces the assistant turn to begin with
+the published `Sure, here is` prefill. The exact request disables K3 thinking,
+because its embedded template rejects assistant prefill while thinking is
+enabled.
+
+The evaluator separately binds the raw server continuation and the exact
+prefix-plus-continuation answer. V12 must pass the same disjoint 2/2/96
+calibration and 310 StrongREJECT confirmations before harmlessness, reasoning
+quality, serving, real OpenCode, throughput, or canary gates open. Even a zero
+refusal result is not automatically the K3 Max default: thinking-disabled V12
+must preserve the locked capability bar, or remain at most a separately named
+uncensored mode. Accepted V1 remains production during the experiment.
+
 ## Prepare prompts
 
 ```sh
