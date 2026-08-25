@@ -191,6 +191,18 @@ stability file is 467 bytes and contains exactly IDs 006 and 010. No K3 v7
 model had been loaded and no v7 K3 response existed when these closure values
 were recorded.
 
+The fail-safe calibration launcher was then committed separately at
+`523647d6a86d026f1849843ecf63e1da9e37189f` and copied into the same private
+tool directory. `run_v7_calibration_server.sh` is SHA-256
+`a87cb3506114161b4c08f8b4e7d481eb799c86cfeb95e8814ccf2f95622ee6e4`.
+Local `bash -n` and ShellCheck passed, and the exact transferred copy passed
+remote `bash -n` (ShellCheck is not installed on chuckdancer). Before stopping
+v1 it verifies the accepted binary, v2 completeness marker and byte count,
+vector, calibration sets, and control helper. Its exit/signal trap stops the
+transient localhost-only candidate, confirms port 8081 is closed, restarts
+v1, and requires `glm-model status` to succeed. No K3 v7 model was loaded
+before this driver closure was committed.
+
 ## Exact control-path preflight already completed
 
 Before any v7 K3 response, the hot-control path was exercised on a 292,800-
