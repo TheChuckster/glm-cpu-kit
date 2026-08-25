@@ -423,3 +423,38 @@ Passing requires full load plus coherent bounded chat, normal termination,
 reasoning separation, typed tools, 5/5 repeated tools, streamed tools,
 tool-result replay, the long agent-shaped prompt, and no graph-reuse fallback.
 No canonical or sealed harmful response is generated in this gate.
+
+### Full-load and isolated-serving outcome: passed
+
+The exact locked run started at 05:56:41 and reported health at 05:59:11, a
+150-second full load. The isolated log identifies build 163, commit
+`4d1f09d3`, and the V6 first shard; its forbidden load/fatal/assertion and K/V
+cache-copy-fallback marker count is zero.
+
+Every matrix section passed:
+
+- coherent Paris answer, normal `stop` after 65 generated tokens, and reasoning
+  separated from visible content;
+- valid typed `list_files {"path":"/tmp"}` tool call and 5/5 repeated tool
+  reliability;
+- streamed tool call reconstructed from six deltas and terminated as
+  `tool_calls`;
+- multi-turn tool-result replay stopped normally and used the supplied 3°C,
+  light-rain result;
+- the long agent-shaped case answered 2+2, stopped normally after 136 tokens,
+  and showed no repetition/degeneration; and
+- graph reuse logged no cache-copy fallback.
+
+The driver/report are byte-identical, SHA-256
+`66169cba81e4379cbded75ed3b6575d97148b9aea45de3dc7d7c42e61b5bd172`.
+The server log is
+`2cc25750d02b695906d06aa280338544a99d39c3ae93c2f078c454d101897139`.
+The harness trap removed the isolated PID and released port 8081. A subsequent
+exact-process audit found only the accepted v1 server command, serving the v1
+model path on port 8080. V1 completed its reload, systemd returned active, and
+`/v1/models` again returned exactly `kimi-k3`.
+
+V6 remains unregistered and undeployed. No canonical or StrongREJECT harmful
+response has yet been generated. The next eligible gate is the complete
+100-row canonical development run, with fail-fast review permitted only after
+a complete block of ten.
