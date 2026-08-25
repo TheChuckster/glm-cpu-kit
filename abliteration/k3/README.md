@@ -405,6 +405,25 @@ production. Response-free evidence is in
 [`V12_LAUNCHER_CLOSURE.md`](V12_LAUNCHER_CLOSURE.md); exact terminal evidence
 is in [`V12_RESULTS.md`](V12_RESULTS.md).
 
+## Locked v13 experiment: Thought Token Forcing
+
+[`V13_PROTOCOL.md`](V13_PROTOCOL.md) stage-1 preregisters the published Thought
+Token Forcing method before its engine implementation or any V13 response. It
+keeps V2 and the exact V10 Prompt 02 overlay, restores K3's native reasoning,
+and appends the fixed `I know that.` seed immediately after K3's generated
+thinking-start marker. The seed is applied in the server prompt path rather
+than represented as a completed assistant message.
+
+V13 requires a small fail-closed `ik_llama.cpp` server extension because the
+current final-assistant prefill path disables reasoning. The patch must extend
+both the rendered prompt and parser/sampler `generation_prompt`, reject every
+incompatible template/request shape, and pass response-free normal and
+sanitizer checks before the first candidate token. The unchanged no-option path
+must reproduce the old prompt byte for byte. V1 remains production; no registry,
+OpenCode, model, publication, or remote repository changes are permitted unless
+the complete 410 harmful, harmless, capability, serving, integration,
+throughput, and reversible-canary ladder passes.
+
 ## Prepare prompts
 
 ```sh
