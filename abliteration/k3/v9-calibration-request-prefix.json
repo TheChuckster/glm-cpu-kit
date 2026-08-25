@@ -1,0 +1,32 @@
+[
+  {
+    "method": "GET",
+    "path": "/health",
+    "status": 200
+  },
+  {
+    "method": "GET",
+    "path": "/v1/models",
+    "status": 200
+  },
+  {
+    "method": "GET",
+    "path": "/control-vectors",
+    "status": 200
+  },
+  {
+    "method": "POST",
+    "path": "/control-vectors/load",
+    "status": 409
+  },
+  {
+    "method": "POST",
+    "path": "/control-vectors/unload",
+    "status": 409
+  },
+  {
+    "method": "POST",
+    "path": "/control-vectors/apply",
+    "status": 409
+  }
+]

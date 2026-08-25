@@ -58,7 +58,7 @@ def parse_utc(value, field):
     return parsed
 
 
-def request_audit(unit, total):
+def request_audit(unit, total, prefix=None):
     result = subprocess.run(
         ["journalctl", "-u", unit, "--no-pager", "--output=cat"],
         check=True,
@@ -75,8 +75,10 @@ def request_audit(unit, total):
                 "method": match.group(2),
                 "path": match.group(3),
             })
+    prefix = [] if prefix is None else prefix
     expected = (
-        [{"status": 200, "method": "GET", "path": "/v1/models"}]
+        prefix
+        + [{"status": 200, "method": "GET", "path": "/v1/models"}]
         + [{"status": 200, "method": "POST", "path": "/v1/chat/completions"}] * total
         + [{"status": 200, "method": "GET", "path": "/v1/models"}]
     )
@@ -87,8 +89,12 @@ def request_audit(unit, total):
         )
     encoded = json.dumps(sequence, separators=(",", ":"), sort_keys=True).encode()
     return {
-        "policy": "exactly GET /v1/models, N successful chat requests, GET /v1/models",
+        "policy": (
+            "exact optional frozen prefix, then GET /v1/models, "
+            "N successful chat requests, GET /v1/models"
+        ),
         "total_requests": len(sequence),
+        "prefix_requests": len(prefix),
         "models_requests": 2,
         "chat_completion_requests": total,
         "normalized_sequence_sha256": hashlib.sha256(encoded).hexdigest(),
@@ -285,6 +291,12 @@ def main():
         required=True,
         help="evaluator or prompt artifact to hash; repeat for every protocol input",
     )
+    parser.add_argument(
+        "--request-prefix",
+        type=Path,
+        help=("optional JSON array of exact requests made by a frozen preflight before "
+              "the evaluator-only models/chat/models sequence"),
+    )
     args = parser.parse_args()
     if not args.evaluation.is_file():
         parser.error(f"evaluation is not a file: {args.evaluation}")
@@ -318,8 +330,31 @@ def main():
         summary = evaluation_summary(
             args.evaluation, server_alias, server_host, server_port, server_started
         )
-        requests = request_audit(args.unit, summary["configuration"]["total"])
-    except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+        prefix = None
+        if args.request_prefix:
+            loaded = json.loads(args.request_prefix.read_text())
+            if not isinstance(loaded, list):
+                raise ValueError("request-prefix JSON must be an array")
+            prefix = []
+            for index, entry in enumerate(loaded):
+                if (
+                    not isinstance(entry, dict)
+                    or set(entry) != {"status", "method", "path"}
+                    or not isinstance(entry["status"], int)
+                    or not isinstance(entry["method"], str)
+                    or not isinstance(entry["path"], str)
+                ):
+                    raise ValueError(f"invalid request-prefix entry {index}: {entry!r}")
+                prefix.append({
+                    "status": entry["status"],
+                    "method": entry["method"],
+                    "path": entry["path"],
+                })
+            if args.request_prefix.resolve(strict=True) not in protocol_paths:
+                raise ValueError("request-prefix file must also be a protocol artifact")
+        requests = request_audit(
+            args.unit, summary["configuration"]["total"], prefix=prefix)
+    except (json.JSONDecodeError, OSError, subprocess.CalledProcessError, ValueError) as exc:
         parser.error(str(exc))
 
     result = {
