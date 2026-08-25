@@ -25,6 +25,7 @@ LAYER_END="${LAYER_END:-73}"
 MAX_RESIDUAL="${MAX_RESIDUAL:-0.02}"
 QUANT_PASSES="${QUANT_PASSES:-16}"
 QUANT_CORRECTION="${QUANT_CORRECTION:-0.25}"
+ORTHOGONALIZE_SCALE="${ORTHOGONALIZE_SCALE:-1.0}"
 REUSE_DIRECTION="${REUSE_DIRECTION:-0}"
 SUBSPACE_RANK="${SUBSPACE_RANK:-0}"
 PATCH_EXISTING="${PATCH_EXISTING:-0}"
@@ -77,6 +78,9 @@ fi
 awk -v value="$QUANT_CORRECTION" \
     'BEGIN { exit !(value ~ /^[0-9]+([.][0-9]+)?$/ && value > 0 && value <= 1) }' \
     || die "QUANT_CORRECTION must be a decimal in (0, 1]"
+awk -v value="$ORTHOGONALIZE_SCALE" \
+    'BEGIN { exit !(value ~ /^[0-9]+([.][0-9]+)?$/ && value > 0 && value <= 2) }' \
+    || die "ORTHOGONALIZE_SCALE must be a decimal in (0, 2]"
 [[ "$REUSE_DIRECTION" == 0 || "$REUSE_DIRECTION" == 1 ]] \
     || die "REUSE_DIRECTION must be 0 or 1"
 [[ "$SUBSPACE_RANK" =~ ^[0-9]+$ ]] || die "SUBSPACE_RANK must be a non-negative integer"
@@ -95,8 +99,8 @@ if [ "$PATCH_EXISTING" = 1 ]; then
 fi
 if [ "$SUBSPACE_RANK" -gt 0 ]; then
     case "$LOCKED_PROTOCOL_VERSION" in
-        v2|v3|v4|v5) ;;
-        *) die "LOCKED_PROTOCOL_VERSION must be v2, v3, v4, or v5 for a subspace candidate" ;;
+        v2|v3|v4|v5|v6) ;;
+        *) die "LOCKED_PROTOCOL_VERSION must be v2, v3, v4, v5, or v6 for a subspace candidate" ;;
     esac
 fi
 if [ "$DIRECTION_GEOMETRY" = spectral-basis ]; then
@@ -222,6 +226,27 @@ if [ "$SUBSPACE_RANK" -gt 0 ]; then
                 *) die "V5_METHOD_VARIANT must be som or spectral" ;;
             esac
             BUILD_PROVENANCE_INPUTS+=(
+                "$V2_HOLDOUT_DIR/manifest.json"
+                "$V2_HOLDOUT_DIR/test.strongreject.jsonl"
+                "$V3_HOLDOUT_DIR/manifest.json"
+                "$V3_HOLDOUT_DIR/test.strongreject.jsonl"
+                "$V4_HOLDOUT_DIR/manifest.json"
+                "$V4_HOLDOUT_DIR/test.strongreject.jsonl"
+            )
+            ;;
+        v6)
+            V2_HOLDOUT_DIR="${V2_HOLDOUT_DIR:-/models/.abliteration/k3/v2-holdout}"
+            V3_HOLDOUT_DIR="${V3_HOLDOUT_DIR:-/models/.abliteration/k3/v3-holdout}"
+            V4_HOLDOUT_DIR="${V4_HOLDOUT_DIR:-/models/.abliteration/k3/v4-holdout}"
+            BUILD_PROVENANCE_INPUTS+=(
+                "$SCRIPT_DIR/build_candidate_v6.sh"
+                "$SCRIPT_DIR/V6_PROTOCOL.md"
+                "$SCRIPT_DIR/prepare_v2_holdout.py"
+                "$SCRIPT_DIR/verify_v2_holdout.py"
+                "$SCRIPT_DIR/prepare_v3_holdout.py"
+                "$SCRIPT_DIR/verify_v3_holdout.py"
+                "$SCRIPT_DIR/prepare_v4_holdout.py"
+                "$SCRIPT_DIR/verify_v4_holdout.py"
                 "$V2_HOLDOUT_DIR/manifest.json"
                 "$V2_HOLDOUT_DIR/test.strongreject.jsonl"
                 "$V3_HOLDOUT_DIR/manifest.json"
@@ -393,7 +418,7 @@ COMMON_ARGS=(
     --orthogonalize-control-vector "$DIRECTION"
     --orthogonalize-layer-range "$LAYER_START" "$LAYER_END"
     --orthogonalize-pattern "$TARGET_PATTERN"
-    --orthogonalize-scale 1.0
+    --orthogonalize-scale "$ORTHOGONALIZE_SCALE"
     --orthogonalize-expected-count 279
     --orthogonalize-quant-passes "$QUANT_PASSES"
     --orthogonalize-quant-correction "$QUANT_CORRECTION"
@@ -437,6 +462,10 @@ printf -v QUANT_CORRECTION_LOGGED '%.4f' "$QUANT_CORRECTION"
 grep -q "quant-passes $QUANT_PASSES; correction $QUANT_CORRECTION_LOGGED;" \
     "$ARTIFACT_DIR/quantize-dry-run.log" \
     || die "dry run did not prove the locked quantization correction schedule"
+printf -v ORTHOGONALIZE_SCALE_LOGGED '%.4f' "$ORTHOGONALIZE_SCALE"
+grep -q "scale $ORTHOGONALIZE_SCALE_LOGGED;" \
+    "$ARTIFACT_DIR/quantize-dry-run.log" \
+    || die "dry run did not prove the locked intervention coefficient"
 if [ "$PATCH_EXISTING" = 1 ]; then
     grep -q 'patch-existing=yes' "$ARTIFACT_DIR/quantize-dry-run.log" \
         || die "dry run did not validate patch-existing mode"
@@ -455,6 +484,7 @@ VERIFY_ARGS=(
     "$SOURCE_DIR" "$OUTPUT_DIR"
     --reference-layout "$REFERENCE_DIR"
     --quant-log "$QUANT_LOG" --max-residual "$MAX_RESIDUAL"
+    --expected-scale "$ORTHOGONALIZE_SCALE"
     --expected-basis-rank "$((SUBSPACE_RANK > 0 ? SUBSPACE_RANK : 1))"
     --json "$ARTIFACT_DIR/model-verification.json"
 )

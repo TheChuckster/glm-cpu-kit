@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import struct
@@ -257,7 +258,7 @@ def require_payloads_differ(left, right, names, chunk_size=16 * 1024 * 1024):
 
 
 def check_quant_log(path, targets, max_residual, expected_basis_rank=None,
-                    require_patch_existing=False):
+                    require_patch_existing=False, expected_scale=1.0):
     text = path.read_text(errors="replace")
     if "failed to quantize" in text:
         raise ValueError(f"quantization log reports failure: {path}")
@@ -267,6 +268,21 @@ def check_quant_log(path, targets, max_residual, expected_basis_rank=None,
         marker = f"basis-rank={expected_basis_rank};"
         if marker not in text:
             raise ValueError(f"quantization log lacks expected {marker}")
+    scale_matches = re.findall(
+        r"orthogonalization preflight matched \d+ tensors;[^\n]*?scale ([0-9.]+);",
+        text,
+    )
+    if len(scale_matches) != 1:
+        raise ValueError(
+            f"quantization log must contain exactly one intervention scale, "
+            f"found {len(scale_matches)}"
+        )
+    logged_scale = float(scale_matches[0])
+    if not math.isclose(logged_scale, expected_scale, rel_tol=0.0, abs_tol=5e-5):
+        raise ValueError(
+            f"quantization scale mismatch: logged={logged_scale:.4f}, "
+            f"expected={expected_scale:.4f}"
+        )
     patched = re.findall(
         r"orthogonalize: (\S+) patched-existing shard=\d+ offset=\d+ bytes=\d+", text)
     if require_patch_existing:
@@ -295,10 +311,39 @@ def check_quant_log(path, targets, max_residual, expected_basis_rank=None,
     worst = observed[worst_name]
     if worst > max_residual:
         raise ValueError(
-            f"{worst_name} retained source component {100 * worst:.6f}% "
+            f"{worst_name} target-relative subspace error {100 * worst:.6f}% "
             f"exceeds {100 * max_residual:.6f}%"
         )
-    return observed, worst_name, worst, patched
+    actual_matches = re.findall(
+        r"orthogonalize: (\S+) post-quant-residual=[0-9.]+% "
+        r"actual-source-component=([0-9.]+)%",
+        text,
+    )
+    actual_components = {}
+    for name, value in actual_matches:
+        if name in actual_components:
+            raise ValueError(f"duplicate actual source component for {name}")
+        actual_components[name] = float(value) / 100.0
+    if math.isclose(expected_scale, 1.0, rel_tol=0.0, abs_tol=1e-12):
+        if actual_components:
+            raise ValueError("unexpected actual-source-component diagnostics at scale 1")
+    else:
+        if set(actual_components) != targets:
+            missing = sorted(targets - set(actual_components))[:5]
+            extra = sorted(set(actual_components) - targets)[:5]
+            raise ValueError(
+                f"actual source component set mismatch: missing={missing}, extra={extra}"
+            )
+        expected_magnitude = abs(1.0 - expected_scale)
+        tolerance = max_residual + 1e-8
+        for name, actual in actual_components.items():
+            if abs(actual - expected_magnitude) > tolerance:
+                raise ValueError(
+                    f"{name} actual source component {100 * actual:.6f}% differs from "
+                    f"the expected {100 * expected_magnitude:.6f}% by more than "
+                    f"{100 * max_residual:.6f}%"
+                )
+    return observed, actual_components, worst_name, worst, patched
 
 
 def main():
@@ -313,6 +358,7 @@ def main():
     )
     parser.add_argument("--quant-log", type=Path, required=True)
     parser.add_argument("--max-residual", type=float, default=0.02)
+    parser.add_argument("--expected-scale", type=float, default=1.0)
     parser.add_argument("--expected-basis-rank", type=int)
     parser.add_argument("--require-patch-existing", action="store_true")
     parser.add_argument("--skip-expert-bytes", action="store_true", help="skip source/candidate routed-expert byte checks during development")
@@ -325,6 +371,8 @@ def main():
         parser.error("source, candidate, and reference-layout directories must all differ")
     if not (0 <= args.max_residual <= 1):
         parser.error("--max-residual must be in [0, 1]")
+    if not (0 < args.expected_scale <= 2):
+        parser.error("--expected-scale must be in (0, 2]")
     if args.expected_basis_rank is not None and args.expected_basis_rank < 1:
         parser.error("--expected-basis-rank must be positive")
 
@@ -378,9 +426,9 @@ def main():
     if forbidden:
         raise AssertionError(f"target recipe includes forbidden expert tensor(s): {forbidden}")
 
-    observed, worst_name, worst, patched = check_quant_log(
+    observed, actual_components, worst_name, worst, patched = check_quant_log(
         args.quant_log, targets, args.max_residual,
-        args.expected_basis_rank, args.require_patch_existing)
+        args.expected_basis_rank, args.require_patch_existing, args.expected_scale)
     unchanged_names = set(candidate) - targets
     unchanged_bytes = sum(reference[name].size for name in unchanged_names)
     unchanged_fingerprint = None
@@ -411,6 +459,7 @@ def main():
         "tensor_count": len(source),
         "projected_tensor_count": len(targets),
         "basis_rank": args.expected_basis_rank,
+        "orthogonalize_scale": args.expected_scale,
         "patch_existing": args.require_patch_existing,
         "patch_existing_payload_writes": len(patched),
         "projected_tensors_differ_from_reference": (
@@ -424,14 +473,25 @@ def main():
         "routed_expert_bytes": expert_bytes,
         "routed_expert_bytes_compared": not args.skip_expert_bytes,
         "routed_expert_fingerprint_sha256": expert_fingerprint,
-        "post_quant_retained_source_component": {
+        "post_quant_target_relative_subspace_error": {
             "max": worst,
             "max_tensor": worst_name,
             "median": sorted(observed.values())[len(observed) // 2],
         },
+        "post_quant_actual_source_component": None if not actual_components else {
+            "expected_magnitude": abs(1.0 - args.expected_scale),
+            "max": max(actual_components.values()),
+            "min": min(actual_components.values()),
+            "median": sorted(actual_components.values())[len(actual_components) // 2],
+        },
     }
+    if math.isclose(args.expected_scale, 1.0, rel_tol=0.0, abs_tol=1e-12):
+        # Preserve the historical key for scale-1 artifacts, where target error
+        # and retained source component are algebraically identical.
+        result["post_quant_retained_source_component"] = \
+            result["post_quant_target_relative_subspace_error"]
     print(f"PASS: {len(source)} tensors and 19 shards structurally identical; "
-          f"279 intended projection targets; worst retained source component "
+          f"279 intended projection targets; worst target-relative subspace error "
           f"{100 * worst:.6f}% ({worst_name})")
     if args.skip_reference_bytes:
         print(f"NOTE: skipped byte comparison for {len(unchanged_names)} reference non-target tensors")

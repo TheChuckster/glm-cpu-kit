@@ -181,9 +181,118 @@ TheChuckster repositories.
 
 ## Stage-2 construction lock
 
-Not yet populated. Append exact tested engine, binary, fixture, wrapper, and
-provenance hashes here and commit them before opening any v6 model payload for
-writing.
+Locked on 2026-08-25, still before any v6 model payload was opened for writing.
+Production remained on accepted v1 and returned model identity `kimi-k3`
+throughout this stage.
+
+### Engine and regression closure
+
+The eligible engine is commit
+`9e5ed956741223ca7603903e646b8301a73224ce` on the private staging branch
+`k3-v6-reflection`. Its exact pre-patch scale-1 baseline is
+`dd0bf0177f78657960364493d0220350a82548fb`. The four principal changed/test
+sources hash as follows:
+
+```
+181b804a89320b7dce39dca0df80958f18b2a52b6453652f3343bbcd00b2a98e  src/llama-quantize.cpp
+53e80cc89a3cc9e64ffff4776bc62caacac1f0ce14c2b4ee65fb0886a211076f  src/llama-direction-projection.h
+4e1639a6792e8ee54abdc33795f5a2bdf4e6c6f44735b07a22dc2bd41f5262a0  tests/test-direction-projection.cpp
+53eac41dc3601038bf3cec7e3e343983dd596376a5c6603de027556577599203  tests/test-orthogonalize-patch-existing.py
+```
+
+The local normal-build closure was:
+
+```
+361530bf775c6694572433dd62a8aee08fea4cca412505ab045df84b931654cb  llama-quantize
+a5b1a31b6b9047b63c8be8e4e28a63a1da10165734dd222e9a1d16a515ae1b62  libllama.so
+f51b96c63013aa567558d9710f7d6eddceb397c0cb26ff2e6798dd4d2401cede  libggml.so
+23e279268e896ba4836d9678af0a673d24ee06269abd00769fcbe1c050e34c63  test-direction-projection
+```
+
+The local ASan/UBSan closure, run with halt-on-error and leak detection disabled
+because the runner uses `ptrace`, was:
+
+```
+c250c0f8b8a34d596ecb10e0673c5fa2c2260217e0338208ba8202aad9207b28  llama-quantize
+6593122b969f473ecbc0f2f4934c1a4f96469ccb8c55e42288594b461d3a13c7  libllama.so
+986cd32fdc932628842627fa7afae1ca26b075d583cd7bb70e4acc2752cdf070  libggml.so
+8aeee5f803b4966339948d856118cec85ad5302102de1164004d6bdc6c39a0f9  test-direction-projection
+```
+
+Both normal and sanitizer unit runs passed the rank-1/rank-N, both-orientation,
+F32 norm-preservation, scale-1-equivalence, and target-relative-correction
+tests. Both normal and sanitizer tiny-GGUF runs independently decoded the
+result and passed scale-2 ordinary and patch-existing reflection, parser
+bounds, 47 byte-identical non-target payloads, and byte-identical scale-1
+output against this preserved baseline closure:
+
+```
+d97ad2f7eb4066d6520961a1132fc7f9b208af13231041a38b36712ede7af597  baseline llama-quantize
+ca2296047e6414c11accfc3f51ad7e0958700cf63b3fcd7431c827d34a858917  baseline libllama.so
+f51b96c63013aa567558d9710f7d6eddceb397c0cb26ff2e6798dd4d2401cede  baseline libggml.so
+b428961c85929e6e7c968919c40ed7ecba649c7a78d4d7e409c0e7b5456359da  stories260K-one-q8.gguf
+```
+
+The complete local CTest matrix produced 26/29 passes for both the patched
+commit and a clean build of exact baseline `dd0bf017`. Their
+`LastTestsFailed.log` files are byte-identical, SHA-256
+`8602fc4fddb3780585114b1368cb2fac1c8aa4996f24850906edb9a0509863cc`,
+and contain exactly `test-tokenizer-0-bert-bge`, `test-chat-template`, and
+`test-eval-callback`. These are respectively the pre-existing absent/stale BERT
+vocabulary fixture, pre-existing ChatGLM4 trailing-newline expectation, and
+absent stories260K fixture. The sanitizer matrix excluding those identical
+environment/fixture failures passed 26/26. Consequently stage-1 item 4 is
+locked as exact baseline-relative complete-suite equivalence, with zero new
+failures; an absolute 29/29 claim is explicitly not made.
+
+The exact chuckdancer Release build used for construction is:
+
+```
+f2e7874bb8242c14b0a32ad916a9d0940867099ab33fe4331fd2ebc5b6792b17  build-reflection/bin/llama-quantize
+f5543d582266dfdf5dfadb3e9a7491f62be4f8f1944e62534e8617a5b698bf75  build-reflection/bin/llama-cvector-generator
+1d56d7390f32f8f42b2e6cf5c6b0404856400bc2658ace4fd8e64fd9cf15393c  build-reflection/src/libllama.so
+034116ef0a154754d426bc4e1f90b6d9f8e1d64f8b8e1c47ed19d9a6c06523eb  build-reflection/ggml/src/libggml.so
+ef8bbb5cc0f4e76becfe20e7b8d645cef77750106c070ad4245ea8cc3fad5178  build-reflection/bin/test-direction-projection
+```
+
+Its focused CTest passed 1/1. Its independent tiny-GGUF run passed the same
+signed-reflection, ordinary/patch, parser, non-target, and scale-1 closure
+checks. Private evidence logs are pinned as:
+
+```
+8b215a58ab0942f2d4e9023ee923b2033f47682769bbb1fc3972c8045afc3576  remote-direction-ctest.log
+3723d3a18be4af06b2ea9c1494ebc98762a28cb1a7a1493db7ab0de8292a9506  remote-end-to-end.log
+```
+
+The remote scale-1 comparison used the unchanged v5 baseline quantizer,
+`libllama`, and `libggml` closure hashes `02ba5e46dc67d4bcb5b154638c29cad7540347c17ef34713e23da56d498f589d`,
+`02eb90039909f1b8cf0caf887bb457601ab2dff4824280f287720d3195cf1eff`,
+and `ed9d2caa94bed72fc678d24c5de510ffa31387703940bf8bebba8305aade974d`.
+
+### Construction and verifier closure
+
+The locked wrapper is `build_candidate_v6.sh`, SHA-256
+`87c036a38fa152a9f39613b04f5b78ba184bc15f65c6dd4bc58e6f270144de59`.
+It refuses a changed engine commit or worktree, pins the remote/current and
+baseline binary closures and test evidence above, pins all three direction
+hashes, opens none of the sealed response files, verifies all three sealed-set
+manifests, and then exports only the preregistered v6 values.
+
+The generic builder and reflection-aware structural verifier are SHA-256
+`60ab0eacbb4988bdb1ae3b37e82c7de0b77d9e351036d2c694a1861833f9b15d`
+and `94c534ddf6fb6ad54b67bc6e966d0804a0fdfe94c525f82b63fba09284471261`.
+The verifier requires exactly one preflight scale matching `2.0`, exactly 279
+target-relative error records, exactly 279 actual-source-component records,
+and each actual component magnitude to remain within the 1.9% target-error
+bound around the mathematically required 100%. Its ten focused kit regression
+tests pass, including negative tests for a mislabeled scale, absent reflection
+metrics, and wrong component magnitude.
+
+The wrapper additionally pins hashes for every analysis, comparison, prompt,
+and holdout verifier it invokes. The generic builder records those files, the
+wrapper, this protocol, the resolved engine shared-library closure, and the
+sealed manifests/data into `build-engine-and-tools.sha256`; a resume must
+reproduce that manifest exactly. Any mismatch remains a pre-write stop.
 
 ## Recorded outcome
 

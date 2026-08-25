@@ -35,18 +35,22 @@ class SubspaceTests(unittest.TestCase):
 
 
 class PatchLogTests(unittest.TestCase):
-    def make_log(self, omit=None, duplicate=None):
+    def make_log(self, omit=None, duplicate=None, scale=1.0,
+                 actual_component=None):
         lines = [
             "orthogonalization preflight matched 279 tensors; selected-F32=0; "
-            "basis-rank=10; scale 1.0000; quant-passes 16; patch-existing=yes; "
+            f"basis-rank=10; scale {scale:.4f}; quant-passes 16; patch-existing=yes; "
             "input files remain read-only",
         ]
         for name in sorted(expected_targets()):
             if name == omit:
                 continue
+            actual = ""
+            if actual_component is not None:
+                actual = f"actual-source-component={actual_component:.6f}% "
             lines.append(
                 f"orthogonalize: {name} post-quant-residual=1.000000% "
-                "absolute-component=0.100000%")
+                f"{actual}absolute-component=0.100000%")
             lines.append(
                 f"orthogonalize: {name} patched-existing shard=0 offset=32 bytes=64")
             if name == duplicate:
@@ -54,19 +58,44 @@ class PatchLogTests(unittest.TestCase):
                     f"orthogonalize: {name} patched-existing shard=0 offset=32 bytes=64")
         return "\n".join(lines) + "\n"
 
-    def check(self, text):
+    def check(self, text, expected_scale=1.0):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "quantize.log"
             path.write_text(text)
             return check_quant_log(
                 path, expected_targets(), 0.02,
-                expected_basis_rank=10, require_patch_existing=True)
+                expected_basis_rank=10, require_patch_existing=True,
+                expected_scale=expected_scale)
 
     def test_complete_patch_log(self):
-        observed, _, worst, patched = self.check(self.make_log())
+        observed, actual, _, worst, patched = self.check(self.make_log())
         self.assertEqual(len(observed), 279)
+        self.assertEqual(actual, {})
         self.assertEqual(len(patched), 279)
         self.assertAlmostEqual(worst, 0.01)
+
+    def test_complete_reflection_log(self):
+        observed, actual, _, worst, patched = self.check(
+            self.make_log(scale=2.0, actual_component=100.0), expected_scale=2.0)
+        self.assertEqual(len(observed), 279)
+        self.assertEqual(len(actual), 279)
+        self.assertEqual(len(patched), 279)
+        self.assertAlmostEqual(worst, 0.01)
+
+    def test_mislabeled_scale_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "quantization scale mismatch"):
+            self.check(self.make_log(scale=1.0), expected_scale=2.0)
+
+    def test_missing_reflection_component_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "actual source component set mismatch"):
+            self.check(self.make_log(scale=2.0), expected_scale=2.0)
+
+    def test_wrong_reflection_magnitude_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "differs from the expected"):
+            self.check(
+                self.make_log(scale=2.0, actual_component=90.0),
+                expected_scale=2.0,
+            )
 
     def test_missing_patch_is_rejected(self):
         name = next(iter(expected_targets()))

@@ -268,11 +268,21 @@ counterfactual reflection:
 W' = (I - 2 U U^T) W
 ```
 
-The engine must first be extended to correct quantization error relative to the
-intended reflected F32 target; measuring the absolute retained component would
-mistake a perfect reflection for complete failure. Scale-1 output must remain
-byte-identical on a locked tiny fixture, normal and sanitizer tests must pass,
-and the exact engine/tool closure must be committed before construction.
+The engine now corrects quantization error relative to the intended reflected
+F32 target; measuring the absolute retained component would mistake a perfect
+reflection for complete failure. Scale-1 output is byte-identical on the locked
+tiny fixture, the normal, sanitizer, baseline-equivalence, and independent
+chuckdancer tests are recorded in the stage-2 lock, and the wrapper pins the
+exact engine/tool closure before construction:
+
+```sh
+sudo systemctl stop glm-server.service
+./abliteration/k3/build_candidate_v6.sh
+```
+
+The wrapper only constructs and verifies the separate V6 candidate. It does
+not register, select, or deploy it, and it refuses to run while a llama model
+workload is active.
 
 Canonical is now explicitly development data. The v2, v3, and v4 StrongREJECT
 response sets remain sealed and are opened sequentially only after 100/100
