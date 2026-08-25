@@ -23,6 +23,8 @@ NUMPY_ARCHIVE=numpy-2.2.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64
 NUMPY_ARCHIVE_SHA256=4f92084defa704deadd4e0a5ab1dc52d8ac9e8a8ef617f3fbb853e79b0ea3592
 MINISOM_ARCHIVE=minisom-2.3.5.tar.gz
 MINISOM_ARCHIVE_SHA256=c4e65e0a6a50170c163e9c0408f77464871e7b3007ad0cd87e178cdaf3db2ce3
+MINISOM_WHEEL=minisom-2.3.5-py3-none-any.whl
+MINISOM_WHEEL_SHA256=0b8e4e414e3ceabd97f221e0d90f9bc0b3996e3b7eee4aa728196862d6f457f3
 
 die() { echo "capture_v5_directions: $*" >&2; exit 1; }
 
@@ -36,6 +38,8 @@ pgrep -f '/llama-(server|perplexity|cvector-generator|quantize)([[:space:]]|$)' 
     || die "NumPy archive hash changed"
 [ "$(sha256sum "$WHEELHOUSE/$MINISOM_ARCHIVE" | awk '{print $1}')" = "$MINISOM_ARCHIVE_SHA256" ] \
     || die "MiniSom archive hash changed"
+[ "$(sha256sum "$WHEELHOUSE/$MINISOM_WHEEL" | awk '{print $1}')" = "$MINISOM_WHEEL_SHA256" ] \
+    || die "MiniSom wheel hash changed"
 "$PYTHON" -c \
     'import importlib.metadata,numpy; assert numpy.__version__ == "2.2.4"; assert importlib.metadata.version("MiniSom") == "2.3.5"' \
     || die "locked Python dependencies changed"
@@ -61,6 +65,7 @@ mapfile -t RUNTIME_PATHS < <(
 sha256sum \
     "$CVECTOR" "${RUNTIME_PATHS[@]}" \
     "$WHEELHOUSE/$NUMPY_ARCHIVE" "$WHEELHOUSE/$MINISOM_ARCHIVE" \
+    "$WHEELHOUSE/$MINISOM_WHEEL" \
     "$SCRIPT_DIR/capture_v5_directions.sh" \
     "$SCRIPT_DIR/generate_v5_directions.py" \
     "$SCRIPT_DIR/verify_v5_directions.py" \

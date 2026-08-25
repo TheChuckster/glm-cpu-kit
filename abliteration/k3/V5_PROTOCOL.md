@@ -77,7 +77,11 @@ are locked as SHA-256 `4f92084defa704deadd4e0a5ab1dc52d8ac9e8a8ef617f3fbb853e79b
 `c4e65e0a6a50170c163e9c0408f77464871e7b3007ad0cd87e178cdaf3db2ce3`
 (MiniSom source distribution; 2.3.5 publishes no wheel). Both archives and
 the installed versions are checked before model load and retained in the
-capture closure. For each source layer 56--73, compute
+capture closure. The pure-Python MiniSom sdist is converted once to wheel
+SHA-256 `0b8e4e414e3ceabd97f221e0d90f9bc0b3996e3b7eee4aa728196862d6f457f3`;
+its `minisom.py` payload is byte-identical to the verified sdist (SHA-256
+`8d5d41d8411cc84c4f69dcb3db245f127469310538a4a99fe5c4a7fc8cb785ea`).
+For each source layer 56--73, compute
 the harmful/harmless centroid distance divided by pooled within-class RMS.
 Select the maximum score, with lower layer as an exact tie-breaker. This uses
 activation geometry only and is complete before any model edit or response.
