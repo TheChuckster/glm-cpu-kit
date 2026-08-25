@@ -39,6 +39,20 @@ wait_closed() {
     return 1
 }
 
+production_ready() {
+    local health
+    local snapshot
+    [[ "$(systemctl is-active "$PRODUCTION")" == active ]] || return 1
+    health=$(curl -fsS --max-time 2 http://127.0.0.1:8080/health) || return 1
+    [[ "$health" == *'"status":"ok"'* ]] || return 1
+    snapshot=$(/usr/local/bin/glm-model status) || return 1
+    [[ "$snapshot" == *'selected variant : kimi-k3-q5attn-abl  (kimi-k3)'* ]]
+    [[ "$snapshot" == *'model directory  : /models/Kimi-K3-Q5attn-Abliterated'* ]]
+    [[ "$snapshot" == *'service          : active'* ]]
+    [[ "$snapshot" == *'health           : {"status":"ok"'* ]]
+    [[ "$snapshot" == *'serving alias    : kimi-k3'* ]]
+}
+
 # Invoked by the signal/exit trap below.
 # shellcheck disable=SC2329
 restore_production() {
@@ -52,15 +66,26 @@ restore_production() {
     if [[ "$production_stopped" == 1 ]]; then
         sudo -n systemctl start "$PRODUCTION" || status=1
         for _attempt in $(seq 1 360); do
-            if /usr/local/bin/glm-model status >/dev/null 2>&1; then
+            if production_ready >/dev/null 2>&1; then
                 break
             fi
             sleep 1
         done
+        production_ready || status=1
         /usr/local/bin/glm-model status || status=1
     fi
     exit "$status"
 }
+
+if (( $# > 0 )); then
+    if [[ "$1" == --check-production-only && $# == 1 ]]; then
+        production_ready
+        /usr/local/bin/glm-model status
+        exit 0
+    fi
+    echo "usage: $0 [--check-production-only]" >&2
+    exit 2
+fi
 trap restore_production EXIT INT TERM HUP
 
 check_sha256 a677e4c2decf66acae9eb91bc76ff1054f1cf261d2614f294e5c4f39f9615ab6 "$SERVER"
