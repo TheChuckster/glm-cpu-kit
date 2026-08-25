@@ -5,6 +5,7 @@ import unittest
 import numpy as np
 
 import diagnose_v5_spectral as spectral
+import generate_v5_spectral_directions as directions
 
 
 class SpectralDiagnosticTests(unittest.TestCase):
@@ -37,6 +38,13 @@ class SpectralDiagnosticTests(unittest.TestCase):
         right[3] *= -1
         np.testing.assert_allclose(
             spectral.principal_cosines(left, right), np.ones(7), atol=1e-12)
+
+    def test_basis_orientation_is_deterministic(self):
+        basis = np.eye(7, 10)
+        basis[2] *= -1
+        oriented = directions.orient_basis(basis)
+        self.assertGreater(oriented[2, 2], 0)
+        np.testing.assert_allclose(oriented @ oriented.T, np.eye(7), atol=1e-12)
 
 
 if __name__ == "__main__":

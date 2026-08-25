@@ -194,3 +194,41 @@ mean retention at least 0.95. This diagnosis may write only a private JSON
 report; it may not emit a control vector, capture Q5, read responses or
 holdouts, load a model, or write weights. Its exact result and any amendment
 must be appended and committed before further capture or construction.
+
+## Stage-1 amendment 1: stable spectral manifold
+
+The committed geometry-only diagnostic completed on 2026-08-24. Its private
+JSON is SHA-256
+`267d841e23036a5db48293d73e2627d444342d14cbc5fef36be489e6937545e2`.
+The original Fisher rule selected layer 61. All four preregistered rank-7
+spectral variants exceeded 0.80 worst-bootstrap stability. In locked order,
+their worst/mean-of-minima/class-mean-retention values were
+`0.864265395/0.945200240/0.999984975`,
+`0.828321321/0.940882137/0.999980884`,
+`0.910735893/0.967175615/0.999965976`, and
+`0.919705969/0.968885832/0.999960921`. The locked selection rule therefore
+chooses the fourth variant: unit-normalized symmetric contrast.
+
+This append-only amendment supersedes only the rejected SOM construction and
+its positive-to-selected-mean direction check. At layer 61, form 718 rows by
+concatenating each harmful activation minus the harmless centroid with the
+harmful centroid minus each harmless activation; L2-normalize every row; take
+the top seven right singular vectors of the uncentered thin SVD. Orient each
+basis row so its largest-absolute coordinate is positive, with NumPy's lower-
+index `argmax` tie behavior. The subspace itself remains sign-free. Require
+source class-mean retention at least 0.95 and preserve the five-bootstrap worst
+principal cosine gate of 0.80 (observed 0.919705969).
+
+Reuse the exact rejected-run source activation capture rather than recapturing
+or selecting on behavior. Capture Q5 only at the already locked layer 61 with
+the identical prompts/template/runtime settings. Repeat the exact symmetric
+spectral construction on Q5 and require both class-mean retention at least
+0.95 and minimum rank-7 principal cosine to the source basis at least 0.90.
+Failure remains terminal before weights. After Q5 passes, append exact capture,
+direction, manifest, executable, runtime, and verification hashes and commit a
+fail-closed candidate wrapper before opening any model shard for writing.
+
+The original rank-7 scale-1.0 intervention, 279-tensor allowlist, expert and
+non-target identity requirements, bounded Q5 correction, serving matrix,
+410/410 harmful and 0/100 harmless behavioral gates, perplexity, OpenCode,
+throughput, production selection, and delayed repository pushes are unchanged.
