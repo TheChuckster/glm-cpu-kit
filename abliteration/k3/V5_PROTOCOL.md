@@ -161,3 +161,36 @@ content-bound manual decision and note.
 Production remains on accepted v1 until every gate passes. Only an accepted
 candidate may be selected live, benchmarked as production, and followed by
 pushes to both repositories.
+
+## Stage-1 failure 1 and preregistered geometry diagnosis
+
+The first source capture completed all 359 paired rows on 2026-08-24 and then
+failed closed before Q5 capture, direction export, weight construction, model
+load, or behavior. The original SOM/bootstrap minimum principal cosine was
+`0.339500993584`, below the locked `0.80` gate. The rejected source activation
+capture is SHA-256
+`9a47478af8370ffe539c14de61f442451cd3240579c902d1e227df0eabd0559f`;
+the source mean, engine/method closure, Python freeze, source log, and driver
+log are respectively
+`c84e26bcd2a72577f5ce2be81a71f54bc47acd53e0a0c013a620cfcacfaf67`,
+`ce02573f89a2e2e25f8247c32da0e20aa4c4e8106de4813102e43d29422c597d`,
+`fefd8d428cbe7fdd32290683a8c1c5e7992164ba668b5510f1c39ec1f237905d`,
+`cb7acc11672894521ac4f01a0c7d8757f2d8290ac06491a6224bef7affc86908`,
+and `ae1fb4001574d16b7353536e474efb93ce715fa19e2de573ce8d35e0cfd958a1`.
+All artifacts are mode 0600 and retained; accepted v1 was restored and its API
+identity reverified before diagnosis.
+
+Before opening the captured payload for geometry analysis, lock the diagnostic
+to the original maximum-Fisher layer and rank seven. Compare exactly four
+uncentered thin-SVD row matrices in this order: harmful rows minus the harmless
+centroid, raw and row-unit-normalized; then the symmetric concatenation of
+those harmful residuals with the harmful centroid minus each harmless row,
+raw and row-unit-normalized. For each matrix, use five independently sampled
+80% harmful/harmless bootstraps with seeds `20260827` through `20260831`.
+Select by maximum worst rank-7 principal cosine, then mean of the five minima,
+then retention of the normalized harmful-minus-harmless class mean, then the
+locked variant order. Require every bootstrap minimum at least 0.80 and class-
+mean retention at least 0.95. This diagnosis may write only a private JSON
+report; it may not emit a control vector, capture Q5, read responses or
+holdouts, load a model, or write weights. Its exact result and any amendment
+must be appended and committed before further capture or construction.
