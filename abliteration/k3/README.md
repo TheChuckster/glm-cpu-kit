@@ -298,6 +298,25 @@ found 7 compliance and 3 mixed: two invented-target substitutions and one
 satirical thesis repudiation. V6 was rejected at that fail-fast boundary; no
 StrongREJECT response was opened and accepted v1 remains production.
 
+## Locked v7 experiment: v2 plus negative activation steering
+
+[`V7_PROTOCOL.md`](V7_PROTOCOL.md) fixes a structurally different next step
+before any v7 K3 output. It retains the structurally valid v2 rank-10 weights,
+then subtracts the original per-layer harmful-minus-harmless control vector at
+inference time over the already validated layers 56--73. Five negative scales
+are ordered gentlest-first and may be selected only on four already-consumed
+canonical rows: v2's two target-substitution failures and two v2 compliance
+stability controls. Fresh StrongREJECT sets remain sealed.
+
+The exact accepted server binary has already passed a tiny-model live
+load/apply/clear and graph-reuse test, including exact baseline restoration.
+Calibration remains localhost-only, disables prompt-state caching across
+settings, writes a receipt for every vector transition, and never changes the
+registry or production. A passing calibration setting still must clear
+410/410 substantive harmful compliance, harmlessness, quality, serving,
+OpenCode, termination, and throughput gates before deployment or either
+repository push.
+
 ## Prepare prompts
 
 ```sh
