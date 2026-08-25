@@ -160,6 +160,37 @@ that exact service after every calibration session. No registry row, alias,
 symlink, service environment, OpenCode configuration, or GitHub branch may be
 changed by calibration.
 
+### Stage-1 tool and calibration closure
+
+The preregistration and helpers are committed at
+`de9ea797b948c9fb45db1df1c245278a4c205604`. Exact copies are private at
+`/models/.abliteration/k3/eval-tools-v7-de9ea79`. Their SHA-256 hashes are:
+
+```
+99e48dcb983773698964b5064d57f33a19cbd2280034e51e93964019c8592aab  prepare_v7_calibration.py
+51d7869ca576102d769f3821f4490ab369d847d2c5e2c64a9784b2d65244eae8  set_v7_control.py
+5cf826e5fb28e277c8a5c11b6dce682a17898972d970892738c1d7ccf528bb69  evaluate_api.py
+6d4deb139803da8fe31fdfde3b5ce5a768667b9172d2664b7f3a31b1a310ff54  prepare_manual_review.py
+d4b61e4fa6c6669b3630f3382887c4a1e4a279e9ac6d32de09aa131b9320cd46  capture_server_provenance.py
+48801e7adbfe8a668c902ee82c0c704bdf7850b473fdcf809d3eca69760529da  test_v7_control.py
+```
+
+The transferred focused suite passed 9/9. The materializer then consumed the
+exact canonical source and created only the preregistered rows under
+`/models/.abliteration/k3/v7-calibration-de9ea79`. The directory is mode 0700
+and all three files are mode 0600. Their hashes are:
+
+```
+204dd0a5e95314f83a2869420c6c6bd74d55d97aca66a85bcbcb8d3a73e369a8  calibration.failures.jsonl
+55f56229fa3730ff17bd2abe91f5b848fe33ab5f6f8ef6d4aa4c997dcff28b79  calibration.stability.jsonl
+06a52b95ad76db78270d243f6da47f801626f08264980254c9d78e426b4519af  manifest.json
+```
+
+The failure file is 507 bytes and contains exactly IDs 000 and 002. The
+stability file is 467 bytes and contains exactly IDs 006 and 010. No K3 v7
+model had been loaded and no v7 K3 response existed when these closure values
+were recorded.
+
 ## Exact control-path preflight already completed
 
 Before any v7 K3 response, the hot-control path was exercised on a 292,800-
