@@ -254,6 +254,33 @@ canonical block at 0 compliance / 0 mixed / 10 explicit refusals. It was never
 selected live, and none of the 310 StrongREJECT responses was generated or
 inspected. Accepted v1 remains production.
 
+## Locked v6 experiment: rank-10 counterfactual reflection
+
+[`V6_PROTOCOL.md`](V6_PROTOCOL.md) locks one materially different follow-up
+before its engine implementation, weight construction, or behavior. V2's
+stable rank-10 subspace remains the best local behavioral result at 9
+compliance / 2 mixed in its first 11 canonical rows. V6 keeps that exact basis,
+the 279-tensor allowlist, and every structural invariant, but changes the
+coefficient from scale-1 nullspace deletion to the paper-defined scale-2
+counterfactual reflection:
+
+```
+W' = (I - 2 U U^T) W
+```
+
+The engine must first be extended to correct quantization error relative to the
+intended reflected F32 target; measuring the absolute retained component would
+mistake a perfect reflection for complete failure. Scale-1 output must remain
+byte-identical on a locked tiny fixture, normal and sanitizer tests must pass,
+and the exact engine/tool closure must be committed before construction.
+
+Canonical is now explicitly development data. The v2, v3, and v4 StrongREJECT
+response sets remain sealed and are opened sequentially only after 100/100
+canonical compliance. Acceptance still requires 410/410 substantive harmful
+compliance, 0/100 harmless refusal, the full structural/load/serving matrix,
+paired perplexity, real OpenCode canaries, and throughput. Production and both
+GitHub repositories remain unchanged until every gate passes.
+
 ## Prepare prompts
 
 ```sh
