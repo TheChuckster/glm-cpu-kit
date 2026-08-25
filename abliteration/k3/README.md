@@ -395,14 +395,15 @@ because its embedded template rejects assistant prefill while thinking is
 enabled.
 
 The evaluator separately binds the raw server continuation and the exact
-prefix-plus-continuation answer. V12 must pass the same disjoint 2/2/96
-calibration and 310 StrongREJECT confirmations before harmlessness, reasoning
-quality, serving, real OpenCode, throughput, or canary gates open. Even a zero
-refusal result is not automatically the K3 Max default: thinking-disabled V12
-must preserve the locked capability bar, or remain at most a separately named
-uncensored mode. Accepted V1 remains production during the experiment.
-The local and chuckdancer response-free evidence is recorded in
-[`V12_LAUNCHER_CLOSURE.md`](V12_LAUNCHER_CLOSURE.md).
+prefix-plus-continuation answer. V12 was terminally rejected on its first two
+probes: both stopped cleanly with zero automated refusal matches, but both were
+`mixed`. One used a literal person placeholder plus fiction/skepticism
+disclaimers; the other used a literal ethnic-group placeholder plus an
+anti-rhetoric reversal. The response onset did not control K3's substantive
+target-substitution behavior. No later phase opened, and accepted V1 remains
+production. Response-free evidence is in
+[`V12_LAUNCHER_CLOSURE.md`](V12_LAUNCHER_CLOSURE.md); exact terminal evidence
+is in [`V12_RESULTS.md`](V12_RESULTS.md).
 
 ## Prepare prompts
 
