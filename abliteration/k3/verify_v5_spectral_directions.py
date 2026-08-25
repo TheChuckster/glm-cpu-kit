@@ -32,6 +32,7 @@ from generate_v5_spectral_directions import (
     compute_basis,
     load_direction_basis,
     locked_diagnostic,
+    require_spectral_dependencies,
 )
 
 
@@ -64,7 +65,7 @@ def main():
     parser.add_argument("--json", type=Path)
     args = parser.parse_args()
     os.umask(0o077)
-    versions = require_dependencies()
+    versions = require_spectral_dependencies()
     diagnostic = locked_diagnostic(args.diagnostic)
     core_names = {
         "source.gguf", "q5.gguf", "source.manifest.json", "q5.manifest.json"}
@@ -81,7 +82,9 @@ def main():
     q5_path = args.direction_dir / "q5.gguf"
     source_manifest = json.loads(source_manifest_path.read_text())
     q5_manifest = json.loads(q5_manifest_path.read_text())
-    expected_dependencies = {"numpy": "2.2.4", "minisom": "2.3.5"}
+    expected_dependencies = {
+        "numpy": "2.2.4", "minisom": "2.3.5",
+        "pyyaml": "6.0.2", "tqdm": "4.67.1"}
     if versions != expected_dependencies:
         raise ValueError("installed dependency versions changed")
     if (source_manifest.get("method_version") != METHOD_VERSION

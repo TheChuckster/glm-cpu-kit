@@ -232,3 +232,14 @@ The original rank-7 scale-1.0 intervention, 279-tensor allowlist, expert and
 non-target identity requirements, bounded Q5 correction, serving matrix,
 410/410 harmful and 0/100 harmless behavioral gates, perplexity, OpenCode,
 throughput, production selection, and delayed repository pushes are unchanged.
+
+The first post-amendment source-direction smoke stopped before writing a GGUF:
+the deliberately minimal v5 environment lacked `yaml`, a declared dependency
+of the pinned engine's `gguf-py` package. No Q5 capture or final direction
+directory existed. Lock the official PyYAML 6.0.2 CPython 3.12 manylinux wheel
+at SHA-256
+`80bab7bfc629882493af4aa31a4cfa43a4c57c83813253626916b8c7ada83476`
+and the other declared writer dependency, tqdm 4.67.1, at SHA-256
+`26445eca388f82e72884e0d580d5464cd801a3ea01e63e5601bdff9ba6a48de2`.
+Both exact versions and archives join the fail-closed capture closure before
+retrying the source smoke or stopping production.

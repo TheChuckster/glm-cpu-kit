@@ -5,3 +5,8 @@ numpy==2.2.4 \
 minisom==2.3.5 \
     --hash=sha256:c4e65e0a6a50170c163e9c0408f77464871e7b3007ad0cd87e178cdaf3db2ce3 \
     --hash=sha256:0b8e4e414e3ceabd97f221e0d90f9bc0b3996e3b7eee4aa728196862d6f457f3
+# Declared runtime dependencies of the pinned ik_llama.cpp gguf-py writer.
+PyYAML==6.0.2 \
+    --hash=sha256:80bab7bfc629882493af4aa31a4cfa43a4c57c83813253626916b8c7ada83476
+tqdm==4.67.1 \
+    --hash=sha256:26445eca388f82e72884e0d580d5464cd801a3ea01e63e5601bdff9ba6a48de2

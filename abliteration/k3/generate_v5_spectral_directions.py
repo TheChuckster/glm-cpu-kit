@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+import importlib.metadata
 import json
 import os
 import stat
@@ -47,6 +48,23 @@ EXPECTED_DIAGNOSTIC_SHA256 = "267d841e23036a5db48293d73e2627d444342d14cbc5fef36b
 SELECTED_LAYER = 61
 SELECTED_VARIANT = "symmetric-contrast-unit"
 MIN_Q5_PRINCIPAL_COSINE = 0.90
+
+
+def require_spectral_dependencies():
+    versions = require_dependencies()
+    versions.update({
+        "pyyaml": importlib.metadata.version("PyYAML"),
+        "tqdm": importlib.metadata.version("tqdm"),
+    })
+    expected = {
+        "numpy": EXPECTED_NUMPY,
+        "minisom": EXPECTED_MINISOM,
+        "pyyaml": "6.0.2",
+        "tqdm": "4.67.1",
+    }
+    if versions != expected:
+        raise ValueError(f"spectral dependency versions {versions} != {expected}")
+    return versions
 
 
 def locked_diagnostic(path):
@@ -219,7 +237,7 @@ def main():
     parser.add_argument("--gguf-py", type=Path, required=True)
     args = parser.parse_args()
     os.umask(0o077)
-    versions = require_dependencies()
+    versions = require_spectral_dependencies()
     diagnostic = locked_diagnostic(args.diagnostic)
     if args.role == "source":
         source_role(args, versions, diagnostic)

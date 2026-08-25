@@ -28,6 +28,10 @@ MINISOM_ARCHIVE=minisom-2.3.5.tar.gz
 MINISOM_ARCHIVE_SHA256=c4e65e0a6a50170c163e9c0408f77464871e7b3007ad0cd87e178cdaf3db2ce3
 MINISOM_WHEEL=minisom-2.3.5-py3-none-any.whl
 MINISOM_WHEEL_SHA256=0b8e4e414e3ceabd97f221e0d90f9bc0b3996e3b7eee4aa728196862d6f457f3
+PYYAML_WHEEL=PyYAML-6.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+PYYAML_WHEEL_SHA256=80bab7bfc629882493af4aa31a4cfa43a4c57c83813253626916b8c7ada83476
+TQDM_WHEEL=tqdm-4.67.1-py3-none-any.whl
+TQDM_WHEEL_SHA256=26445eca388f82e72884e0d580d5464cd801a3ea01e63e5601bdff9ba6a48de2
 
 die() { echo "capture_v5_spectral_directions: $*" >&2; exit 1; }
 file_hash() { sha256sum "$1" | awk '{print $1}'; }
@@ -45,8 +49,12 @@ pgrep -f '/llama-(server|perplexity|cvector-generator|quantize)([[:space:]]|$)' 
     || die "MiniSom archive hash changed"
 [ "$(file_hash "$WHEELHOUSE/$MINISOM_WHEEL")" = "$MINISOM_WHEEL_SHA256" ] \
     || die "MiniSom wheel hash changed"
+[ "$(file_hash "$WHEELHOUSE/$PYYAML_WHEEL")" = "$PYYAML_WHEEL_SHA256" ] \
+    || die "PyYAML wheel hash changed"
+[ "$(file_hash "$WHEELHOUSE/$TQDM_WHEEL")" = "$TQDM_WHEEL_SHA256" ] \
+    || die "tqdm wheel hash changed"
 "$PYTHON" -c \
-    'import importlib.metadata,numpy; assert numpy.__version__ == "2.2.4"; assert importlib.metadata.version("MiniSom") == "2.3.5"' \
+    'import importlib.metadata,numpy; assert numpy.__version__ == "2.2.4"; assert importlib.metadata.version("MiniSom") == "2.3.5"; assert importlib.metadata.version("PyYAML") == "6.0.2"; assert importlib.metadata.version("tqdm") == "4.67.1"' \
     || die "locked Python dependencies changed"
 [ "$(file_hash "$SOURCE_CAPTURE")" = "$SOURCE_CAPTURE_SHA256" ] \
     || die "rejected-run source capture hash changed"
@@ -73,7 +81,8 @@ mapfile -t RUNTIME_PATHS < <(
 sha256sum \
     "$CVECTOR" "${RUNTIME_PATHS[@]}" \
     "$WHEELHOUSE/$NUMPY_ARCHIVE" "$WHEELHOUSE/$MINISOM_ARCHIVE" \
-    "$WHEELHOUSE/$MINISOM_WHEEL" "$SOURCE_CAPTURE" "$DIAGNOSTIC" \
+    "$WHEELHOUSE/$MINISOM_WHEEL" "$WHEELHOUSE/$PYYAML_WHEEL" \
+    "$WHEELHOUSE/$TQDM_WHEEL" "$SOURCE_CAPTURE" "$DIAGNOSTIC" \
     "$SCRIPT_DIR/capture_v5_spectral_directions.sh" \
     "$SCRIPT_DIR/diagnose_v5_spectral.py" \
     "$SCRIPT_DIR/generate_v5_spectral_directions.py" \
