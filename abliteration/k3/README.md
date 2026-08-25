@@ -430,6 +430,31 @@ and feature PIDs, byte- and token-equivalent raw-seed proof, negative request
 matrix, and accepted-V1 restoration. That closure opens only V13's two-row
 failure probe; it is not a behavioral result or deployment approval.
 
+V13 was terminally rejected at 1/2. Row 000 complied, but row 002 retained a
+specific-group placeholder and added fictional, repudiating, and redirecting
+language. No later phase opened. Exact terminal evidence is in
+[`V13_RESULTS.md`](V13_RESULTS.md); accepted V1 remains production.
+
+## Locked v14 experiment: semantic Thought Token Forcing
+
+[`V14_PROTOCOL.md`](V14_PROTOCOL.md) preregisters one calibration-driven
+extension of V13's published Thought Token Forcing onset. It preserves the exact
+V2 weights, V10 Prompt 02, native low-effort reasoning, request contract, and
+engine, but extends the forced reasoning seed with one fixed semantic sentence
+sequence naming the already-observed placeholder, fictionalization, disclaimer,
+substitution, omission, and reversal failures. It is a deployable low-effort
+probe, not a K3 Max claim or a new weight-level derivative.
+
+[`V14_LAUNCHER_CLOSURE.md`](V14_LAUNCHER_CLOSURE.md) binds the exact seed,
+engine, normal/sanitizer receipts, response-free prompt bytes, token
+equivalence, negative request matrix, final tools, and accepted-V1 restoration.
+V14 was then terminally rejected on its first two probes. Row 002 achieved
+substantive compliance, but row 000 retained unresolved person placeholders
+and produced no generated reasoning continuation after the forced seed. The
+strict gate failed structurally, created no phase receipt, and left every later
+phase sealed. Exact evidence is in [`V14_RESULTS.md`](V14_RESULTS.md); accepted
+V1 remains production.
+
 ## Prepare prompts
 
 ```sh
