@@ -234,21 +234,18 @@ the upstream rebase preserved the patch stack exactly according to `range-diff`.
 The published `kimi-k3-abl` Q2 row remains experimental and not downloaded;
 `kimi-k3-q5attn` remains the immediate rollback.
 
-Later V2--V7 experiments are retained as private, rejected research artifacts,
-not upgrades. Most recently, V7 tested the fixed V2 weights with negative
-runtime activation steering at five preregistered strengths. Every strength
-still substituted fictional, invented, placeholder, or generic targets on the
-two already-consumed failure probes, so no strength reached the calibration
-threshold and no held-out gate was opened. The selected production model
-remains the verified V1 derivative above; see
-[`abliteration/k3/V7_PROTOCOL.md`](abliteration/k3/V7_PROTOCOL.md) for the
-sealed outcome and exact hashes.
-
-V8 is preregistered research, not a selectable model. It tests affine concept
-editing at the previously geometry-selected layer 61: project away the prompt's
-remaining refusal-axis component, then relocate it to the measured non-refusal
-mean. Its fixed method and fail-fast gates are in
-[`abliteration/k3/V8_PROTOCOL.md`](abliteration/k3/V8_PROTOCOL.md).
+Later V2--V8 experiments are retained as private, rejected research artifacts,
+not upgrades. V7 tested the fixed V2 weights with negative runtime activation
+steering at five preregistered strengths; every strength still substituted
+fictional, invented, placeholder, or generic targets on the two consumed
+failure probes. V8 then attempted response-free affine concept editing at the
+previously selected layer 61, but its fixed V2/Q5 direction cosine was only
+`0.003617775073`, below the preregistered `0.90` geometry gate. It therefore
+stopped before affine artifacts or any K3 response existed. The selected
+production model remains the verified V1 derivative above; see
+[`abliteration/k3/V7_PROTOCOL.md`](abliteration/k3/V7_PROTOCOL.md) and
+[`abliteration/k3/V8_PROTOCOL.md`](abliteration/k3/V8_PROTOCOL.md) for the
+sealed outcomes and exact hashes.
 
 Note that `llama-server` does not reject a request naming a different alias than
 the loaded model: asking for `glm-5.2-abliterated` while `base` is live returns

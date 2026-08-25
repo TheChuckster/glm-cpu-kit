@@ -1,10 +1,12 @@
 # Kimi K3 abliteration v8 locked protocol
 
-Status: **stage-1 preregistered on 2026-08-25 before the v8 engine patch,
-V2 activation capture, affine artifact construction, or any v8 Kimi K3
-behavioral generation**. The only v8-specific work before this record was
-read-only analysis of the already-sealed V7 outcome and the already-existing
-V5 Q5 activation capture. No response or held-out prompt was opened.
+Status: **rejected at the preregistered geometry gate on 2026-08-25, before
+affine artifact construction or any v8 Kimi K3 behavioral generation**. This
+protocol was stage-1 preregistered before the v8 engine patch or V2 activation
+capture. The only v8-specific work before that record was read-only analysis of
+the already-sealed V7 outcome and the already-existing V5 Q5 activation
+capture. The closure and terminal evidence below were appended after the fixed
+geometry run. No response or held-out prompt was opened.
 
 ## Why v7 was rejected and why v8 is different
 
@@ -144,6 +146,61 @@ the refusal-class geometry measured on the high-refusal Q5 comparator.
 
 Failure rejects V8 before an engine or K3 response is used for selection. No
 threshold or layer may be amended after observing V2 geometry.
+
+## Recorded outcome: rejected in geometry
+
+The fixed response-free V2 capture completed all 359 harmful/harmless pairs at
+layer 61. The capture helper exited successfully and its trap restored exact
+accepted V1 production before any analysis continued. The private capture root
+is `/models/.abliteration/k3/v8-capture-caca44c`; its six files are owned by
+`chuck:chuck` and mode 0600. Their exact hashes are:
+
+```
+4ea9e5150abef444b94d03ffccfe5c8ea6c5ca2a40e1c636277cfdf897c207d2  all-artifacts.sha256
+62f4a9f591e63c73c8d9ca0df81225be1bcc8ce959f76fcf1d9626acbfe0d405  capture.env
+6bb5e6dc8b827dc5516dc8a948f02a6271b832c8e15ad84bad9af2a3b5ef7438  capture.log
+cbd72eff6cbcbf7285df67af32c4303ac2aba14e272a577ae84e0c7ca59bd653  engine-and-inputs.sha256
+464bbc8ddafddfaaed0b8199f411c8f9b1412e3237c3f0854ed0f83032290ff0  v2-activations.gguf
+4ff15e70197d17cbc78db0db380a330cab4e2313784e33214bab7ac516ec6687  v2-mean.gguf
+```
+
+`all-artifacts.sha256` independently reverified every artifact it binds. The
+activation file is 20,586,976 bytes and the preparation helper accepted its
+private mode, SHA-256, architecture, model hint, method, layer specification,
+sample count, exact two-tensor inventory, F32 `[7168,359]` shapes, bounds, and
+finite values. It likewise revalidated the sealed Q5 comparator before
+computing any geometry.
+
+The locked first cross-model gate then failed decisively:
+
+```
+V2/Q5 direction cosine 0.003617775073 < 0.9
+```
+
+The eligible preparation helper was SHA-256
+`2ad945c1cfa78f5c740dcc09fbd00b330636261d9728542d0d1939a0e08391a5`
+and the preregistered protocol it enforced was SHA-256
+`2dfa7613d9381f842a13b69d41dee489cbd6b50ff6ee0acd89e944ac70a727e4`.
+It ran under the existing locked Python 3.12.3 environment with NumPy 2.2.4;
+the pinned NumPy wheel rehashed to
+`4f92084defa704deadd4e0a5ab1dc52d8ac9e8a8ef617f3fbb853e79b0ea3592`.
+An initial system-Python invocation stopped at `import numpy` and observed no
+model data; the eligible pinned invocation above is the geometry result.
+
+The helper fails before creating its destination when a geometry gate fails.
+`/models/.abliteration/k3/v8-affine-ad2607b` therefore does not exist: no
+projection, offset, manifest, coefficient, calibration PID, or K3 ACE response
+was produced. No canonical, StrongREJECT, harmless, perplexity, serving,
+OpenCode, throughput, deployment, publication, or repository-push gate opened.
+Changing the layer, threshold, class order, or coefficient after seeing this
+result is forbidden for V8.
+
+After capture, accepted V1 was independently reverified as
+`glm-server.service`, PID 3256788, zero restarts, executable SHA-256
+`a677e4c2decf66acae9eb91bc76ff1054f1cf261d2614f294e5c4f39f9615ab6`,
+model path `/models/Kimi-K3-Q5attn-Abliterated`, alias `kimi-k3`, and healthy on
+port 8080. It was the only llama model workload. V8 remains private and is not
+selectable.
 
 ## Locked affine artifacts and coefficients
 
