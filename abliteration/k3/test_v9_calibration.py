@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 import capture_server_provenance as provenance
+import gate_v9_calibration as gate
 import verify_v9_calibration_state as state
 
 
@@ -57,6 +58,19 @@ class StateValidationTests(unittest.TestCase):
     def test_request_prefix_matches_sealed_json(self):
         path = Path(__file__).with_name("v9-calibration-request-prefix.json")
         self.assertEqual(json.loads(path.read_text()), state.REQUEST_PREFIX)
+        stability = Path(__file__).with_name(
+            "v9-calibration-stability-request-prefix.json"
+        )
+        first_evaluation = [
+            {"status": 200, "method": "GET", "path": "/v1/models"},
+            {"status": 200, "method": "POST", "path": "/v1/chat/completions"},
+            {"status": 200, "method": "POST", "path": "/v1/chat/completions"},
+            {"status": 200, "method": "GET", "path": "/v1/models"},
+        ]
+        self.assertEqual(
+            json.loads(stability.read_text()),
+            state.REQUEST_PREFIX + first_evaluation,
+        )
 
     def test_main_writes_receipt_only_after_exact_sequence(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -149,6 +163,141 @@ class ProvenancePrefixTests(unittest.TestCase):
             state.write_exclusive(output, {"first": True})
             with self.assertRaises(ValueError):
                 state.write_exclusive(output, {"second": True})
+
+
+class CalibrationGateTests(unittest.TestCase):
+    def make_phase(self, root, phase, ids, classifications):
+        dataset = root / f"calibration.{phase}.jsonl"
+        evaluation = root / f"{phase}.jsonl"
+        review = root / f"{phase}.review.jsonl"
+        dataset_rows = []
+        evaluation_rows = []
+        review_rows = []
+        for index, (item_id, classification) in enumerate(zip(ids, classifications)):
+            instruction = f"synthetic instruction {index}"
+            response = f"substantive synthetic response {index}"
+            dataset_rows.append({
+                "id": item_id,
+                "instruction": instruction,
+                "label": "harmful",
+            })
+            evaluation_rows.append({
+                "id": item_id,
+                "instruction": instruction,
+                "label": "harmful",
+                "dataset_file": dataset.name,
+                "model": gate.MODELS["alpha0"],
+                "seed": 20260823 + index,
+                "max_tokens": 2048,
+                "response": response,
+                "reasoning_content": "synthetic reasoning",
+                "finish_reason": "stop",
+                "completion_tokens": 32,
+                "termination_errors": [],
+                "incoherent": False,
+            })
+            review_rows.append({
+                "id": item_id,
+                "response_sha256": hashlib.sha256(response.encode()).hexdigest(),
+                "classification": classification,
+                "notes": f"manual {classification} decision",
+            })
+        for path, rows in (
+            (dataset, dataset_rows),
+            (evaluation, evaluation_rows),
+            (review, review_rows),
+        ):
+            path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        specification = {
+            "path": dataset,
+            "sha256": hashlib.sha256(dataset.read_bytes()).hexdigest(),
+            "ids": tuple(ids),
+        }
+        return specification, evaluation, review
+
+    @staticmethod
+    def write_receipt(path, core):
+        gate.write_exclusive(path, core)
+        return path
+
+    def test_rejected_failure_authorizes_next_coefficient(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ids = ("failure-0", "failure-1")
+            specification, evaluation, review = self.make_phase(
+                root, "failures", ids, ("compliance", "mixed")
+            )
+            with mock.patch.dict(
+                gate.DATASETS, {"failures": specification}, clear=True
+            ):
+                phase = self.write_receipt(
+                    root / "phase.json",
+                    gate.phase_core("alpha0", "failures", evaluation, review),
+                )
+                selection = self.write_receipt(
+                    root / "selection.json",
+                    gate.selection_core("alpha0", phase),
+                )
+                verified = gate.verify_selection_receipt(selection)
+            self.assertFalse(verified["selected"])
+            self.assertEqual(verified["outcome"], "rejected")
+
+    def test_passing_failure_requires_and_selects_only_passing_stability(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            failure_spec, failure_eval, failure_review = self.make_phase(
+                root, "failures", ("failure-0", "failure-1"),
+                ("compliance", "compliance"),
+            )
+            stability_spec, stability_eval, stability_review = self.make_phase(
+                root, "stability", ("stable-0", "stable-1"),
+                ("compliance", "compliance"),
+            )
+            with mock.patch.dict(gate.DATASETS, {
+                "failures": failure_spec,
+                "stability": stability_spec,
+            }, clear=True):
+                failure = self.write_receipt(
+                    root / "failure-phase.json",
+                    gate.phase_core("alpha0", "failures", failure_eval, failure_review),
+                )
+                with self.assertRaises(ValueError):
+                    gate.selection_core("alpha0", failure)
+                stability = self.write_receipt(
+                    root / "stability-phase.json",
+                    gate.phase_core(
+                        "alpha0", "stability", stability_eval, stability_review
+                    ),
+                )
+                selection = self.write_receipt(
+                    root / "selection.json",
+                    gate.selection_core("alpha0", failure, stability),
+                )
+                verified = gate.verify_selection_receipt(selection)
+            self.assertTrue(verified["selected"])
+            self.assertEqual(verified["outcome"], "selected")
+
+    def test_phase_receipt_detects_post_review_response_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            specification, evaluation, review = self.make_phase(
+                root, "failures", ("failure-0", "failure-1"),
+                ("compliance", "compliance"),
+            )
+            with mock.patch.dict(
+                gate.DATASETS, {"failures": specification}, clear=True
+            ):
+                phase = self.write_receipt(
+                    root / "phase.json",
+                    gate.phase_core("alpha0", "failures", evaluation, review),
+                )
+                rows = gate.load_jsonl(evaluation)
+                rows[0]["response"] += " changed"
+                evaluation.write_text(
+                    "".join(json.dumps(row) + "\n" for row in rows)
+                )
+                with self.assertRaises(ValueError):
+                    gate.verify_phase_receipt(phase)
 
 
 if __name__ == "__main__":

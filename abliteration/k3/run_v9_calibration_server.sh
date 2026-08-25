@@ -23,6 +23,8 @@ EVALUATOR=$TOOLS/evaluate_api.py
 REVIEW_HELPER=$TOOLS/prepare_manual_review.py
 PROVENANCE_HELPER=$TOOLS/capture_server_provenance.py
 REQUEST_PREFIX=$TOOLS/v9-calibration-request-prefix.json
+STABILITY_REQUEST_PREFIX=$TOOLS/v9-calibration-stability-request-prefix.json
+GATE_HELPER=$TOOLS/gate_v9_calibration.py
 RUN_ROOT=/models/.abliteration/k3/v9-calibration-run-e34450a
 PRODUCTION=glm-server.service
 
@@ -170,10 +172,15 @@ if [[ $# -eq 1 && "$1" == --check-production-only ]]; then
     /usr/local/bin/glm-model status
     exit 0
 fi
-if [[ $# -ne 1 ]]; then
-    die "usage: $0 {alpha0|alpha-m0p5|--check-production-only}"
+preflight_only=0
+if [[ $# -eq 2 && "$1" == --preflight-only ]]; then
+    preflight_only=1
+    COEFFICIENT=$2
+elif [[ $# -eq 1 ]]; then
+    COEFFICIENT=$1
+else
+    die "usage: $0 [--preflight-only] {alpha0|alpha-m0p5} | --check-production-only"
 fi
-COEFFICIENT=$1
 case "$COEFFICIENT" in
     alpha0)
         ARTIFACT=$ARTIFACT_DIR/affine-alpha0.gguf
@@ -218,6 +225,8 @@ check_sha256 6d4deb139803da8fe31fdfde3b5ce5a768667b9172d2664b7f3a31b1a310ff54 "$
 check_sha256 8d6213a2c9a6979744713dd514a91457bbb6461940fa009565f8500d0b51738c "$STATE_HELPER"
 check_sha256 6b1b52ad0e9efe9cf5fb9ddc7910bb4eb1e7adfe02159af74879ead4f485a4bc "$PROVENANCE_HELPER"
 check_sha256 3efe905fb3720aa0dd585aa71cfe97f2c1ef325b9214be233437df7c86792ae2 "$REQUEST_PREFIX"
+check_sha256 e724ca715dca19590826aebaed02e7b43e44a6a2a516c733a9cffef6a94e1bae "$STABILITY_REQUEST_PREFIX"
+check_sha256 5e84597e19d453c504270002d087f69a66e7cf1604acb87e9a1e3ea51ba6131b "$GATE_HELPER"
 [[ "$(git -C "$SERVER_REPO" rev-parse HEAD)" == 35db6bb3e4de67c1703ffbb3b98e1690296c8d03 ]] \
     || die "candidate engine checkout changed"
 [[ -z "$(git -C "$SERVER_REPO" status --porcelain)" ]] || die "candidate engine checkout is dirty"
@@ -229,6 +238,14 @@ production_ready || die "accepted production is not exact and healthy"
 port_closed 8081 || die "calibration port 8081 is already open"
 ! systemctl is-active --quiet "$UNIT" || die "candidate unit is already active"
 [[ ! -e "$RUN_DIR" ]] || die "refusing to reuse calibration run directory: $RUN_DIR"
+if [[ "$COEFFICIENT" == alpha-m0p5 ]]; then
+    "$GATE_HELPER" require-rejected alpha0 \
+        --selection "$RUN_ROOT/alpha0/selection.json"
+fi
+if [[ "$preflight_only" == 1 ]]; then
+    echo "PASS V9 preflight coefficient=$COEFFICIENT; production remains active"
+    exit 0
+fi
 mkdir -p "$RUN_ROOT"
 chmod 700 "$RUN_ROOT"
 mkdir "$RUN_DIR"
