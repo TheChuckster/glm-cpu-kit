@@ -258,7 +258,7 @@ verify_files() {
     check_sha256 135f3c8f006d2fe5e68e51281c7974cb991a03de3bfb3593d68d174dfcf854d1 /lib/x86_64-linux-gnu/libgomp.so.1
     check_sha256 108e23b77c8a22da1f27524993d3788e7826a3bbbb4fb8b61f64332836e88b6f "$COMPLETE"
     check_sha256 23fce7007554d8e25f1b90d170c5298069eb5839de41a06ed9541bf2da4d0a4d "$V2_VERIFY_JSON"
-    check_sha256 dccb89fd94eb56625c8a6726ff348a93af7b7e79ecfd00f536ccdb2a43df0f "$V2_VERIFY_TEXT"
+    check_sha256 dccb89fd94eb56625c8a6726ff348a93af7b7e7b79ecfd00f536ccdb2a43df0f "$V2_VERIFY_TEXT"
     check_sha256 ebb0a7791c857476ae81dbdfc82baf414a60ca6f10b14c4a8b6e1ec63918ddf0 "$V2_INVENTORY"
     check_sha256 44fc73623eb35a4b19b9cbfdf682a015af832ed8954233c68b8cf5845ab116f9 "$SYSTEM_PROMPT"
     check_sha256 61185bb05cc1732c653ff21bcbaf1f7b38a0b1823b13422c25877940a0184fb5 "$REASONING_PREFILL"

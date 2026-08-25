@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -221,6 +222,12 @@ class V13ConfigurationTests(unittest.TestCase):
             "count": 3,
             "sha256": hashlib.sha256(b"[1,2,3]").hexdigest(),
         })
+
+    def test_launcher_literal_sha256_values_are_well_formed(self):
+        launcher = (self.root / "run_v13_response_free_preflight.sh").read_text()
+        values = re.findall(r"check_sha256 ([0-9a-f]+) ", launcher)
+        self.assertGreater(len(values), 20)
+        self.assertTrue(all(re.fullmatch(r"[0-9a-f]{64}", value) for value in values))
 
     def test_reuses_exact_partition_and_two_request_prefix(self):
         self.assertEqual(
