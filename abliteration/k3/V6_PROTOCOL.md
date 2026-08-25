@@ -294,6 +294,41 @@ wrapper, this protocol, the resolved engine shared-library closure, and the
 sealed manifests/data into `build-engine-and-tools.sha256`; a resume must
 reproduce that manifest exactly. Any mismatch remains a pre-write stop.
 
+### Pre-write dependency-closure amendment
+
+The first invocation of the stage-2 wrapper stopped before reflinking or
+writing any model shard because `prepare_validation_prompts.py` imports
+`prepare_prompts.py`, which had not been copied into the versioned remote tools
+directory. The output directory was created but remained empty. The builder's
+exit trap proved identical before/after input manifests; both hash to
+`10b33229026f16d2491b5ea11eff1c606cf641f7043a124e3def474b5fe7375b`.
+Accepted v1 was immediately restarted and its live `kimi-k3` identity
+reverified.
+
+The three pre-write artifacts were preserved, not deleted or overwritten, at
+`/models/.abliteration/k3/v6-prewrite-missing-prepare-prompts-dbc815e`.
+Their provenance, before-stat, and after-stat file hashes are respectively
+`3271d2b5453a1ed4e76c80c51460a9e6073ca594328e95ed0ed146b022fef0fb`,
+`10b33229026f16d2491b5ea11eff1c606cf641f7043a124e3def474b5fe7375b`,
+and `10b33229026f16d2491b5ea11eff1c606cf641f7043a124e3def474b5fe7375b`.
+
+Before retry, the generic builder now preflights and records the transitive
+helper itself. The helper hash is
+`c2c89fd979da8b307accce07e315feb4aac3d2a005b8723b02e32db45e363c34`.
+This amendment supersedes only the initial construction-script closure above:
+
+```
+5feded021cd08327de92670a1320f38af89edcb559ccdb2f764201894133966d  build_candidate.sh
+ed3fb3a6ef8a2dffa08b52165d249980692c3d68f49a591eedf462f2daeb4028  build_candidate_v6.sh
+c2c89fd979da8b307accce07e315feb4aac3d2a005b8723b02e32db45e363c34  prepare_prompts.py
+```
+
+All engine binaries, directions, intervention choices, sealed sets, pass
+criteria, and remaining methodology hashes are unchanged. The corrected retry
+must use a new versioned tool directory and the original now-fresh
+`/models/.abliteration/k3/v6` artifact path. This amendment is again committed
+before the first v6 model payload write.
+
 ## Recorded outcome
 
 Not yet generated.

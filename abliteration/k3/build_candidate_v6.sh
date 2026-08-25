@@ -70,7 +70,7 @@ check_hash 7e94d9256a9f55779252e9c2fd8cab67cafeeee78be1623f8a5c8849e6592246 \
 # Locked construction/verifier implementation. The generic builder separately
 # records this closure plus the wrapper, protocol, engine, and holdouts in its
 # output-side provenance manifest.
-check_hash 60ab0eacbb4988bdb1ae3b37e82c7de0b77d9e351036d2c694a1861833f9b15d \
+check_hash 5feded021cd08327de92670a1320f38af89edcb559ccdb2f764201894133966d \
     "$SCRIPT_DIR/build_candidate.sh"
 check_hash 94c534ddf6fb6ad54b67bc6e966d0804a0fdfe94c525f82b63fba09284471261 \
     "$SCRIPT_DIR/verify_model.py"
@@ -80,6 +80,8 @@ check_hash 6255a55af81c9620cf938eb4ac4c43f74273a1f99f1b3098cd3025e25847ca3f \
     "$SCRIPT_DIR/compare_directions.py"
 check_hash 613776297ff4bc2b4c4a8bb8c562816f9ddb608c654395a7ddd273c2fb132f77 \
     "$SCRIPT_DIR/compare_subspaces.py"
+check_hash c2c89fd979da8b307accce07e315feb4aac3d2a005b8723b02e32db45e363c34 \
+    "$SCRIPT_DIR/prepare_prompts.py"
 check_hash f3177175104b25dcdea744b9125fc6076189858cd584f0d710984da149910c05 \
     "$SCRIPT_DIR/prepare_validation_prompts.py"
 check_hash 8de3d5ea13d60ed563449dc4d281b7f45c8a2e1a9423485c7381413bdba51925 \
