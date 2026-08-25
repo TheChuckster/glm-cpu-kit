@@ -379,3 +379,47 @@ and the API again returned exact model identity `kimi-k3` after the expected
 806-GiB load. V6 has not yet been loaded, served, behaviorally evaluated,
 registered, selected, or deployed. The next eligible operation is the locked
 full-load and isolated-serving gate.
+
+### Full-load and isolated-serving execution lock
+
+Before candidate load, the exact accepted harness and runtime were rehashed.
+`serving/validate-model.sh` is
+`3016e74635ccbdbc97c6a25bc8eea047a3564790e08ec2944bc4023bcd34304a`.
+The server and its build-tree `libmtmd`, `libllama`, and `libggml` are:
+
+```
+a677e4c2decf66acae9eb91bc76ff1054f1cf261d2614f294e5c4f39f9615ab6  llama-server
+421c65d0499c1977651e5824fdef7a2a69e808409da53466814a129c2c6a2e2a  libmtmd.so
+b07444a5e810375bc28fdd33d7db7bb7ef0488b28e597e4e90ff5f03eaec5bc4  libllama.so
+31e1b95a26bfb61506c42e6788a64a3bb9d2dad4aea73b8f43f8daef27a35e1f  libggml.so
+```
+
+The system `libstdc++`, `libm`, `libgcc_s`, `libc`, loader, and `libgomp`
+hashes are, in that order,
+`1fd75fe70354a416d75aef22bcae68c47bd25d20e2d0568c30b1a9838cf62f11`,
+`e9c4b28d340e415b8137480ec442662f981e1399386c5931dae0e886e3639e91`,
+`d93224d2b0dab4247598be683adca02f5cf00586f99c187579cd7e92058fb7cb`,
+`8db37cf3f2169f59a0f07ef1fea308c35656668c64c8ff294e1860f4121eb161`,
+`cd4df4f3c7b83673d61189bf2eaebd33ca4f2853ab9772b8a25e025ef99b1e81`,
+and `135f3c8f006d2fe5e68e51281c7974cb991a03de3bfb3593d68d174dfcf854d1`.
+
+The one eligible run uses label `kimi-k3-q5attn-abl-v6`, loopback port 8081,
+64 physical threads, context 65,536, five tool-reliability repetitions, and
+mandatory graph-reuse rejection. Its model flags are byte-for-byte the V5
+accepted set:
+
+```
+--reasoning-format deepseek --cache-type-v f16 --repeat-penalty 1.0
+--temp 1.0 --top-p 0.95
+--chat-template-kwargs {"thinking_effort":"low"}
+--reasoning-budget 1024 --spec-type ngram-mod:n_max=16,n_min=2
+```
+
+Artifacts must be new paths under `/models/.abliteration/k3/v6-serving` plus
+`v6-serving-driver.log`. The harness itself must start and trap the isolated
+server PID. Accepted v1 is stopped only because two 800-GiB models cannot
+coexist, then restored and API-identity checked regardless of the V6 result.
+Passing requires full load plus coherent bounded chat, normal termination,
+reasoning separation, typed tools, 5/5 repeated tools, streamed tools,
+tool-result replay, the long agent-shaped prompt, and no graph-reuse fallback.
+No canonical or sealed harmful response is generated in this gate.
