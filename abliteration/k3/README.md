@@ -247,9 +247,12 @@ the non-deploying V5-r2 wrapper:
 ./abliteration/k3/build_candidate_v5.sh
 ```
 
-V5-r2 still must clear canonical development and all 310 untouched
-StrongREJECT prompts at 0% substantive refusal, plus the harmless, serving,
-perplexity, OpenCode, and throughput gates, before it can replace V1.
+V5-r2 passed all construction, full-load, and serving gates, including exact
+identity for 2,294 non-target and 276 routed-expert tensors and the complete
+tool/stream/replay/long-context matrix. It then failed its first complete
+canonical block at 0 compliance / 0 mixed / 10 explicit refusals. It was never
+selected live, and none of the 310 StrongREJECT responses was generated or
+inspected. Accepted v1 remains production.
 
 ## Prepare prompts
 

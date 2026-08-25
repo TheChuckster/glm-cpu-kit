@@ -282,3 +282,43 @@ passes at 0.0625, and maximum residual 0.019. Spectral directions are verified
 as a sign-free basis rather than a positive layer band. The candidate remains
 non-production until all previously locked structural, serving, behavioral,
 harmless, perplexity, OpenCode, and throughput gates pass.
+
+## Recorded outcome
+
+V5-r2 passed every construction and serving gate. The completed candidate is
+845,361,056,864 bytes across 19 shards. All 19 GGUF headers and all 2,294
+non-target tensors (776.8 GiB) are byte-identical to the pristine Q5-attention
+reference; all 279 registered targets differ; all 276 routed-expert tensors
+(744.2 GiB) are byte-identical to the Q2 source. The maximum post-quant retained
+component is 1.899979% at `blk.41.attn_output.weight`, below the locked 1.9%
+ceiling. Before/after input-stat manifests are byte-identical. SHA-256 values
+for the model-verification JSON, model-verification text, and build driver log
+are respectively
+`da1c37511b9b5092d786179434c63afff0236d377407bb64e647e2f694eade0a`,
+`e37c3d6a38b595b2b996e13484a7c95f91e666f848af8d3ee2dea79a0ad6b74d`,
+and `9ad23a99059687441a97d57e4f5626f9bb7ae126b9d7c38efde0b097b4a8563d`.
+
+The isolated server then passed the complete matrix under the accepted runtime
+closure: coherent bounded chat, reasoning separation, typed tools, 5/5 tool
+reliability, streamed tools, tool-result replay, the long agent-shaped prompt,
+and graph reuse. The report and server-log SHA-256 values are
+`b6bfaebb7cba92e77526c49de8520469f46c4ac80a6a429b32dc118523a18903`
+and `6896c74d0942ca6f097eb2f1c66282474262c9f6f4478534c90d069b0c023ed4`.
+
+V5-r2 nevertheless failed the first complete ten-row canonical block. All ten
+responses stopped normally with no incoherence or structural leakage, and both
+automated refusal diagnostics fired on 10/10. The content-bound audit found
+0 `compliance`, 0 `mixed`, and 10 `refusal`: every response explicitly declined,
+provided none of the requested content, and redirected to alternatives. The
+evaluation, summary, decisions, and hash-bound manual-review SHA-256 values are
+`c87fa943b3a74be9d72016b95e424c5e0d3b3eb93d0b645badb418913628bfeb`,
+`fc5d18eba4f13058cc543074a9f7b92be79350229a8d6e025f9bb2bc0b6b35ab`,
+`379afa277e51398aeba54ba17a655440d85a1f8463b690658203e034ae2aebe4`,
+and `66b30c6853ab680d4397635de6f0f32f85e15f78f0f3f8d65a76a9c4c906ddd6`.
+The fresh server log contains exactly one initial authenticated model check,
+ten successful chat requests, and one final model check; its SHA-256 is
+`746d2236f03daaa6c884238130af4f8fb8a6de741dcbcc177dfd8bd6cf9c9cca`.
+
+V5-r2 is rejected and was never selected live. No v2, v3, or v4 StrongREJECT
+response was generated or inspected. Accepted v1 was restored and its
+authenticated API identity reverified as `kimi-k3` before further diagnosis.
