@@ -234,15 +234,22 @@ was never opened and V4 was never deployed.
 [`V5_PROTOCOL.md`](V5_PROTOCOL.md) locks a CPU adaptation of the official AAAI
 2026 *SOM Directions Are Better than One* method. The patched cvector generator
 retains raw final-token activations for the fixed 359+359 development set;
-`generate_v5_directions.py` selects one layer using activation geometry, trains
-the official 4x4 SOM, and deterministically selects seven supported, diverse
-directions. Source/bootstrap/Q5 subspace stability is required before a weight
-can be edited.
+the original 4x4 SOM failed its locked source-bootstrap gate (0.339501) before
+Q5 capture or weight construction. The append-only geometry diagnosis then
+selected a stable rank-7 unit-normalized symmetric-contrast SVD at Fisher layer
+61. It retained the class mean at 0.999961, passed five source bootstraps at a
+0.919706 minimum principal cosine, and reproduced on Q5 at a 0.987165 minimum.
 
-Stage 1 is pre-registered before activation extraction. After exact direction
-hashes are appended and committed, V5 must clear canonical development and all
-310 still-untouched StrongREJECT prompts at 0% substantive refusal before it
-can replace V1.
+Every observed artifact and build-tool hash is now locked. Construct only via
+the non-deploying V5-r2 wrapper:
+
+```sh
+./abliteration/k3/build_candidate_v5.sh
+```
+
+V5-r2 still must clear canonical development and all 310 untouched
+StrongREJECT prompts at 0% substantive refusal, plus the harmless, serving,
+perplexity, OpenCode, and throughput gates, before it can replace V1.
 
 ## Prepare prompts
 

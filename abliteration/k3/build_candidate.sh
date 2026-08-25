@@ -30,6 +30,7 @@ SUBSPACE_RANK="${SUBSPACE_RANK:-0}"
 PATCH_EXISTING="${PATCH_EXISTING:-0}"
 LOCKED_PROTOCOL_VERSION="${LOCKED_PROTOCOL_VERSION:-v2}"
 DIRECTION_EXPECTED_LAYERS="${DIRECTION_EXPECTED_LAYERS:-92}"
+DIRECTION_GEOMETRY="${DIRECTION_GEOMETRY:-layer-band}"
 
 CVECTOR="$BUILD_DIR/bin/llama-cvector-generator"
 QUANTIZE="$BUILD_DIR/bin/llama-quantize"
@@ -81,6 +82,10 @@ awk -v value="$QUANT_CORRECTION" \
 [[ "$SUBSPACE_RANK" =~ ^[0-9]+$ ]] || die "SUBSPACE_RANK must be a non-negative integer"
 [[ "$DIRECTION_EXPECTED_LAYERS" =~ ^[1-9][0-9]*$ ]] \
     || die "DIRECTION_EXPECTED_LAYERS must be a positive integer"
+case "$DIRECTION_GEOMETRY" in
+    layer-band|spectral-basis) ;;
+    *) die "DIRECTION_GEOMETRY must be layer-band or spectral-basis" ;;
+esac
 [[ "$PATCH_EXISTING" == 0 || "$PATCH_EXISTING" == 1 ]] \
     || die "PATCH_EXISTING must be 0 or 1"
 if [ "$PATCH_EXISTING" = 1 ]; then
@@ -93,6 +98,12 @@ if [ "$SUBSPACE_RANK" -gt 0 ]; then
         v2|v3|v4|v5) ;;
         *) die "LOCKED_PROTOCOL_VERSION must be v2, v3, v4, or v5 for a subspace candidate" ;;
     esac
+fi
+if [ "$DIRECTION_GEOMETRY" = spectral-basis ]; then
+    [ "$SUBSPACE_RANK" -gt 0 ] \
+        || die "spectral-basis geometry requires an explicit subspace rank"
+    [ "$LOCKED_PROTOCOL_VERSION" = v5 ] \
+        || die "spectral-basis geometry is currently locked to protocol v5"
 fi
 
 if [ -d "$OUTPUT_DIR" ] && find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
@@ -166,21 +177,51 @@ if [ "$SUBSPACE_RANK" -gt 0 ]; then
             V2_HOLDOUT_DIR="${V2_HOLDOUT_DIR:-/models/.abliteration/k3/v2-holdout}"
             V3_HOLDOUT_DIR="${V3_HOLDOUT_DIR:-/models/.abliteration/k3/v3-holdout}"
             V4_HOLDOUT_DIR="${V4_HOLDOUT_DIR:-/models/.abliteration/k3/v4-holdout}"
-            V5_CAPTURE_DIR="${V5_CAPTURE_DIR:-/models/.abliteration/k3/v5-capture}"
-            V5_DIRECTIONS_DIR="${V5_DIRECTIONS_DIR:-/models/.abliteration/k3/v5-directions}"
+            V5_METHOD_VARIANT="${V5_METHOD_VARIANT:-som}"
+            case "$V5_METHOD_VARIANT" in
+                som)
+                    V5_CAPTURE_DIR="${V5_CAPTURE_DIR:-/models/.abliteration/k3/v5-capture}"
+                    V5_DIRECTIONS_DIR="${V5_DIRECTIONS_DIR:-/models/.abliteration/k3/v5-directions}"
+                    BUILD_PROVENANCE_INPUTS+=(
+                        "$SCRIPT_DIR/build_candidate_v5.sh"
+                        "$SCRIPT_DIR/V5_PROTOCOL.md"
+                        "$SCRIPT_DIR/capture_v5_directions.sh"
+                        "$SCRIPT_DIR/generate_v5_directions.py"
+                        "$SCRIPT_DIR/verify_v5_directions.py"
+                        "$SCRIPT_DIR/prepare_v5_prompts.py"
+                        "$SCRIPT_DIR/verify_v5_prompts.py"
+                        "$SCRIPT_DIR/v5-requirements.txt"
+                        "$V5_CAPTURE_DIR/engine-and-method.sha256"
+                        "$V5_DIRECTIONS_DIR/train.manifest.json"
+                        "$V5_DIRECTIONS_DIR/q5.manifest.json"
+                        "$V5_DIRECTIONS_DIR/verification.json"
+                    )
+                    ;;
+                spectral)
+                    V5_CAPTURE_DIR="${V5_CAPTURE_DIR:-/models/.abliteration/k3/v5-spectral-capture}"
+                    V5_DIRECTIONS_DIR="${V5_DIRECTIONS_DIR:-/models/.abliteration/k3/v5-spectral-directions}"
+                    V5_DIAGNOSTIC="${V5_DIAGNOSTIC:-/models/.abliteration/k3/v5-spectral-diagnostic1.json}"
+                    BUILD_PROVENANCE_INPUTS+=(
+                        "$SCRIPT_DIR/build_candidate_v5.sh"
+                        "$SCRIPT_DIR/V5_PROTOCOL.md"
+                        "$SCRIPT_DIR/capture_v5_spectral_directions.sh"
+                        "$SCRIPT_DIR/diagnose_v5_spectral.py"
+                        "$SCRIPT_DIR/generate_v5_spectral_directions.py"
+                        "$SCRIPT_DIR/verify_v5_spectral_directions.py"
+                        "$SCRIPT_DIR/prepare_v5_prompts.py"
+                        "$SCRIPT_DIR/verify_v5_prompts.py"
+                        "$SCRIPT_DIR/v5-requirements.txt"
+                        "$V5_DIAGNOSTIC"
+                        "$V5_CAPTURE_DIR/engine-and-method.sha256"
+                        "$V5_CAPTURE_DIR/all-artifacts.sha256"
+                        "$V5_DIRECTIONS_DIR/source.manifest.json"
+                        "$V5_DIRECTIONS_DIR/q5.manifest.json"
+                        "$V5_DIRECTIONS_DIR/verification.json"
+                    )
+                    ;;
+                *) die "V5_METHOD_VARIANT must be som or spectral" ;;
+            esac
             BUILD_PROVENANCE_INPUTS+=(
-                "$SCRIPT_DIR/build_candidate_v5.sh"
-                "$SCRIPT_DIR/V5_PROTOCOL.md"
-                "$SCRIPT_DIR/capture_v5_directions.sh"
-                "$SCRIPT_DIR/generate_v5_directions.py"
-                "$SCRIPT_DIR/verify_v5_directions.py"
-                "$SCRIPT_DIR/prepare_v5_prompts.py"
-                "$SCRIPT_DIR/verify_v5_prompts.py"
-                "$SCRIPT_DIR/v5-requirements.txt"
-                "$V5_CAPTURE_DIR/engine-and-method.sha256"
-                "$V5_DIRECTIONS_DIR/train.manifest.json"
-                "$V5_DIRECTIONS_DIR/q5.manifest.json"
-                "$V5_DIRECTIONS_DIR/verification.json"
                 "$V2_HOLDOUT_DIR/manifest.json"
                 "$V2_HOLDOUT_DIR/test.strongreject.jsonl"
                 "$V3_HOLDOUT_DIR/manifest.json"
@@ -288,35 +329,7 @@ fi
 sha256sum "$DIRECTION" "$DIAGNOSTIC_DIRECTION" "$VALIDATION_DIRECTION" \
     > "$ARTIFACT_DIR/directions.sha256"
 
-"$SCRIPT_DIR/analyze_direction.py" "$DIRECTION" \
-    --band "$LAYER_START" "$LAYER_END" \
-    --window "$((LAYER_END - LAYER_START + 1))" \
-    --require-positive-band \
-    --json "$ARTIFACT_DIR/direction-analysis.json" \
-    | tee "$ARTIFACT_DIR/direction-analysis.txt"
-"$SCRIPT_DIR/analyze_direction.py" "$DIAGNOSTIC_DIRECTION" \
-    --band "$LAYER_START" "$LAYER_END" \
-    --window "$((LAYER_END - LAYER_START + 1))" \
-    --require-positive-band \
-    --json "$ARTIFACT_DIR/direction-q5-reference-analysis.json" \
-    | tee "$ARTIFACT_DIR/direction-q5-reference-analysis.txt"
-"$SCRIPT_DIR/analyze_direction.py" "$VALIDATION_DIRECTION" \
-    --band "$LAYER_START" "$LAYER_END" \
-    --window "$((LAYER_END - LAYER_START + 1))" \
-    --require-positive-band \
-    --json "$ARTIFACT_DIR/direction-validation-analysis.json" \
-    | tee "$ARTIFACT_DIR/direction-validation-analysis.txt"
-"$SCRIPT_DIR/compare_directions.py" "$DIRECTION" "$DIAGNOSTIC_DIRECTION" \
-    --band "$LAYER_START" "$LAYER_END" --min-band-cosine 0.90 \
-    --expected-layers "$DIRECTION_EXPECTED_LAYERS" \
-    --json "$ARTIFACT_DIR/direction-crosscheck.json" \
-    | tee "$ARTIFACT_DIR/direction-crosscheck.txt"
-"$SCRIPT_DIR/compare_directions.py" "$DIRECTION" "$VALIDATION_DIRECTION" \
-    --band "$LAYER_START" "$LAYER_END" --min-band-cosine 0.80 \
-    --expected-layers "$DIRECTION_EXPECTED_LAYERS" \
-    --json "$ARTIFACT_DIR/direction-validation-crosscheck.json" \
-    | tee "$ARTIFACT_DIR/direction-validation-crosscheck.txt"
-if [ "$SUBSPACE_RANK" -gt 0 ]; then
+if [ "$DIRECTION_GEOMETRY" = spectral-basis ]; then
     "$SCRIPT_DIR/compare_subspaces.py" "$DIRECTION" "$DIAGNOSTIC_DIRECTION" \
         --band "$LAYER_START" "$LAYER_END" --rank "$SUBSPACE_RANK" \
         --expected-layers "$DIRECTION_EXPECTED_LAYERS" \
@@ -329,6 +342,49 @@ if [ "$SUBSPACE_RANK" -gt 0 ]; then
         --min-principal-cosine 0.80 \
         --json "$ARTIFACT_DIR/subspace-validation-crosscheck.json" \
         | tee "$ARTIFACT_DIR/subspace-validation-crosscheck.txt"
+else
+    "$SCRIPT_DIR/analyze_direction.py" "$DIRECTION" \
+        --band "$LAYER_START" "$LAYER_END" \
+        --window "$((LAYER_END - LAYER_START + 1))" \
+        --require-positive-band \
+        --json "$ARTIFACT_DIR/direction-analysis.json" \
+        | tee "$ARTIFACT_DIR/direction-analysis.txt"
+    "$SCRIPT_DIR/analyze_direction.py" "$DIAGNOSTIC_DIRECTION" \
+        --band "$LAYER_START" "$LAYER_END" \
+        --window "$((LAYER_END - LAYER_START + 1))" \
+        --require-positive-band \
+        --json "$ARTIFACT_DIR/direction-q5-reference-analysis.json" \
+        | tee "$ARTIFACT_DIR/direction-q5-reference-analysis.txt"
+    "$SCRIPT_DIR/analyze_direction.py" "$VALIDATION_DIRECTION" \
+        --band "$LAYER_START" "$LAYER_END" \
+        --window "$((LAYER_END - LAYER_START + 1))" \
+        --require-positive-band \
+        --json "$ARTIFACT_DIR/direction-validation-analysis.json" \
+        | tee "$ARTIFACT_DIR/direction-validation-analysis.txt"
+    "$SCRIPT_DIR/compare_directions.py" "$DIRECTION" "$DIAGNOSTIC_DIRECTION" \
+        --band "$LAYER_START" "$LAYER_END" --min-band-cosine 0.90 \
+        --expected-layers "$DIRECTION_EXPECTED_LAYERS" \
+        --json "$ARTIFACT_DIR/direction-crosscheck.json" \
+        | tee "$ARTIFACT_DIR/direction-crosscheck.txt"
+    "$SCRIPT_DIR/compare_directions.py" "$DIRECTION" "$VALIDATION_DIRECTION" \
+        --band "$LAYER_START" "$LAYER_END" --min-band-cosine 0.80 \
+        --expected-layers "$DIRECTION_EXPECTED_LAYERS" \
+        --json "$ARTIFACT_DIR/direction-validation-crosscheck.json" \
+        | tee "$ARTIFACT_DIR/direction-validation-crosscheck.txt"
+    if [ "$SUBSPACE_RANK" -gt 0 ]; then
+        "$SCRIPT_DIR/compare_subspaces.py" "$DIRECTION" "$DIAGNOSTIC_DIRECTION" \
+            --band "$LAYER_START" "$LAYER_END" --rank "$SUBSPACE_RANK" \
+            --expected-layers "$DIRECTION_EXPECTED_LAYERS" \
+            --min-principal-cosine 0.90 \
+            --json "$ARTIFACT_DIR/subspace-q5-crosscheck.json" \
+            | tee "$ARTIFACT_DIR/subspace-q5-crosscheck.txt"
+        "$SCRIPT_DIR/compare_subspaces.py" "$DIRECTION" "$VALIDATION_DIRECTION" \
+            --band "$LAYER_START" "$LAYER_END" --rank "$SUBSPACE_RANK" \
+            --expected-layers "$DIRECTION_EXPECTED_LAYERS" \
+            --min-principal-cosine 0.80 \
+            --json "$ARTIFACT_DIR/subspace-validation-crosscheck.json" \
+            | tee "$ARTIFACT_DIR/subspace-validation-crosscheck.txt"
+    fi
 fi
 
 TARGET_PATTERN='^token_embd\.weight$,^blk\.[0-9]+\.attn_output\.weight$,^blk\.0\.ffn_down\.weight$,^blk\.[1-9][0-9]*\.ffn_down_shexp\.weight$,^blk\.[1-9][0-9]*\.ffn_routed_up\.weight$'
