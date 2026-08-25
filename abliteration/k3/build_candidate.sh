@@ -26,6 +26,7 @@ MAX_RESIDUAL="${MAX_RESIDUAL:-0.02}"
 REUSE_DIRECTION="${REUSE_DIRECTION:-0}"
 SUBSPACE_RANK="${SUBSPACE_RANK:-0}"
 PATCH_EXISTING="${PATCH_EXISTING:-0}"
+LOCKED_PROTOCOL_VERSION="${LOCKED_PROTOCOL_VERSION:-v2}"
 
 CVECTOR="$BUILD_DIR/bin/llama-cvector-generator"
 QUANTIZE="$BUILD_DIR/bin/llama-quantize"
@@ -77,6 +78,12 @@ if [ "$PATCH_EXISTING" = 1 ]; then
         || die "PATCH_EXISTING is reserved for an explicit subspace candidate"
     command -v cp >/dev/null || die "cp is required for reflink construction"
 fi
+if [ "$SUBSPACE_RANK" -gt 0 ]; then
+    case "$LOCKED_PROTOCOL_VERSION" in
+        v2|v3) ;;
+        *) die "LOCKED_PROTOCOL_VERSION must be v2 or v3 for a subspace candidate" ;;
+    esac
+fi
 
 if [ -d "$OUTPUT_DIR" ] && find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
     die "refusing to overwrite non-empty candidate directory: $OUTPUT_DIR"
@@ -103,13 +110,28 @@ BUILD_PROVENANCE_INPUTS=(
     "$SCRIPT_DIR/verify_prompts.py"
 )
 if [ "$SUBSPACE_RANK" -gt 0 ]; then
-    BUILD_PROVENANCE_INPUTS+=(
-        "$SCRIPT_DIR/build_candidate_v2.sh"
-        "$SCRIPT_DIR/V2_PROTOCOL.md"
-        "$SCRIPT_DIR/compare_subspaces.py"
-        "$SCRIPT_DIR/prepare_v2_holdout.py"
-        "$SCRIPT_DIR/verify_v2_holdout.py"
-    )
+    BUILD_PROVENANCE_INPUTS+=("$SCRIPT_DIR/compare_subspaces.py")
+    case "$LOCKED_PROTOCOL_VERSION" in
+        v2)
+            BUILD_PROVENANCE_INPUTS+=(
+                "$SCRIPT_DIR/build_candidate_v2.sh"
+                "$SCRIPT_DIR/V2_PROTOCOL.md"
+                "$SCRIPT_DIR/prepare_v2_holdout.py"
+                "$SCRIPT_DIR/verify_v2_holdout.py"
+            )
+            ;;
+        v3)
+            V3_HOLDOUT_DIR="${V3_HOLDOUT_DIR:-/models/.abliteration/k3/v3-holdout}"
+            BUILD_PROVENANCE_INPUTS+=(
+                "$SCRIPT_DIR/build_candidate_v3.sh"
+                "$SCRIPT_DIR/V3_PROTOCOL.md"
+                "$SCRIPT_DIR/prepare_v3_holdout.py"
+                "$SCRIPT_DIR/verify_v3_holdout.py"
+                "$V3_HOLDOUT_DIR/manifest.json"
+                "$V3_HOLDOUT_DIR/test.strongreject.jsonl"
+            )
+            ;;
+    esac
 fi
 if [ -e "$ENGINE_MANIFEST" ]; then
     [ "$REUSE_DIRECTION" = 1 ] \
