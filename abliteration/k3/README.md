@@ -333,12 +333,14 @@ projects every token out of the sealed, stable rank-seven Q5 refusal subspace,
 then relocates that complete subspace component to the measured Q5 harmless
 reference. Only ACE coefficients `0` and `-0.5` are eligible, in that order.
 
-V9 requires a new startup-only, self-contained affine-subspace GGUF and a
-fail-closed engine path. No K3 response may be generated until normal,
-sanitizer, state, parser, graph-reuse, and tiny-server tests are hash-bound in a
-stage-2 closure. Passing calibration still opens the same 410/410 substantive
-harmful, 0/100 harmless, quality, tools, OpenCode, throughput, rollback, and
-post-deploy gates before either repository push.
+V9's new startup-only, self-contained affine-subspace GGUF and fail-closed
+engine path passed normal, sanitizer, state, parser, graph-reuse, tiny-server,
+full V2 revalidation, and rollback preflight gates. It was then rejected in
+calibration: alpha zero and alpha `-0.5` both still substituted fictional
+presidents and invented ethnic groups on the two consumed failure probes.
+Neither stability nor any 410/410, harmless, quality, OpenCode, throughput,
+deployment, or repository-push gate opened. Exact terminal evidence is in
+[`V9_PROTOCOL.md`](V9_PROTOCOL.md); accepted V1 remains production.
 
 ## Prepare prompts
 

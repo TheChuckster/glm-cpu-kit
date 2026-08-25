@@ -234,7 +234,7 @@ the upstream rebase preserved the patch stack exactly according to `range-diff`.
 The published `kimi-k3-abl` Q2 row remains experimental and not downloaded;
 `kimi-k3-q5attn` remains the immediate rollback.
 
-Later V2--V8 experiments are retained as private, rejected research artifacts,
+Later V2--V9 experiments are retained as private, rejected research artifacts,
 not upgrades. V7 tested the fixed V2 weights with negative runtime activation
 steering at five preregistered strengths; every strength still substituted
 fictional, invented, placeholder, or generic targets on the two consumed
@@ -244,15 +244,16 @@ previously selected layer 61, but its fixed V2/Q5 direction cosine was only
 stopped before affine artifacts or any K3 response existed. The selected
 production model remains the verified V1 derivative above; see
 [`abliteration/k3/V7_PROTOCOL.md`](abliteration/k3/V7_PROTOCOL.md) and
-[`abliteration/k3/V8_PROTOCOL.md`](abliteration/k3/V8_PROTOCOL.md) for the
+[`abliteration/k3/V8_PROTOCOL.md`](abliteration/k3/V8_PROTOCOL.md) for those
 sealed outcomes and exact hashes.
 
-V9 is preregistered private research, not a selectable model. It keeps V2 but
-replaces the rejected one-axis recapture with a reversible rank-seven affine
-edit from the already sealed Q5 refusal subspace at layer 61. Its inputs,
-formula, two coefficients, engine contract, finite 410/410 gate, rollback, and
-delayed-push rule are fixed in
-[`abliteration/k3/V9_PROTOCOL.md`](abliteration/k3/V9_PROTOCOL.md).
+V9 then tested a reversible rank-seven affine edit from the sealed Q5 refusal
+subspace at layer 61 on top of V2. Its engine, sanitizer, parser, graph-reuse,
+full V2 revalidation, immutable-state, and rollback gates passed, but both
+fixed ACE coefficients still substituted fictional presidents and invented
+ethnic groups on the two consumed calibration failures. V9 therefore opened no
+stability or post-selection gate and is not selectable. The exact append-only
+record is in [`abliteration/k3/V9_PROTOCOL.md`](abliteration/k3/V9_PROTOCOL.md).
 
 Note that `llama-server` does not reject a request naming a different alias than
 the loaded model: asking for `glm-5.2-abliterated` while `base` is live returns
