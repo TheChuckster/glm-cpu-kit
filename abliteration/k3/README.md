@@ -401,6 +401,8 @@ quality, serving, real OpenCode, throughput, or canary gates open. Even a zero
 refusal result is not automatically the K3 Max default: thinking-disabled V12
 must preserve the locked capability bar, or remain at most a separately named
 uncensored mode. Accepted V1 remains production during the experiment.
+The local and chuckdancer response-free evidence is recorded in
+[`V12_LAUNCHER_CLOSURE.md`](V12_LAUNCHER_CLOSURE.md).
 
 ## Prepare prompts
 
