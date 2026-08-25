@@ -5,7 +5,7 @@ chuckdancer has no numpy, and gguf-py hard-imports it just to read a header.
 The format is simple enough that parsing it directly is less work than fixing
 the environment, and it keeps this diagnostic runnable anywhere.
 
-    gguf_peek.py <file.gguf> [--tensors] [--filter SUBSTR]
+    gguf_peek.py <file.gguf> [--tensors] [--filter SUBSTR] [--full]
 """
 import struct, sys
 
@@ -55,6 +55,7 @@ class R:
 def main():
     path = sys.argv[1]
     want_tensors = "--tensors" in sys.argv
+    full_values = "--full" in sys.argv
     filt = None
     if "--filter" in sys.argv:
         filt = sys.argv[sys.argv.index("--filter") + 1]
@@ -80,7 +81,8 @@ def main():
                 continue
             if not filt and k.startswith("tokenizer.ggml.") and "model" not in k:
                 continue
-            print(f"  {k:<56} = {str(v)[:78]}")
+            value = str(v) if full_values else str(v)[:78]
+            print(f"  {k:<56} = {value}")
 
         if want_tensors:
             print(f"\n# {n_tensors} tensors")
