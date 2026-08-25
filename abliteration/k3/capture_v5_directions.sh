@@ -9,6 +9,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 IK_DIR=${IK_DIR:-/home/chuck/ik_llama.cpp-v5}
 BUILD_DIR=${BUILD_DIR:-$IK_DIR/build-abliteration}
 PYTHON=${PYTHON:-/models/.abliteration/k3/v5-env/bin/python}
+WHEELHOUSE=${WHEELHOUSE:-/models/.abliteration/k3/v5-wheelhouse}
 PROMPTS_DIR=${PROMPTS_DIR:-/models/.abliteration/k3/v5-prompts}
 CAPTURE_DIR=${CAPTURE_DIR:-/models/.abliteration/k3/v5-capture}
 DIRECTION_DIR=${DIRECTION_DIR:-/models/.abliteration/k3/v5-directions}
@@ -18,6 +19,10 @@ THREADS=${THREADS:-64}
 CVECTOR=$BUILD_DIR/bin/llama-cvector-generator
 GGUF_PY=$IK_DIR/gguf-py
 ENGINE_COMMIT=dd0bf0177f78657960364493d0220350a82548fb
+NUMPY_ARCHIVE=numpy-2.2.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+NUMPY_ARCHIVE_SHA256=4f92084defa704deadd4e0a5ab1dc52d8ac9e8a8ef617f3fbb853e79b0ea3592
+MINISOM_ARCHIVE=minisom-2.3.5.tar.gz
+MINISOM_ARCHIVE_SHA256=c4e65e0a6a50170c163e9c0408f77464871e7b3007ad0cd87e178cdaf3db2ce3
 
 die() { echo "capture_v5_directions: $*" >&2; exit 1; }
 
@@ -27,6 +32,13 @@ pgrep -f '/llama-(server|perplexity|cvector-generator|quantize)([[:space:]]|$)' 
     || die "engine commit changed"
 [ -x "$CVECTOR" ] || die "missing cvector generator: $CVECTOR"
 [ -x "$PYTHON" ] || die "missing locked v5 Python: $PYTHON"
+[ "$(sha256sum "$WHEELHOUSE/$NUMPY_ARCHIVE" | awk '{print $1}')" = "$NUMPY_ARCHIVE_SHA256" ] \
+    || die "NumPy archive hash changed"
+[ "$(sha256sum "$WHEELHOUSE/$MINISOM_ARCHIVE" | awk '{print $1}')" = "$MINISOM_ARCHIVE_SHA256" ] \
+    || die "MiniSom archive hash changed"
+"$PYTHON" -c \
+    'import importlib.metadata,numpy; assert numpy.__version__ == "2.2.4"; assert importlib.metadata.version("MiniSom") == "2.3.5"' \
+    || die "locked Python dependencies changed"
 [ -r "$SOURCE_MODEL" ] || die "missing source model"
 [ -r "$Q5_MODEL" ] || die "missing Q5 model"
 [ -d "$GGUF_PY/gguf" ] || die "missing engine GGUF Python package"
@@ -48,12 +60,14 @@ mapfile -t RUNTIME_PATHS < <(
 [ "${#RUNTIME_PATHS[@]}" -gt 0 ] || die "could not resolve cvector runtime"
 sha256sum \
     "$CVECTOR" "${RUNTIME_PATHS[@]}" \
+    "$WHEELHOUSE/$NUMPY_ARCHIVE" "$WHEELHOUSE/$MINISOM_ARCHIVE" \
     "$SCRIPT_DIR/capture_v5_directions.sh" \
     "$SCRIPT_DIR/generate_v5_directions.py" \
     "$SCRIPT_DIR/verify_v5_directions.py" \
     "$SCRIPT_DIR/verify_v5_prompts.py" \
     "$SCRIPT_DIR/v5-requirements.txt" \
     > "$CAPTURE_DIR/engine-and-method.sha256"
+"$PYTHON" -m pip freeze --all > "$CAPTURE_DIR/python.freeze"
 
 COMMON_ARGS=(
     --method mean-last --apply-chat-template --jinja

@@ -71,7 +71,13 @@ binary/runtime/method closure before extraction. No GPU is required.
 
 ## Locked SOM and selection algorithm
 
-Use exactly NumPy 2.2.4 and MiniSom 2.3.5. For each source layer 56--73, compute
+Use exactly NumPy 2.2.4 and MiniSom 2.3.5. The exact official PyPI archives
+are locked as SHA-256 `4f92084defa704deadd4e0a5ab1dc52d8ac9e8a8ef617f3fbb853e79b0ea3592`
+(CPython 3.12 manylinux x86-64 NumPy wheel) and
+`c4e65e0a6a50170c163e9c0408f77464871e7b3007ad0cd87e178cdaf3db2ce3`
+(MiniSom source distribution; 2.3.5 publishes no wheel). Both archives and
+the installed versions are checked before model load and retained in the
+capture closure. For each source layer 56--73, compute
 the harmful/harmless centroid distance divided by pooled within-class RMS.
 Select the maximum score, with lower layer as an exact tie-breaker. This uses
 activation geometry only and is complete before any model edit or response.
