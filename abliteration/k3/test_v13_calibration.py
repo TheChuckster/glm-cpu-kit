@@ -224,10 +224,17 @@ class V13ConfigurationTests(unittest.TestCase):
         })
 
     def test_launcher_literal_sha256_values_are_well_formed(self):
-        launcher = (self.root / "run_v13_response_free_preflight.sh").read_text()
-        values = re.findall(r"check_sha256 ([0-9a-f]+) ", launcher)
-        self.assertGreater(len(values), 20)
-        self.assertTrue(all(re.fullmatch(r"[0-9a-f]{64}", value) for value in values))
+        for filename in (
+            "run_v13_response_free_preflight.sh",
+            "run_v13_calibration_server.sh",
+        ):
+            launcher = (self.root / filename).read_text()
+            values = re.findall(r"check_sha256 ([0-9a-f]+) ", launcher)
+            self.assertGreater(len(values), 20)
+            self.assertTrue(
+                all(re.fullmatch(r"[0-9a-f]{64}", value) for value in values),
+                filename,
+            )
 
     def test_reuses_exact_partition_and_two_request_prefix(self):
         self.assertEqual(
