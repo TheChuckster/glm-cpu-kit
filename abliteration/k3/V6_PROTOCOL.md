@@ -331,4 +331,51 @@ before the first v6 model payload write.
 
 ## Recorded outcome
 
-Not yet generated.
+### Construction and independent structural verification: passed
+
+The corrected build from kit commit `48039c5` completed on 2026-08-25. The
+exact protocol copy included in its provenance was SHA-256
+`feba135e2e99c00702e0da28d26605bf01afb3c5082abd3d93f70fdbd88a25d9`.
+Its complete engine/method/holdout manifest is SHA-256
+`31eafcf69dfe005110332e24a5c9335a730982b5633ef8f802e6ef2f7784e01d`.
+
+The dry run proved 2,573 existing tensor slots, exactly 279 selected tensors,
+zero selected F32 tensors, rank 10, scale `2.0000`, 64 correction passes at
+`0.0625`, and patch-existing mode before the first payload write. The live run
+orthogonalized and rewrote exactly those 279 payload ranges in 362.955 seconds.
+Its post-quant target-relative error min/median/max was
+`1.639027% / 1.872378% / 1.899923%`; the worst tensor was
+`blk.40.ffn_routed_up.weight`. Re-decoded actual-source-component magnitude
+min/median/max was `99.957771% / 99.986729% / 100.030934%`, tightly surrounding
+the exact reflection target of 100%.
+
+The independent verifier then passed all of the following without skip flags:
+
+- 2,573 tensors and 19 shards have the exact expected names, shapes, encoded
+  sizes, tensor types, split metadata, and reference-identical GGUF headers;
+- all 279 target payloads differ from pristine Q5-attention and exactly 279
+  patch-existing writes were logged;
+- all 2,294 non-target payloads, 834,042,567,040 bytes (`776.8 GiB`), are
+  byte-identical to pristine Q5-attention; and
+- all 276 routed-expert payloads, 799,065,243,648 bytes (`744.2 GiB`), are
+  byte-identical to the retained Q2 source.
+
+The verifier JSON and text are SHA-256
+`0a16f8111684aa1c42a939c2189f630aa3d3921be7c40cab7a63d37eb3c74ac7`
+and `188ba3ac1af9f34a8a056757147010cf62aec67bad3fea41f946c1143dc9c9a5`.
+The quantization and dry-run logs are
+`710dd6e00aaaa003576ffa3115992d215dedbd3e3bee52f4c2f8a87261bb0f0b`
+and `24ed8921c1b100a6880c0754b1bac487aa1d5ea79b8b33c7be7cb5bd0e9e6915`.
+The before/after immutable-input manifests are byte-identical, both SHA-256
+`10b33229026f16d2491b5ea11eff1c606cf641f7043a124e3def474b5fe7375b`.
+
+The resulting 19 shards total exactly 845,361,056,864 bytes, matching pristine
+Q5-attention. Only after every check passed did the builder write `.complete`,
+whose contents are that exact byte count and whose SHA-256 is
+`108e23b77c8a22da1f27524993d3788e7826a3bbbb4fb8b61f64332836e88b6f`.
+
+Accepted v1 was restored after construction. Its systemd unit returned active
+and the API again returned exact model identity `kimi-k3` after the expected
+806-GiB load. V6 has not yet been loaded, served, behaviorally evaluated,
+registered, selected, or deployed. The next eligible operation is the locked
+full-load and isolated-serving gate.
