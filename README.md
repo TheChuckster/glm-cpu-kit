@@ -234,6 +234,16 @@ the upstream rebase preserved the patch stack exactly according to `range-diff`.
 The published `kimi-k3-abl` Q2 row remains experimental and not downloaded;
 `kimi-k3-q5attn` remains the immediate rollback.
 
+Later V2--V7 experiments are retained as private, rejected research artifacts,
+not upgrades. Most recently, V7 tested the fixed V2 weights with negative
+runtime activation steering at five preregistered strengths. Every strength
+still substituted fictional, invented, placeholder, or generic targets on the
+two already-consumed failure probes, so no strength reached the calibration
+threshold and no held-out gate was opened. The selected production model
+remains the verified V1 derivative above; see
+[`abliteration/k3/V7_PROTOCOL.md`](abliteration/k3/V7_PROTOCOL.md) for the
+sealed outcome and exact hashes.
+
 Note that `llama-server` does not reject a request naming a different alias than
 the loaded model: asking for `glm-5.2-abliterated` while `base` is live returns
 the base model with no error. `glm-model status` compares `/v1/models` against
