@@ -450,6 +450,135 @@ select an alpha, assert a refusal result, authorize a new coefficient, or
 authorize deployment. The calibration order and every post-selection gate
 below remain unchanged and unopened.
 
+## Stage-3 V2 and calibration-control closure (2026-08-25)
+
+Status: **closed before any V9 K3 process or response**. Stage 2 was committed
+as `e34450a`; the calibration controls were then committed as:
+
+```
+1ede4b8  abliteration: add fail-safe K3 v9 calibration controls
+c1c1e18  abliteration: enforce K3 v9 calibration order
+```
+
+### Full V2 revalidation
+
+Before the launcher was frozen, the clean original V2 construction checkout at
+`8c143460e401ba1497dc95b2444e801a246bf877` and every path in its sealed build
+manifest were reverified. The exact original verifier is SHA-256
+`42372aec85225d4a03ac11efa83f0ec140d0cb01a14173e04a62af96c5aca589`.
+It was run again, without either development skip flag, against the Q2 source,
+the complete retained V2 candidate, the pristine Q5-attention layout, and the
+sealed V2 quantization log.
+
+The response-free rerun passed all 2,573 tensors and all 19 shards. It proved:
+
+- all 19 GGUF headers and all tensor names, shapes, types, and encoded lengths;
+- all 279 intended targets differ from pristine Q5;
+- all 2,294 non-target tensors, 776.8 GiB, are byte-identical to pristine Q5;
+- all 276 routed experts, 744.2 GiB, are byte-identical to the Q2 source; and
+- the worst retained source component is still 1.999147% at
+  `blk.73.attn_output.weight`.
+
+The new deterministic JSON and transcript are byte-identical to the original
+V2 verification outputs:
+
+```
+23fce7007554d8e25f1b90d170c5298069eb5839de41a06ed9541bf2da4d0a4d  model-verification.json
+dccb89fd94eb56625c8a6726ff348a93af7b7e7b79ecfd00f536ccdb2a43df0f  model-verification.txt
+```
+
+They are retained mode 0600 under
+`/models/.abliteration/k3/v9-v2-reverify-e34450a`, whose directory is mode
+0700. Immediately after the full pass, all 19 V2 shards plus `.complete` were
+bound by path, size, mtime, ctime, device, inode, and mode. That inventory is
+2,907 bytes, mode 0600, and SHA-256:
+
+```
+ebb0a7791c857476ae81dbdfc82baf414a60ca6f10b14c4a8b6e1ec63918ddf0  v2-shards.stat
+```
+
+The launcher recomputes and compares that exact inventory before every
+coefficient. Thus any intervening payload write, replacement, relink, resize,
+or permission change fails before production is touched.
+
+### Frozen manual gate and fail-safe launcher
+
+The exact private tool directory is
+`/models/.abliteration/k3/eval-tools-v9-e34450a`, mode 0700. Its only sealed
+files and hashes are:
+
+```
+e9c1f558e84f56baac111c7e7d0145bad09270313eb467b62e3106897a9310c9  run_v9_calibration_server.sh
+8d6213a2c9a6979744713dd514a91457bbb6461940fa009565f8500d0b51738c  verify_v9_calibration_state.py
+5e84597e19d453c504270002d087f69a66e7cf1604acb87e9a1e3ea51ba6131b  gate_v9_calibration.py
+6b1b52ad0e9efe9cf5fb9ddc7910bb4eb1e7adfe02159af74879ead4f485a4bc  capture_server_provenance.py
+5cf826e5fb28e277c8a5c11b6dce682a17898972d970892738c1d7ccf528bb69  evaluate_api.py
+6d4deb139803da8fe31fdfde3b5ce5a768667b9172d2664b7f3a31b1a310ff54  prepare_manual_review.py
+3efe905fb3720aa0dd585aa71cfe97f2c1ef325b9214be233437df7c86792ae2  v9-calibration-request-prefix.json
+e724ca715dca19590826aebaed02e7b43e44a6a2a516c733a9cffef6a94e1bae  v9-calibration-stability-request-prefix.json
+bb6dd5c7fb020fa6160cdf08b596e919d27bc9688117bfa293c37a3433f508b8  test_v9_calibration.py
+```
+
+The executable helpers are mode 0700 and the two JSON prefixes are mode 0600.
+The test suite covers exact state, wrong layer/rank/alpha and extra state,
+immutable 409 responses, loopback-only URLs, both exact request prefixes,
+write-once receipts, legacy no-prefix provenance, reordered/extra requests,
+manual response binding, termination/coherence checks, phase ordering,
+selection, rejection authorization, and post-review response mutation.
+Locally, all 46 focused tool/V7/V8/V9 tests passed; the new remote focused
+suite passed 13/13 with bytecode writes disabled. Local `bash -n`, ShellCheck,
+and Python compilation passed; remote `bash -n` passed. A broad unpinned system
+Python discovery additionally found only the two unrelated V5 modules whose
+optional `minisom` dependency is not installed; no V9 test failed.
+
+The state helper makes exactly six preregistered requests after the current
+PID's `HTTP server listening` event: health, model identity, affine state, and
+three hot-mutation attempts that must each return the exact immutable HTTP 409
+body. It requires one state row, exact artifact path, layer 61, rank seven,
+alpha, `applied=true`, and `read_only=true`, then writes an exclusive mode-0600
+receipt. The provenance helper now permits an exact, hash-bound request prefix
+while preserving its legacy evaluator-only behavior. The failure phase prefix
+is those six state requests; the stability prefix additionally binds the
+completed two-row failure evaluator sequence.
+
+`gate_v9_calibration.py` independently reconstructs each two-row phase from
+the sealed prompts, append-only evaluation, and manual review. It requires the
+fixed IDs/order, alias, seeds, 2,048-token limit, normal `stop`, non-empty
+content, no structural leakage, no request/termination/coherence failure, and
+an exact response-hash-bound `refusal`, `mixed`, or `compliance` decision with
+non-empty notes. It selects a coefficient only when both phases are 2/2
+`compliance`. It forbids opening stability after a failed first phase and
+reproduces every referenced receipt before authorizing `alpha=-0.5`. The
+launcher therefore cannot pass even its second-coefficient preflight without
+a verified alpha-zero rejection receipt.
+
+The launcher checks all of the following before its first `systemctl stop`:
+
+- exact accepted V1 executable, service, model path, alias, health, and closed
+  calibration port;
+- exact V9 Git commit, clean checkout, executable, project libraries, and all
+  mapped system libraries;
+- exact V2 completion, full-verification evidence, and live shard inventory;
+- exact selected affine artifact and manifest;
+- exact consumed calibration sets and every evaluator/reviewer/gate helper;
+  and
+- a new, exclusive mode-0700 run directory and unique loopback-only unit.
+
+Its signal/exit trap owns the only production transition, stops the transient
+unit, proves port 8081 closed, restarts accepted V1, and requires exact live
+identity and health. Transition flags are set before either systemd mutation,
+so even a failed stop/start command enters restoration. `--cache-ram 0`, the
+accepted runtime flags, startup-only affine option, unique alias, and loopback
+port 8081 are fixed in the script.
+
+The complete non-disruptive alpha-zero preflight passed remotely. A positive
+production-only check passed, a network-namespace negative check failed closed,
+and the alpha-minus-0.5 preflight failed closed because no alpha-zero rejection
+exists. No calibration run directory or temporary inventory remained. Accepted
+V1 was still `glm-server.service`, PID `3256788`, `NRestarts=0`, exact model and
+alias, and healthy on port 8080. No V9 V2 process or response had existed when
+this closure was written.
+
 ## Calibration and fail-fast selection
 
 Calibration may use only four already-consumed V7 rows, in this fixed order:
