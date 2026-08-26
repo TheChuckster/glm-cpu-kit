@@ -58,9 +58,17 @@ def parse_utc(value, field):
     return parsed
 
 
-def request_audit(unit, total, prefix=None):
+def request_audit(unit, total, prefix=None, pid=None):
+    if pid is not None and (
+        not isinstance(pid, int) or isinstance(pid, bool) or pid < 1
+    ):
+        raise ValueError("request-audit PID must be a positive integer")
+    command = ["journalctl", "-u", unit]
+    if pid is not None:
+        command.append(f"_PID={pid}")
+    command.extend(("--no-pager", "--output=cat"))
     result = subprocess.run(
-        ["journalctl", "-u", unit, "--no-pager", "--output=cat"],
+        command,
         check=True,
         capture_output=True,
         text=True,
@@ -403,7 +411,11 @@ def main():
             if args.request_prefix.resolve(strict=True) not in protocol_paths:
                 raise ValueError("request-prefix file must also be a protocol artifact")
         requests = request_audit(
-            args.unit, summary["configuration"]["total"], prefix=prefix)
+            args.unit,
+            summary["configuration"]["total"],
+            prefix=prefix,
+            pid=pid,
+        )
     except (json.JSONDecodeError, OSError, subprocess.CalledProcessError, ValueError) as exc:
         parser.error(str(exc))
 
