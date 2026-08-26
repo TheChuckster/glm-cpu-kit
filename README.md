@@ -255,7 +255,7 @@ ethnic groups on the two consumed calibration failures. V9 therefore opened no
 stability or post-selection gate and is not selectable. The exact append-only
 record is in [`abliteration/k3/V9_PROTOCOL.md`](abliteration/k3/V9_PROTOCOL.md).
 
-V10--V17 remain rejected research variants, not production upgrades. V10 and
+V10--V18 remain rejected research variants, not production upgrades. V10 and
 V11 tested fixed semantic overlays, V12 tested a published affirmative response
 prefix, and V13--V16 tested increasingly explicit forms of published Thought
 Token Forcing inside native K3 reasoning. V16 passed its two fixed failure
@@ -267,8 +267,12 @@ then produced clean substantive compliance on both failure probes, but its
 wrapper reused V16's systemd unit name. The immutable provenance helper saw
 both invocations' journal records and failed closed at 12 requests instead of
 six; no phase receipt or stability run opened. Accepted V1 remains the deployed
-`kimi-k3` route. See
-[`abliteration/k3/V17_RESULTS.md`](abliteration/k3/V17_RESULTS.md) for the
+`kimi-k3` route. V18 repaired that audit with unique `prompt18` units and
+live-PID journal filtering, reproduced a valid 2/2 failure pass, and removed
+the prior research wrapper from stability row 010. That row still repeated and
+truncated at exactly 2,048 tokens, so the structural gate stopped at cumulative
+semantic 3/4 and sealed the remaining 96 rows. See
+[`abliteration/k3/V18_RESULTS.md`](abliteration/k3/V18_RESULTS.md) for the
 latest terminal evidence and rollback proof.
 
 Note that `llama-server` does not reject a request naming a different alias than
