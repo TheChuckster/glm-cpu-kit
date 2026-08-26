@@ -471,7 +471,7 @@ class V26ConfigurationTests(unittest.TestCase):
         self.assertEqual(preflight.TEMPLATE_USER, "response-free thinking-template check")
         self.assertEqual(
             gate.PREFLIGHT_RECEIPT_SHA256,
-            "2bd8440cc64b1c5f6e22f5fd169892e72a2982b564a5031be9c429132f204ff8",
+            "e240940d204c1bb3d22c31279459d554388d50a7a3b0a80761cba23433f40074",
         )
         self.assertEqual(
             gate.RUNTIME_CLOSURE_SHA256,
