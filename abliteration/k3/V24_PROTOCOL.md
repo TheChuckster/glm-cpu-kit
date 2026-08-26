@@ -60,6 +60,13 @@ selection untouched. All runtime, server, sampler, chat, and documentation
 source bytes remain identical to V23. This test-only commit is the sole
 eligible V24 engine identity; no runtime engine patch is permitted.
 
+The unchanged remote source/configuration is known to emit the same three
+non-candidate build diagnostics: optional `ccache` is not installed,
+`src/llama-load-tensors.cpp` has one unused local, and
+`src/graphs/build_kimi_k3.cpp` has one unused parameter. They are not sanitizer,
+test, startup, or runtime findings and do not gate V24. Any new compiler
+diagnostic does gate it.
+
 The fixed hypothesis is that allowing DRY to act across colon-delimited
 PowerShell entries will interrupt row 010's long repeated command pattern while
 preserving the three probes whose offline exposure is unchanged. Dynamic
@@ -146,9 +153,10 @@ Before any V24 chat completion, committed stage-2 evidence must bind:
 - expected HTTP 500 failures for disabled thinking, a final assistant prefill,
   `add_generation_prompt=false`, and any client prefill override.
 
-These checks generate no model response. Any mismatch, dirty checkout,
-warning, sanitizer finding, unexpected success, unclean request history,
-existing V24 behavior path, or rollback failure closes V24 before behavior.
+These checks generate no model response. Any mismatch, dirty checkout, new
+compiler diagnostic, sanitizer or test finding, candidate startup/runtime
+warning, unexpected success, unclean request history, existing V24 behavior
+path, or rollback failure closes V24 before behavior.
 
 ## Fixed fail-fast calibration
 
