@@ -17,7 +17,7 @@ V2_VERIFY_DIR=/models/.abliteration/k3/v9-v2-reverify-e34450a
 V2_VERIFY_JSON=$V2_VERIFY_DIR/model-verification.json
 V2_VERIFY_TEXT=$V2_VERIFY_DIR/model-verification.txt
 V2_INVENTORY=$V2_VERIFY_DIR/v2-shards.stat
-TOOLS=/models/.abliteration/k3/eval-tools-v24-v1
+TOOLS=/models/.abliteration/k3/eval-tools-v24-v2
 PREFLIGHT_HELPER=$TOOLS/preflight_v24_reasoning_prefill.py
 PROVENANCE_HELPER=$TOOLS/capture_server_provenance.py
 BASE_EVALUATOR=$TOOLS/evaluate_api.py
@@ -32,6 +32,7 @@ CALIBRATION_LAUNCHER=$TOOLS/run_v24_calibration_server.sh
 TEST_SUITE=$TOOLS/test_v24_calibration.py
 PROTOCOL=$TOOLS/V24_PROTOCOL.md
 PRIOR_RESULTS=$TOOLS/V23_RESULTS.md
+ATTEMPT1=$TOOLS/V24_RESPONSE_FREE_ATTEMPT1.md
 SYSTEM_PROMPT=$TOOLS/v10-system-prompt-02-semantic-contract.txt
 REASONING_PREFILL=$TOOLS/v24-reasoning-prefill.txt
 ENGINE_MANIFEST=$TOOLS/v24-engine-sources.sha256
@@ -41,15 +42,15 @@ FAILURES=$PARTITION/calibration.failures.jsonl
 STABILITY=$PARTITION/calibration.stability.jsonl
 REMAINDER=$PARTITION/calibration.remainder.jsonl
 RECEIPTS=/models/.abliteration/k3/v24-engine-test-receipts-v1
-RUN_ROOT=/models/.abliteration/k3/v24-response-free-preflight-v1
+RUN_ROOT=/models/.abliteration/k3/v24-response-free-preflight-v2
 BEHAVIOR_ROOT=/models/.abliteration/k3/v24-calibration-run-v1
 CONTROL_RECEIPT=$RUN_ROOT/control.json
 PREFLIGHT_RECEIPT=$RUN_ROOT/preflight.json
 PRODUCTION=glm-server.service
-CONTROL_UNIT=kimi-k3-q5attn-abl-v24-v1-control-preflight.service
-CANDIDATE_UNIT=kimi-k3-q5attn-abl-v24-v1-feature-preflight.service
-CONTROL_ALIAS=kimi-k3-q5attn-abl-v24-v1-control-preflight
-CANDIDATE_ALIAS=kimi-k3-q5attn-abl-v24-v1-no-colon-dry-ttf-preflight
+CONTROL_UNIT=kimi-k3-q5attn-abl-v24-v2-control-preflight.service
+CANDIDATE_UNIT=kimi-k3-q5attn-abl-v24-v2-feature-preflight.service
+CONTROL_ALIAS=kimi-k3-q5attn-abl-v24-v2-control-preflight
+CANDIDATE_ALIAS=kimi-k3-q5attn-abl-v24-v2-no-colon-dry-ttf-preflight
 
 production_stopped=0
 candidate_started=0
@@ -118,7 +119,7 @@ verify_v2_inventory() {
             -print0 | sort -z
     )
     [[ "${#paths[@]}" -eq 20 ]] || die "expected 19 V2 shards plus .complete"
-    inventory_tmp=$(mktemp /tmp/k3-v24-v1-inventory.XXXXXX)
+    inventory_tmp=$(mktemp /tmp/k3-v24-v2-inventory.XXXXXX)
     stat -c '%n\t%s\t%Y\t%Z\t%D\t%i\t%a' "${paths[@]}" > "$inventory_tmp"
     cmp "$V2_INVENTORY" "$inventory_tmp" >/dev/null || die "V2 shard inventory changed"
 }
@@ -277,6 +278,7 @@ verify_files() {
     local -a expected_tools=(
         V23_RESULTS.md
         V24_PROTOCOL.md
+        V24_RESPONSE_FREE_ATTEMPT1.md
         capture_server_provenance.py
         evaluate_api.py
         evaluate_reasoning_prefill_api_v24.py
@@ -296,7 +298,7 @@ verify_files() {
     )
     local -a observed_tools
     mapfile -t observed_tools < <(
-        find "$TOOLS" -maxdepth 1 -type f -printf '%f\n' | sort
+        find "$TOOLS" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort
     )
     [[ "${observed_tools[*]}" == "${expected_tools[*]}" ]] \
         || die "V24 response-free tool-tree membership changed"
@@ -321,18 +323,19 @@ verify_files() {
     check_sha256 e4702fce16acfd35ba083705c415023dba5e62931dfaf1bfd2b93822afeb259c "$REASONING_PREFILL"
     check_sha256 d53ba0917ab05c62491d78959f5928c56c1e54473182127035b200b38395c42e "$PROTOCOL"
     check_sha256 410a3aea59259855894c45d94ac35817c5f83f8c7cb295477fd93932c5989220 "$PRIOR_RESULTS"
+    check_sha256 0e24403d1d552ca31b6e8f3519a2fd7805975f16fdced2e80372c1824c0b66fa "$ATTEMPT1"
     check_sha256 6cf3a727a411282b3db03e8b3c50bd1a71d604763dba4a18731a76e0d24e5f22 "$PROVENANCE_HELPER"
     check_sha256 1f6b43a330cfbddd8334170c067e6719607f12d9fdeff6d1718d4f8ab733e61a "$BASE_EVALUATOR"
     check_sha256 91fdf2c2956bdd1b5afcf935d28a01f99eaac8473a2eca83188707bd14478374 "$EVALUATOR"
     check_sha256 6d4deb139803da8fe31fdfde3b5ce5a768667b9172d2664b7f3a31b1a310ff54 "$REVIEW_HELPER"
     check_sha256 915ca40c8c563f4bc1aa2fd0db562c59417f3784a59ebf936f32dc89e9198398 "$STATE_HELPER"
     check_sha256 291b05d5efb397ddd4124516a64fd905518ea515b81ed56b520168311ee271ae "$STATE_CORE"
-    check_sha256 257038a27c6e37d79720f6d7828810d4fb754f751492c2d61c033f675a0ef71c "$GATE_HELPER"
+    check_sha256 97850a081cb9de68984bfe60bdd14f3eb5fa6df99956bc6194259357d6ecf1d5 "$GATE_HELPER"
     check_sha256 5dfc4d7c80999076b4d14b7faa5212ba95fac462abddb4fd1ee229025b319b59 "$GATE_CORE"
     check_sha256 5b4ecfbb511ccebd876367bb3e15adcb169f57bece77aed7e395c9ba18358220 "$REQUEST_PREFIX"
-    check_sha256 d2d758d6696b84124e5f43f7f540ffa27bdaeb8e3a1f328ab22f524abd261a05 "$CALIBRATION_LAUNCHER"
-    check_sha256 eeea4b94bd6335075e3e338df209306ada6fdc2667ca592c5025fa4d53bbe2df "$TEST_SUITE"
-    check_sha256 8c99a7c545fc2ce7d554b8b00205c53777fa5d8911fbe430c4fb66379aada3d4 "$PREFLIGHT_HELPER"
+    check_sha256 aefaf87cae9105768ec9ee6bc1f4c5b73c2bd092edfbef61b3cc70abd50a8b1c "$CALIBRATION_LAUNCHER"
+    check_sha256 1c8ba00afa15596f445f7476b7173e534c66951001d8b594968395a140a67283 "$TEST_SUITE"
+    check_sha256 7a9aa76df8258b1fcc97a835752d740c37fbddcd6bc8d041207b27a6731e2598 "$PREFLIGHT_HELPER"
     check_sha256 5c974d266768b10d3435fc212828b6349c6d5440af4f0888adf6a8eea73c3d34 "$ENGINE_MANIFEST"
     check_sha256 da323ac2826309ba37f07829f4fe6f2c78175dfff9f32227e842bbb5244e9bbf "$PARTITION_MANIFEST"
     check_sha256 204dd0a5e95314f83a2869420c6c6bd74d55d97aca66a85bcbcb8d3a73e369a8 "$FAILURES"
@@ -358,7 +361,7 @@ verify_files() {
     )
     local -a observed_receipts
     mapfile -t observed_receipts < <(
-        find "$RECEIPTS" -maxdepth 1 -type f -printf '%f\n' | sort
+        find "$RECEIPTS" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort
     )
     [[ "${observed_receipts[*]}" == "${expected_receipts[*]}" ]] \
         || die "receipt directory membership changed"

@@ -61,6 +61,7 @@ PREFLIGHT_RECEIPT_SHA256 = "PENDING_V24_RESPONSE_FREE_CLOSURE"
 ENGINE_SOURCE_MANIFEST_SHA256 = (
     "5c974d266768b10d3435fc212828b6349c6d5440af4f0888adf6a8eea73c3d34"
 )
+ATTEMPT1_SHA256 = "0e24403d1d552ca31b6e8f3519a2fd7805975f16fdced2e80372c1824c0b66fa"
 PHASE_SCHEMA = "k3-v24-calibration-phase-v1"
 SELECTION_SCHEMA = "k3-v24-calibration-selection-v1"
 DATASETS = core.DATASETS
@@ -168,6 +169,7 @@ def validate_reasoning_prefill_contract(provenance, evaluation):
     core.require_protocol_artifact(records, expected_sha=BASE_EVALUATOR_SHA256)
     core.require_protocol_artifact(records, expected_sha=PREFLIGHT_RECEIPT_SHA256)
     core.require_protocol_artifact(records, expected_sha=ENGINE_SOURCE_MANIFEST_SHA256)
+    core.require_protocol_artifact(records, expected_sha=ATTEMPT1_SHA256)
 
     raw = prefill_path.read_bytes()
     if raw != (REASONING_PREFILL_TEXT + "\n").encode():

@@ -85,6 +85,12 @@ class V24ConfigurationTests(unittest.TestCase):
             ).hexdigest(),
             gate.ENGINE_SOURCE_MANIFEST_SHA256,
         )
+        self.assertEqual(
+            hashlib.sha256(
+                (self.root / "V24_RESPONSE_FREE_ATTEMPT1.md").read_bytes()
+            ).hexdigest(),
+            gate.ATTEMPT1_SHA256,
+        )
     def test_engine_identity_and_source_manifest_are_frozen(self):
         self.assertEqual(
             preflight.ENGINE_COMMIT,
@@ -439,6 +445,9 @@ class V24ConfigurationTests(unittest.TestCase):
                     gate.core.artifact_record(self.root / "evaluate_api.py"),
                     gate.core.artifact_record(preflight_receipt),
                     gate.core.artifact_record(self.root / "v24-engine-sources.sha256"),
+                    gate.core.artifact_record(
+                        self.root / "V24_RESPONSE_FREE_ATTEMPT1.md"
+                    ),
                 ],
             }
             old_preflight = gate.PREFLIGHT_RECEIPT_SHA256
@@ -529,29 +538,31 @@ class V24ConfigurationTests(unittest.TestCase):
             self.root / "run_v24_response_free_preflight.sh"
         ).read_text()
         self.assertIn("RUN_ROOT=/models/.abliteration/k3/v24-calibration-run-v1", launcher)
-        self.assertIn("TOOLS=/models/.abliteration/k3/eval-tools-v24-v2", launcher)
+        self.assertIn("TOOLS=/models/.abliteration/k3/eval-tools-v24-v3", launcher)
         self.assertIn(
-            "TOOLS=/models/.abliteration/k3/eval-tools-v24-v1",
+            "TOOLS=/models/.abliteration/k3/eval-tools-v24-v2",
             response_free,
         )
         self.assertIn(
             "PREFLIGHT_ROOT=/models/.abliteration/k3/"
-            "v24-response-free-preflight-v1",
+            "v24-response-free-preflight-v2",
             launcher,
         )
         self.assertIn(
-            "RUN_ROOT=/models/.abliteration/k3/v24-response-free-preflight-v1",
+            "RUN_ROOT=/models/.abliteration/k3/v24-response-free-preflight-v2",
             response_free,
         )
         self.assertIn(
-            "CONTROL_UNIT=kimi-k3-q5attn-abl-v24-v1-control-preflight.service",
+            "CONTROL_UNIT=kimi-k3-q5attn-abl-v24-v2-control-preflight.service",
             response_free,
         )
         self.assertIn(
-            "CANDIDATE_UNIT=kimi-k3-q5attn-abl-v24-v1-feature-preflight.service",
+            "CANDIDATE_UNIT=kimi-k3-q5attn-abl-v24-v2-feature-preflight.service",
             response_free,
         )
         self.assertNotIn("eval-tools-v24-v1", launcher)
+        self.assertNotIn("eval-tools-v24-v1", response_free)
+        self.assertNotIn("v24-response-free-preflight-v1", response_free)
         self.assertIn(
             "UNIT=kimi-k3-q5attn-abl-v10-${PROMPT}-${PHASE}-cal.service",
             launcher,

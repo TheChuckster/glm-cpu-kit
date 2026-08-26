@@ -25,10 +25,10 @@ MODEL_PATH = (
 )
 SERVER_SHA256 = "ce8044c0956fdb193c881eb8ad5d370625d2db85e1a623f18b751d229ffb6932"
 ENGINE_COMMIT = "30822f72f79cbe4f0fad9a5a6406850891dc2dc1"
-CONTROL_ALIAS = "kimi-k3-q5attn-abl-v24-v1-control-preflight"
-CANDIDATE_ALIAS = "kimi-k3-q5attn-abl-v24-v1-no-colon-dry-ttf-preflight"
-CONTROL_UNIT = "kimi-k3-q5attn-abl-v24-v1-control-preflight.service"
-CANDIDATE_UNIT = "kimi-k3-q5attn-abl-v24-v1-feature-preflight.service"
+CONTROL_ALIAS = "kimi-k3-q5attn-abl-v24-v2-control-preflight"
+CANDIDATE_ALIAS = "kimi-k3-q5attn-abl-v24-v2-no-colon-dry-ttf-preflight"
+CONTROL_UNIT = "kimi-k3-q5attn-abl-v24-v2-control-preflight.service"
+CANDIDATE_UNIT = "kimi-k3-q5attn-abl-v24-v2-feature-preflight.service"
 SYSTEM_PROMPT_SHA256 = "44fc73623eb35a4b19b9cbfdf682a015af832ed8954233c68b8cf5845ab116f9"
 REASONING_PREFILL_SHA256 = (
     "e4702fce16acfd35ba083705c415023dba5e62931dfaf1bfd2b93822afeb259c"
@@ -390,7 +390,7 @@ def validate_error(name, status, body, expected_message):
 def load_control_receipt(path, system_prompt_record, prefill_record):
     resolved = path.resolve(strict=True)
     receipt = json.loads(resolved.read_text())
-    if receipt.get("schema") != "k3-v24-response-free-control-v1":
+    if receipt.get("schema") != "k3-v24-response-free-control-v2":
         raise ValueError("control receipt schema differs")
     if receipt.get("system_prompt") != system_prompt_record:
         raise ValueError("control receipt system prompt differs")
@@ -469,7 +469,7 @@ def run_control(args, api_key, system_prompt, system_record, prefill_record):
     if observed != expected:
         raise ValueError("control request sequence differs")
     receipt = {
-        "schema": "k3-v24-response-free-control-v1",
+        "schema": "k3-v24-response-free-control-v2",
         "captured_utc": datetime.now(timezone.utc).isoformat(),
         "base_url": args.base_url,
         "model": CONTROL_ALIAS,
@@ -613,7 +613,7 @@ def run_candidate(args, api_key, system_prompt, system_record, prefill_record):
     if observed != expected:
         raise ValueError("candidate request sequence differs")
     receipt = {
-        "schema": "k3-v24-response-free-preflight-v1",
+        "schema": "k3-v24-response-free-preflight-v2",
         "captured_utc": datetime.now(timezone.utc).isoformat(),
         "base_url": args.base_url,
         "model": CANDIDATE_ALIAS,

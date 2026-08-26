@@ -22,7 +22,7 @@ PARTITION_MANIFEST=$PARTITION/manifest.json
 FAILURES=$PARTITION/calibration.failures.jsonl
 STABILITY=$PARTITION/calibration.stability.jsonl
 REMAINDER=$PARTITION/calibration.remainder.jsonl
-TOOLS=/models/.abliteration/k3/eval-tools-v24-v2
+TOOLS=/models/.abliteration/k3/eval-tools-v24-v3
 STATE_HELPER=$TOOLS/verify_v24_calibration_state.py
 STATE_CORE=$TOOLS/verify_v10_calibration_state.py
 EVALUATOR=$TOOLS/evaluate_reasoning_prefill_api_v24.py
@@ -34,11 +34,12 @@ GATE_HELPER=$TOOLS/gate_v24_calibration.py
 GATE_CORE=$TOOLS/gate_v10_calibration.py
 PROTOCOL=$TOOLS/V24_PROTOCOL.md
 PRIOR_RESULTS=$TOOLS/V23_RESULTS.md
+ATTEMPT1=$TOOLS/V24_RESPONSE_FREE_ATTEMPT1.md
 REASONING_PREFILL=$TOOLS/v24-reasoning-prefill.txt
 ENGINE_MANIFEST=$TOOLS/v24-engine-sources.sha256
 PREFLIGHT_HELPER=$TOOLS/preflight_v24_reasoning_prefill.py
 RESPONSE_FREE_LAUNCHER=$TOOLS/run_v24_response_free_preflight.sh
-PREFLIGHT_ROOT=/models/.abliteration/k3/v24-response-free-preflight-v1
+PREFLIGHT_ROOT=/models/.abliteration/k3/v24-response-free-preflight-v2
 CONTROL_RECEIPT=$PREFLIGHT_ROOT/control.json
 PREFLIGHT_RECEIPT=$PREFLIGHT_ROOT/preflight.json
 RUN_ROOT=/models/.abliteration/k3/v24-calibration-run-v1
@@ -110,7 +111,7 @@ verify_v2_inventory() {
             -print0 | sort -z
     )
     [[ "${#paths[@]}" -eq 20 ]] || die "expected 19 V2 shards plus .complete"
-    inventory_tmp=$(mktemp /tmp/k3-v24-v1-inventory.XXXXXX)
+    inventory_tmp=$(mktemp /tmp/k3-v24-v2-inventory.XXXXXX)
     stat -c '%n\t%s\t%Y\t%Z\t%D\t%i\t%a' "${paths[@]}" > "$inventory_tmp"
     cmp "$V2_INVENTORY" "$inventory_tmp" >/dev/null || die "V2 shard inventory changed"
 }
@@ -273,8 +274,9 @@ check_sha256 PENDING_V24_GATE_SHA256 "$GATE_HELPER"
 check_sha256 5dfc4d7c80999076b4d14b7faa5212ba95fac462abddb4fd1ee229025b319b59 "$GATE_CORE"
 check_sha256 d53ba0917ab05c62491d78959f5928c56c1e54473182127035b200b38395c42e "$PROTOCOL"
 check_sha256 410a3aea59259855894c45d94ac35817c5f83f8c7cb295477fd93932c5989220 "$PRIOR_RESULTS"
+check_sha256 0e24403d1d552ca31b6e8f3519a2fd7805975f16fdced2e80372c1824c0b66fa "$ATTEMPT1"
 check_sha256 5c974d266768b10d3435fc212828b6349c6d5440af4f0888adf6a8eea73c3d34 "$ENGINE_MANIFEST"
-check_sha256 8c99a7c545fc2ce7d554b8b00205c53777fa5d8911fbe430c4fb66379aada3d4 "$PREFLIGHT_HELPER"
+check_sha256 7a9aa76df8258b1fcc97a835752d740c37fbddcd6bc8d041207b27a6731e2598 "$PREFLIGHT_HELPER"
 check_sha256 PENDING_V24_RESPONSE_FREE_LAUNCHER_SHA256 "$RESPONSE_FREE_LAUNCHER"
 check_sha256 PENDING_V24_CONTROL_RECEIPT_SHA256 "$CONTROL_RECEIPT"
 check_sha256 PENDING_V24_PREFLIGHT_RECEIPT_SHA256 "$PREFLIGHT_RECEIPT"
