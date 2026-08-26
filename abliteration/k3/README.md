@@ -455,6 +455,32 @@ strict gate failed structurally, created no phase receipt, and left every later
 phase sealed. Exact evidence is in [`V14_RESULTS.md`](V14_RESULTS.md); accepted
 V1 remains production.
 
+## Locked v15--v19 experiments: calibrated Thought Token Forcing
+
+V15--V19 retain the exact V2 weights, V10 Prompt 02, native low-effort
+reasoning, one-attempt request contract, fixed calibration partition, strict
+semantic review, and fail-fast phase order. They test preregistered refinements
+of the server-side reasoning prefill, not weight-level derivatives or K3 Max.
+
+V16 first reached substantive compliance on both failure probes but failed
+stability row 010 with an authorized-research wrapper and truncation. V17's
+concise artifact-only seed removed the observed semantic failures, but an
+inherited systemd unit name caused the immutable journal audit to see two
+invocations and fail closed before stability. V18 repaired provenance with
+unique `prompt18` units plus live-PID filtering, reproduced a valid 2/2 pass,
+and removed the wrapper; row 010 still repeated and truncated at 2,048 tokens.
+
+V19 preregistered a static 600-word prose limit and 60-nonblank-line,
+single-implementation code limit inside the exact reasoning seed. Its failure
+probes passed 2/2 at 544 and 488 tokens. Stability row 006 also complied, but
+row 010 ignored the format budget, emitted 67 nonblank PowerShell lines,
+repeated one four-gram 62 times, reached 2,048/2,048 tokens, and truncated with
+an open code fence. The gate rejected V19 at cumulative semantic 3/4, opened no
+remainder, restored accepted V1, and left both repository pushes sealed. See
+[`V19_PROTOCOL.md`](V19_PROTOCOL.md),
+[`V19_LAUNCHER_CLOSURE.md`](V19_LAUNCHER_CLOSURE.md), and
+[`V19_RESULTS.md`](V19_RESULTS.md) for the exact closure and evidence hashes.
+
 ## Prepare prompts
 
 ```sh
