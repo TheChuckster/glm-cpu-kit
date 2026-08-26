@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+import os
 import re
 import tempfile
 import unittest
@@ -122,6 +123,12 @@ class V21ConfigurationTests(unittest.TestCase):
         )
 
     def test_all_engine_test_receipts_are_green(self):
+        receipts_root = Path(
+            os.environ.get(
+                "K3_V21_RECEIPTS_DIR",
+                self.root / "receipts",
+            )
+        ).resolve(strict=True)
         receipts = {
             "v21-local-normal-greedy-dry.xml": ("test-greedy-dry", "charbro"),
             "v21-local-normal-reasoning-prefill.xml": (
@@ -142,7 +149,7 @@ class V21ConfigurationTests(unittest.TestCase):
         }
         for filename, (test_name, hostname) in receipts.items():
             with self.subTest(filename=filename):
-                suite = ET.parse(self.root / "receipts" / filename).getroot()
+                suite = ET.parse(receipts_root / filename).getroot()
                 self.assertEqual(suite.tag, "testsuite")
                 self.assertEqual(suite.attrib["tests"], "1")
                 self.assertEqual(suite.attrib["failures"], "0")
