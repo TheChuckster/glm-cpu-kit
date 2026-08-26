@@ -460,11 +460,11 @@ class V25ConfigurationTests(unittest.TestCase):
         self.assertEqual(preflight.TEMPLATE_USER, "response-free thinking-template check")
         self.assertEqual(
             gate.PREFLIGHT_RECEIPT_SHA256,
-            "PENDING_V25_RESPONSE_FREE_CLOSURE",
+            "2bd8440cc64b1c5f6e22f5fd169892e72a2982b564a5031be9c429132f204ff8",
         )
         self.assertEqual(
             gate.RUNTIME_CLOSURE_SHA256,
-            "PENDING_V25_RESPONSE_FREE_CLOSURE",
+            "abea34fb56a93c5936b9e1bb9246c9d3ab78621858b87fb28c4c773db64d3457",
         )
         self.assertEqual(preflight.BASELINE_PROMPT_BYTES, 1152)
         self.assertEqual(
@@ -588,10 +588,10 @@ class V25ConfigurationTests(unittest.TestCase):
                 filename,
             )
             self.assertNotIn("0" * 64, values, filename)
-        self.assertIn(
+        self.assertNotIn(
             "PENDING_V25", (self.root / "gate_v25_calibration.py").read_text()
         )
-        self.assertIn(
+        self.assertNotIn(
             "PENDING_V25", (self.root / "run_v25_calibration_server.sh").read_text()
         )
 

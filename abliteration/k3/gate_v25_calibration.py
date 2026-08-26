@@ -55,9 +55,9 @@ PROVENANCE_HELPER_SHA256 = (
     "6cf3a727a411282b3db03e8b3c50bd1a71d604763dba4a18731a76e0d24e5f22"
 )
 STATE_HELPER_SHA256 = "c58dedeae74e97e4b77209377a86e245fc476ddc5bcbc349c7d237ac431c3925"
-# Replaced only after the response-free V25 receipt exists; this value makes
-# every behavior gate fail closed in the stage-2a tool tree.
-PREFLIGHT_RECEIPT_SHA256 = "PENDING_V25_RESPONSE_FREE_CLOSURE"
+PREFLIGHT_RECEIPT_SHA256 = (
+    "2bd8440cc64b1c5f6e22f5fd169892e72a2982b564a5031be9c429132f204ff8"
+)
 ENGINE_SOURCE_MANIFEST_SHA256 = (
     "69997801099183606e4f24e1597bdf02f550acb4c655691cd89e078f87cacac5"
 )
@@ -96,9 +96,9 @@ REQUEST_CONTRACT = {
 SERVER_PATH = "/home/chuck/ik_llama-v25-ecf7446e/build-v25/bin/llama-server"
 SERVER_WORKING_DIRECTORY = "/home/chuck/ik_llama-v25-ecf7446e"
 SERVER_SHA256 = "0da60971041065fd716c8a60f5db04e87f28dba4dc3b30b28db3367e29449b28"
-# Replaced only after both response-free PIDs reproduce the same mapped
-# closure; the pending value prevents behavior provenance from passing.
-RUNTIME_CLOSURE_SHA256 = "PENDING_V25_RESPONSE_FREE_CLOSURE"
+RUNTIME_CLOSURE_SHA256 = (
+    "abea34fb56a93c5936b9e1bb9246c9d3ab78621858b87fb28c4c773db64d3457"
+)
 
 _CORE_VALIDATE_PROVENANCE = core.validate_provenance
 _CORE_PHASE_CORE = core.phase_core
