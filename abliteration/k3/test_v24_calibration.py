@@ -468,7 +468,11 @@ class V24ConfigurationTests(unittest.TestCase):
         self.assertEqual(preflight.TEMPLATE_USER, "response-free thinking-template check")
         self.assertEqual(
             gate.PREFLIGHT_RECEIPT_SHA256,
-            "PENDING_V24_RESPONSE_FREE_CLOSURE",
+            "6fe188193de4fe59e1806062926725b83b1fe8b4bb27522d121f1559cfaeb6d1",
+        )
+        self.assertEqual(
+            gate.RUNTIME_CLOSURE_SHA256,
+            "478685839019bce9afcadbe097cbbbe99adeb448ecdb3ec5fb258ca3dd4187fa",
         )
         self.assertEqual(preflight.BASELINE_PROMPT_BYTES, 1152)
         self.assertEqual(
@@ -594,6 +598,12 @@ class V24ConfigurationTests(unittest.TestCase):
                 filename,
             )
             self.assertNotIn("0" * 64, values, filename)
+        self.assertNotIn(
+            "PENDING_V24", (self.root / "gate_v24_calibration.py").read_text()
+        )
+        self.assertNotIn(
+            "PENDING_V24", (self.root / "run_v24_calibration_server.sh").read_text()
+        )
 
     def test_reuses_exact_partition_and_two_request_prefix(self):
         self.assertEqual(

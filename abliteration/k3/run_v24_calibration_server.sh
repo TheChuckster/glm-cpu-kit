@@ -39,6 +39,7 @@ REASONING_PREFILL=$TOOLS/v24-reasoning-prefill.txt
 ENGINE_MANIFEST=$TOOLS/v24-engine-sources.sha256
 PREFLIGHT_HELPER=$TOOLS/preflight_v24_reasoning_prefill.py
 RESPONSE_FREE_LAUNCHER=$TOOLS/run_v24_response_free_preflight.sh
+TEST_SUITE=$TOOLS/test_v24_calibration.py
 PREFLIGHT_ROOT=/models/.abliteration/k3/v24-response-free-preflight-v2
 CONTROL_RECEIPT=$PREFLIGHT_ROOT/control.json
 PREFLIGHT_RECEIPT=$PREFLIGHT_ROOT/preflight.json
@@ -240,6 +241,32 @@ RUN_DIR=$RUN_ROOT/$PROMPT/$PHASE
 trap restore_production EXIT INT TERM HUP
 
 # Every check in this block completes before production is stopped.
+expected_tools=(
+    V23_RESULTS.md
+    V24_PROTOCOL.md
+    V24_RESPONSE_FREE_ATTEMPT1.md
+    capture_server_provenance.py
+    evaluate_api.py
+    evaluate_reasoning_prefill_api_v24.py
+    gate_v10_calibration.py
+    gate_v24_calibration.py
+    preflight_v24_reasoning_prefill.py
+    prepare_manual_review.py
+    run_v24_calibration_server.sh
+    run_v24_response_free_preflight.sh
+    test_v24_calibration.py
+    v10-calibration-request-prefix.json
+    v10-system-prompt-02-semantic-contract.txt
+    v24-engine-sources.sha256
+    v24-reasoning-prefill.txt
+    verify_v10_calibration_state.py
+    verify_v24_calibration_state.py
+)
+mapfile -t observed_tools < <(
+    find "$TOOLS" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort
+)
+[[ "${observed_tools[*]}" == "${expected_tools[*]}" ]] \
+    || die "V24 finalized tool-tree membership changed"
 check_sha256 a677e4c2decf66acae9eb91bc76ff1054f1cf261d2614f294e5c4f39f9615ab6 "$PRODUCTION_SERVER"
 check_sha256 ce8044c0956fdb193c881eb8ad5d370625d2db85e1a623f18b751d229ffb6932 "$SERVER"
 check_sha256 6b6fe8ea4d28e6efc26a99778ce6288452a79188c3d89e616c1d0bfba2007fe4 "$SERVER_BUILD/examples/mtmd/libmtmd.so"
@@ -270,16 +297,17 @@ check_sha256 915ca40c8c563f4bc1aa2fd0db562c59417f3784a59ebf936f32dc89e9198398 "$
 check_sha256 291b05d5efb397ddd4124516a64fd905518ea515b81ed56b520168311ee271ae "$STATE_CORE"
 check_sha256 6cf3a727a411282b3db03e8b3c50bd1a71d604763dba4a18731a76e0d24e5f22 "$PROVENANCE_HELPER"
 check_sha256 5b4ecfbb511ccebd876367bb3e15adcb169f57bece77aed7e395c9ba18358220 "$REQUEST_PREFIX"
-check_sha256 PENDING_V24_GATE_SHA256 "$GATE_HELPER"
+check_sha256 e06844c206eb363ed69faa5e6e43c087a7f285e12e4e055f540b31bfdb1d4621 "$GATE_HELPER"
 check_sha256 5dfc4d7c80999076b4d14b7faa5212ba95fac462abddb4fd1ee229025b319b59 "$GATE_CORE"
 check_sha256 d53ba0917ab05c62491d78959f5928c56c1e54473182127035b200b38395c42e "$PROTOCOL"
 check_sha256 410a3aea59259855894c45d94ac35817c5f83f8c7cb295477fd93932c5989220 "$PRIOR_RESULTS"
 check_sha256 0e24403d1d552ca31b6e8f3519a2fd7805975f16fdced2e80372c1824c0b66fa "$ATTEMPT1"
 check_sha256 5c974d266768b10d3435fc212828b6349c6d5440af4f0888adf6a8eea73c3d34 "$ENGINE_MANIFEST"
 check_sha256 7a9aa76df8258b1fcc97a835752d740c37fbddcd6bc8d041207b27a6731e2598 "$PREFLIGHT_HELPER"
-check_sha256 PENDING_V24_RESPONSE_FREE_LAUNCHER_SHA256 "$RESPONSE_FREE_LAUNCHER"
-check_sha256 PENDING_V24_CONTROL_RECEIPT_SHA256 "$CONTROL_RECEIPT"
-check_sha256 PENDING_V24_PREFLIGHT_RECEIPT_SHA256 "$PREFLIGHT_RECEIPT"
+check_sha256 f265b00bf7a6fe0c753a53b267bf3cd4cef7612aeaba42d5621ba176864b0bf1 "$RESPONSE_FREE_LAUNCHER"
+check_sha256 151ca54dda7adac3b29b4f7b49f3e7949953db48df7c5ecd0f4284cc43f9abef "$TEST_SUITE"
+check_sha256 f358a94dc34a519478d3f7558f4875f49fd06d0022415f7610fe2ebd4563faa4 "$CONTROL_RECEIPT"
+check_sha256 6fe188193de4fe59e1806062926725b83b1fe8b4bb27522d121f1559cfaeb6d1 "$PREFLIGHT_RECEIPT"
 [[ "$(stat -c %a "$PREFLIGHT_ROOT")" == 700 ]] || die "preflight root mode changed"
 [[ "$(stat -c %a "$CONTROL_RECEIPT")" == 600 ]] || die "control receipt mode changed"
 [[ "$(stat -c %a "$PREFLIGHT_RECEIPT")" == 600 ]] || die "preflight receipt mode changed"
