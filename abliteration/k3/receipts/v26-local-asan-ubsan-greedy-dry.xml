@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="Linux-c++"
+	tests="1"
+	failures="0"
+	disabled="0"
+	skipped="0"
+	hostname="charbro"
+	time="0"
+	timestamp="2026-08-26T04:37:49"
+	>
+	<testcase name="test-greedy-dry" classname="test-greedy-dry" time="0.3313" status="run">
+		<properties>
+			<property name="cmake_labels" value="main"/>
+		</properties>
+		<system-out>CPU: using device CPU - 0 MiB free
+llama_model_loader: loaded meta data with 22 key-value pairs and 0 tensors from /home/chuck/Projects_new/ai/ik_llama.cpp-fork/tests/../models/ggml-vocab-llama-spm.gguf (version GGUF V3 (latest))
+llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+llama_model_loader: - kv   0:                       general.architecture str              = llama
+llama_model_loader: - kv   1:                               general.name str              = llama-spm
+llama_model_loader: - kv   2:                          llama.block_count u32              = 32
+llama_model_loader: - kv   3:                       llama.context_length u32              = 4096
+llama_model_loader: - kv   4:                     llama.embedding_length u32              = 4096
+llama_model_loader: - kv   5:                  llama.feed_forward_length u32              = 11008
+llama_model_loader: - kv   6:                 llama.attention.head_count u32              = 32
+llama_model_lo...
+[This part of the test output was removed since it exceeds the threshold of 1024 bytes.]
+</system-out>
+	</testcase>
+</testsuite>
