@@ -22,7 +22,7 @@ PARTITION_MANIFEST=$PARTITION/manifest.json
 FAILURES=$PARTITION/calibration.failures.jsonl
 STABILITY=$PARTITION/calibration.stability.jsonl
 REMAINDER=$PARTITION/calibration.remainder.jsonl
-TOOLS=/models/.abliteration/k3/eval-tools-v23-v1
+TOOLS=/models/.abliteration/k3/eval-tools-v23-v2
 STATE_HELPER=$TOOLS/verify_v23_calibration_state.py
 STATE_CORE=$TOOLS/verify_v10_calibration_state.py
 EVALUATOR=$TOOLS/evaluate_reasoning_prefill_api_v23.py
@@ -34,11 +34,12 @@ GATE_HELPER=$TOOLS/gate_v23_calibration.py
 GATE_CORE=$TOOLS/gate_v10_calibration.py
 PROTOCOL=$TOOLS/V23_PROTOCOL.md
 PRIOR_RESULTS=$TOOLS/V22_RESULTS.md
+ATTEMPT1=$TOOLS/V23_RESPONSE_FREE_ATTEMPT1.md
 REASONING_PREFILL=$TOOLS/v23-reasoning-prefill.txt
 ENGINE_MANIFEST=$TOOLS/v23-engine-sources.sha256
 PREFLIGHT_HELPER=$TOOLS/preflight_v23_reasoning_prefill.py
 RESPONSE_FREE_LAUNCHER=$TOOLS/run_v23_response_free_preflight.sh
-PREFLIGHT_ROOT=/models/.abliteration/k3/v23-response-free-preflight-v1
+PREFLIGHT_ROOT=/models/.abliteration/k3/v23-response-free-preflight-v2
 CONTROL_RECEIPT=$PREFLIGHT_ROOT/control.json
 PREFLIGHT_RECEIPT=$PREFLIGHT_ROOT/preflight.json
 RUN_ROOT=/models/.abliteration/k3/v23-calibration-run-v1
@@ -269,13 +270,14 @@ check_sha256 e3143df627c7135832211ab2586dc00b07678f772da4cc41209206ffd9ac9598 "$
 check_sha256 291b05d5efb397ddd4124516a64fd905518ea515b81ed56b520168311ee271ae "$STATE_CORE"
 check_sha256 6cf3a727a411282b3db03e8b3c50bd1a71d604763dba4a18731a76e0d24e5f22 "$PROVENANCE_HELPER"
 check_sha256 5b4ecfbb511ccebd876367bb3e15adcb169f57bece77aed7e395c9ba18358220 "$REQUEST_PREFIX"
-check_sha256 4595a776530347f8bd73c95fce8247c1af2ff82beef6f00bc42a4bde8627a9ea "$GATE_HELPER"
+check_sha256 0d339d3c94354d6f01a81621025f8d4dfac09e656e2e787685e2f98e350d1de1 "$GATE_HELPER"
 check_sha256 5dfc4d7c80999076b4d14b7faa5212ba95fac462abddb4fd1ee229025b319b59 "$GATE_CORE"
 check_sha256 0699d2f7f5f6dd04c61b0eb1dbdca8063575a36440ae8d72aaeb65ed647425bd "$PROTOCOL"
 check_sha256 15cb6a5dc2ce42bc5d068b52616029c077fc6e78bac704b8f5e58cfef5dae9d7 "$PRIOR_RESULTS"
+check_sha256 4157862fb35c56d7e76c7aa58e811a9d3da2710e72bd0ff58e6ebb718b073983 "$ATTEMPT1"
 check_sha256 04b9aab1c52ba0500731fd39f7c48d0d0b2def7356c495fa46fc202fb2555693 "$ENGINE_MANIFEST"
-check_sha256 b824ff247b3d45fbe4e9267366278990a8ce8609ec57099b08f3a05deabad950 "$PREFLIGHT_HELPER"
-check_sha256 0617b0895ee2938f7b550885edcc2ad950ac1dff6be8f970cbb69bc979c7dbc8 "$RESPONSE_FREE_LAUNCHER"
+check_sha256 57ce6c1caa9f176c7183dfe0fdbb01a56bae265602073513748000f6a91fc54c "$PREFLIGHT_HELPER"
+check_sha256 dd6f156eaf55bca0777b0c4cf7a855635ed8d9857d44d2010589b76b8ee8fbd9 "$RESPONSE_FREE_LAUNCHER"
 check_sha256 0000000000000000000000000000000000000000000000000000000000000000 "$CONTROL_RECEIPT"
 check_sha256 0000000000000000000000000000000000000000000000000000000000000000 "$PREFLIGHT_RECEIPT"
 [[ "$(stat -c %a "$PREFLIGHT_ROOT")" == 700 ]] || die "preflight root mode changed"

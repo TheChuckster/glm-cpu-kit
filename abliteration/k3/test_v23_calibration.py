@@ -85,6 +85,12 @@ class V23ConfigurationTests(unittest.TestCase):
             ).hexdigest(),
             gate.ENGINE_SOURCE_MANIFEST_SHA256,
         )
+        self.assertEqual(
+            hashlib.sha256(
+                (self.root / "V23_RESPONSE_FREE_ATTEMPT1.md").read_bytes()
+            ).hexdigest(),
+            gate.ATTEMPT1_SHA256,
+        )
 
     def test_engine_correction_identity_and_source_manifest_are_frozen(self):
         self.assertEqual(
@@ -252,6 +258,13 @@ class V23ConfigurationTests(unittest.TestCase):
         self.assertEqual(gate.DRY_SAMPLER["base"], 1.75)
         self.assertEqual(gate.DRY_SAMPLER["allowed_length"], 4)
         self.assertEqual(gate.DRY_SAMPLER["penalty_last_n"], -1)
+        self.assertEqual(preflight.DRY_SAMPLER["penalty_last_n"], -1)
+        self.assertEqual(
+            preflight.CONTROL_EFFECTIVE_DRY_SAMPLER["penalty_last_n"], 131072
+        )
+        self.assertEqual(
+            preflight.FEATURE_EFFECTIVE_DRY_SAMPLER["penalty_last_n"], 131072
+        )
         self.assertEqual(
             gate.DRY_SAMPLER["sequence_breakers"], ["\n", ":", "\"", "*"]
         )
@@ -332,30 +345,39 @@ class V23ConfigurationTests(unittest.TestCase):
                 },
             }
 
-        control = body(preflight.CONTROL_ALIAS, preflight.CONTROL_DRY_SAMPLER)
-        feature = body(preflight.CANDIDATE_ALIAS, preflight.DRY_SAMPLER)
+        control = body(
+            preflight.CONTROL_ALIAS, preflight.CONTROL_EFFECTIVE_DRY_SAMPLER
+        )
+        feature = body(
+            preflight.CANDIDATE_ALIAS, preflight.FEATURE_EFFECTIVE_DRY_SAMPLER
+        )
         self.assertEqual(
             preflight.validate_props(
                 200, control, preflight.CONTROL_ALIAS,
-                preflight.CONTROL_DRY_SAMPLER,
+                preflight.CONTROL_EFFECTIVE_DRY_SAMPLER,
             )["dry_sampler"],
-            preflight.CONTROL_DRY_SAMPLER,
+            preflight.CONTROL_EFFECTIVE_DRY_SAMPLER,
         )
         self.assertEqual(
             preflight.validate_props(
-                200, feature, preflight.CANDIDATE_ALIAS, preflight.DRY_SAMPLER,
+                200, feature, preflight.CANDIDATE_ALIAS,
+                preflight.FEATURE_EFFECTIVE_DRY_SAMPLER,
             )["dry_sampler"],
-            preflight.DRY_SAMPLER,
+            preflight.FEATURE_EFFECTIVE_DRY_SAMPLER,
         )
-        altered = body(preflight.CANDIDATE_ALIAS, preflight.DRY_SAMPLER)
+        altered = body(
+            preflight.CANDIDATE_ALIAS, preflight.FEATURE_EFFECTIVE_DRY_SAMPLER
+        )
         altered["default_generation_settings"]["dry_multiplier"] = 0.8
         with self.assertRaisesRegex(ValueError, "effective DRY settings differ"):
             preflight.validate_props(
-                200, altered, preflight.CANDIDATE_ALIAS, preflight.DRY_SAMPLER,
+                200, altered, preflight.CANDIDATE_ALIAS,
+                preflight.FEATURE_EFFECTIVE_DRY_SAMPLER,
             )
         with self.assertRaisesRegex(ValueError, "model alias"):
             preflight.validate_props(
-                200, feature, preflight.CONTROL_ALIAS, preflight.DRY_SAMPLER,
+                200, feature, preflight.CONTROL_ALIAS,
+                preflight.FEATURE_EFFECTIVE_DRY_SAMPLER,
             )
 
     def test_prefill_contract_reproduces_and_detects_reasoning_tampering(self):
@@ -387,6 +409,9 @@ class V23ConfigurationTests(unittest.TestCase):
                     gate.core.artifact_record(self.root / "evaluate_api.py"),
                     gate.core.artifact_record(preflight_receipt),
                     gate.core.artifact_record(self.root / "v23-engine-sources.sha256"),
+                    gate.core.artifact_record(
+                        self.root / "V23_RESPONSE_FREE_ATTEMPT1.md"
+                    ),
                 ],
             }
             old_preflight = gate.PREFLIGHT_RECEIPT_SHA256
@@ -469,7 +494,30 @@ class V23ConfigurationTests(unittest.TestCase):
 
     def test_prompt23_phase_unit_and_run_root_are_unique(self):
         launcher = (self.root / "run_v23_calibration_server.sh").read_text()
+        response_free = (
+            self.root / "run_v23_response_free_preflight.sh"
+        ).read_text()
         self.assertIn("RUN_ROOT=/models/.abliteration/k3/v23-calibration-run-v1", launcher)
+        self.assertIn("TOOLS=/models/.abliteration/k3/eval-tools-v23-v2", launcher)
+        self.assertIn(
+            "PREFLIGHT_ROOT=/models/.abliteration/k3/"
+            "v23-response-free-preflight-v2",
+            launcher,
+        )
+        self.assertIn(
+            "RUN_ROOT=/models/.abliteration/k3/v23-response-free-preflight-v2",
+            response_free,
+        )
+        self.assertIn(
+            "CONTROL_UNIT=kimi-k3-q5attn-abl-v23-v2-control-preflight.service",
+            response_free,
+        )
+        self.assertIn(
+            "CANDIDATE_UNIT=kimi-k3-q5attn-abl-v23-v2-feature-preflight.service",
+            response_free,
+        )
+        self.assertNotIn("eval-tools-v23-v1", launcher)
+        self.assertNotIn("v23-response-free-preflight-v1", response_free)
         self.assertIn(
             "UNIT=kimi-k3-q5attn-abl-v10-${PROMPT}-${PHASE}-cal.service",
             launcher,

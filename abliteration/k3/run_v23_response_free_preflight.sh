@@ -17,23 +17,24 @@ V2_VERIFY_DIR=/models/.abliteration/k3/v9-v2-reverify-e34450a
 V2_VERIFY_JSON=$V2_VERIFY_DIR/model-verification.json
 V2_VERIFY_TEXT=$V2_VERIFY_DIR/model-verification.txt
 V2_INVENTORY=$V2_VERIFY_DIR/v2-shards.stat
-TOOLS=/models/.abliteration/k3/eval-tools-v23-v1
+TOOLS=/models/.abliteration/k3/eval-tools-v23-v2
 PREFLIGHT_HELPER=$TOOLS/preflight_v23_reasoning_prefill.py
 PROVENANCE_HELPER=$TOOLS/capture_server_provenance.py
 BASE_EVALUATOR=$TOOLS/evaluate_api.py
 PROTOCOL=$TOOLS/V23_PROTOCOL.md
 PRIOR_RESULTS=$TOOLS/V22_RESULTS.md
+ATTEMPT1=$TOOLS/V23_RESPONSE_FREE_ATTEMPT1.md
 SYSTEM_PROMPT=$TOOLS/v10-system-prompt-02-semantic-contract.txt
 REASONING_PREFILL=$TOOLS/v23-reasoning-prefill.txt
 ENGINE_MANIFEST=$TOOLS/v23-engine-sources.sha256
-RUN_ROOT=/models/.abliteration/k3/v23-response-free-preflight-v1
+RUN_ROOT=/models/.abliteration/k3/v23-response-free-preflight-v2
 CONTROL_RECEIPT=$RUN_ROOT/control.json
 PREFLIGHT_RECEIPT=$RUN_ROOT/preflight.json
 PRODUCTION=glm-server.service
-CONTROL_UNIT=kimi-k3-q5attn-abl-v23-control-preflight.service
-CANDIDATE_UNIT=kimi-k3-q5attn-abl-v23-feature-preflight.service
-CONTROL_ALIAS=kimi-k3-q5attn-abl-v23-control-preflight
-CANDIDATE_ALIAS=kimi-k3-q5attn-abl-v23-dry-ttf-preflight
+CONTROL_UNIT=kimi-k3-q5attn-abl-v23-v2-control-preflight.service
+CANDIDATE_UNIT=kimi-k3-q5attn-abl-v23-v2-feature-preflight.service
+CONTROL_ALIAS=kimi-k3-q5attn-abl-v23-v2-control-preflight
+CANDIDATE_ALIAS=kimi-k3-q5attn-abl-v23-v2-dry-ttf-preflight
 
 production_stopped=0
 candidate_started=0
@@ -276,9 +277,10 @@ verify_files() {
     check_sha256 e4702fce16acfd35ba083705c415023dba5e62931dfaf1bfd2b93822afeb259c "$REASONING_PREFILL"
     check_sha256 0699d2f7f5f6dd04c61b0eb1dbdca8063575a36440ae8d72aaeb65ed647425bd "$PROTOCOL"
     check_sha256 15cb6a5dc2ce42bc5d068b52616029c077fc6e78bac704b8f5e58cfef5dae9d7 "$PRIOR_RESULTS"
+    check_sha256 4157862fb35c56d7e76c7aa58e811a9d3da2710e72bd0ff58e6ebb718b073983 "$ATTEMPT1"
     check_sha256 6cf3a727a411282b3db03e8b3c50bd1a71d604763dba4a18731a76e0d24e5f22 "$PROVENANCE_HELPER"
     check_sha256 1f6b43a330cfbddd8334170c067e6719607f12d9fdeff6d1718d4f8ab733e61a "$BASE_EVALUATOR"
-    check_sha256 b824ff247b3d45fbe4e9267366278990a8ce8609ec57099b08f3a05deabad950 "$PREFLIGHT_HELPER"
+    check_sha256 57ce6c1caa9f176c7183dfe0fdbb01a56bae265602073513748000f6a91fc54c "$PREFLIGHT_HELPER"
     check_sha256 04b9aab1c52ba0500731fd39f7c48d0d0b2def7356c495fa46fc202fb2555693 "$ENGINE_MANIFEST"
     [[ "$(git -C "$SERVER_REPO" rev-parse HEAD)" == 23695c7a444dcfaaf892bebfefb4a4a8394e3c37 ]] \
         || die "candidate engine checkout changed"

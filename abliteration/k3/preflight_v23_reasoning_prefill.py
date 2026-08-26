@@ -25,10 +25,10 @@ MODEL_PATH = (
 )
 SERVER_SHA256 = "13dbafbeab3bb9438bdf784b2df4b211bddbd167c9ab4e236f3c23b78180508a"
 ENGINE_COMMIT = "23695c7a444dcfaaf892bebfefb4a4a8394e3c37"
-CONTROL_ALIAS = "kimi-k3-q5attn-abl-v23-control-preflight"
-CANDIDATE_ALIAS = "kimi-k3-q5attn-abl-v23-dry-ttf-preflight"
-CONTROL_UNIT = "kimi-k3-q5attn-abl-v23-control-preflight.service"
-CANDIDATE_UNIT = "kimi-k3-q5attn-abl-v23-feature-preflight.service"
+CONTROL_ALIAS = "kimi-k3-q5attn-abl-v23-v2-control-preflight"
+CANDIDATE_ALIAS = "kimi-k3-q5attn-abl-v23-v2-dry-ttf-preflight"
+CONTROL_UNIT = "kimi-k3-q5attn-abl-v23-v2-control-preflight.service"
+CANDIDATE_UNIT = "kimi-k3-q5attn-abl-v23-v2-feature-preflight.service"
 SYSTEM_PROMPT_SHA256 = "44fc73623eb35a4b19b9cbfdf682a015af832ed8954233c68b8cf5845ab116f9"
 REASONING_PREFILL_SHA256 = (
     "e4702fce16acfd35ba083705c415023dba5e62931dfaf1bfd2b93822afeb259c"
@@ -81,11 +81,11 @@ EXTENDED_SUFFIX_SHA256 = (
     "3915d4bae0e8fd9d27a1dc2820bdc1e8aba0996393279e3a1d481d10552c696a"
 )
 CHAT_TEMPLATE_KWARGS = {"enable_thinking": True, "thinking_effort": "low"}
-CONTROL_DRY_SAMPLER = {
+CONTROL_EFFECTIVE_DRY_SAMPLER = {
     "multiplier": 0.0,
     "base": 1.75,
     "allowed_length": 2,
-    "penalty_last_n": -1,
+    "penalty_last_n": 131072,
     "sequence_breakers": ["\n", ":", "\"", "*"],
 }
 DRY_SAMPLER = {
@@ -94,6 +94,10 @@ DRY_SAMPLER = {
     "allowed_length": 4,
     "penalty_last_n": -1,
     "sequence_breakers": ["\n", ":", "\"", "*"],
+}
+FEATURE_EFFECTIVE_DRY_SAMPLER = {
+    **DRY_SAMPLER,
+    "penalty_last_n": 131072,
 }
 DRY_ARGV = (
     "--dry-multiplier", "2.0",
@@ -382,7 +386,7 @@ def validate_error(name, status, body, expected_message):
 def load_control_receipt(path, system_prompt_record, prefill_record):
     resolved = path.resolve(strict=True)
     receipt = json.loads(resolved.read_text())
-    if receipt.get("schema") != "k3-v23-response-free-control-v1":
+    if receipt.get("schema") != "k3-v23-response-free-control-v2":
         raise ValueError("control receipt schema differs")
     if receipt.get("system_prompt") != system_prompt_record:
         raise ValueError("control receipt system prompt differs")
@@ -432,7 +436,9 @@ def run_control(args, api_key, system_prompt, system_record, prefill_record):
     validate_models(status, body, CONTROL_ALIAS)
     observed.append({"status": status, "method": "GET", "path": "/v1/models"})
     status, body = request_json("GET", f"{args.base_url}/props", api_key)
-    props = validate_props(status, body, CONTROL_ALIAS, CONTROL_DRY_SAMPLER)
+    props = validate_props(
+        status, body, CONTROL_ALIAS, CONTROL_EFFECTIVE_DRY_SAMPLER
+    )
     observed.append({"status": status, "method": "GET", "path": "/props"})
     payload = base_payload(CONTROL_ALIAS, system_prompt)
     status, body = request_json(
@@ -459,7 +465,7 @@ def run_control(args, api_key, system_prompt, system_record, prefill_record):
     if observed != expected:
         raise ValueError("control request sequence differs")
     receipt = {
-        "schema": "k3-v23-response-free-control-v1",
+        "schema": "k3-v23-response-free-control-v2",
         "captured_utc": datetime.now(timezone.utc).isoformat(),
         "base_url": args.base_url,
         "model": CONTROL_ALIAS,
@@ -493,7 +499,9 @@ def run_candidate(args, api_key, system_prompt, system_record, prefill_record):
     validate_models(status, body, CANDIDATE_ALIAS)
     observed.append({"status": status, "method": "GET", "path": "/v1/models"})
     status, body = request_json("GET", f"{args.base_url}/props", api_key)
-    props = validate_props(status, body, CANDIDATE_ALIAS, DRY_SAMPLER)
+    props = validate_props(
+        status, body, CANDIDATE_ALIAS, FEATURE_EFFECTIVE_DRY_SAMPLER
+    )
     observed.append({"status": status, "method": "GET", "path": "/props"})
 
     payload = base_payload(CANDIDATE_ALIAS, system_prompt)
@@ -601,7 +609,7 @@ def run_candidate(args, api_key, system_prompt, system_record, prefill_record):
     if observed != expected:
         raise ValueError("candidate request sequence differs")
     receipt = {
-        "schema": "k3-v23-response-free-preflight-v1",
+        "schema": "k3-v23-response-free-preflight-v2",
         "captured_utc": datetime.now(timezone.utc).isoformat(),
         "base_url": args.base_url,
         "model": CANDIDATE_ALIAS,
