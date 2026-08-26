@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="Linux-c++"
+	tests="1"
+	failures="0"
+	disabled="0"
+	skipped="0"
+	hostname="charbro"
+	time="0"
+	timestamp="2026-08-26T00:35:14"
+	>
+	<testcase name="test-reasoning-prefill" classname="test-reasoning-prefill" time="0.125821" status="run">
+		<properties>
+			<property name="cmake_labels" value="main"/>
+		</properties>
+		<system-out></system-out>
+	</testcase>
+</testsuite>
