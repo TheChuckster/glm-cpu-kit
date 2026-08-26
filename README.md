@@ -255,7 +255,7 @@ ethnic groups on the two consumed calibration failures. V9 therefore opened no
 stability or post-selection gate and is not selectable. The exact append-only
 record is in [`abliteration/k3/V9_PROTOCOL.md`](abliteration/k3/V9_PROTOCOL.md).
 
-V10--V19 remain rejected research variants, not production upgrades. V10 and
+V10--V20 remain rejected research variants, not production upgrades. V10 and
 V11 tested fixed semantic overlays, V12 tested a published affirmative response
 prefix, and V13--V16 tested increasingly explicit forms of published Thought
 Token Forcing inside native K3 reasoning. V16 passed its two fixed failure
@@ -283,6 +283,15 @@ repeated one four-gram 62 times, and truncated with an open code fence. The
 structural gate created no stability receipt and the remaining 96 rows stayed
 sealed. See
 [`abliteration/k3/V19_RESULTS.md`](abliteration/k3/V19_RESULTS.md) for the
+V19 terminal evidence and rollback proof.
+
+V20 kept the V19 reasoning seed exact and added the runbook's canonical DRY
+sequence-repetition tuple at server startup. The no-generation closure proved
+the live candidate argv and fail-closed sampler mutations, but all four
+consumed responses were byte-for-byte identical to V19. Stability row 010
+again repeated, reached 2,048/2,048 tokens, and ended incomplete; the remaining
+96 rows stayed sealed and accepted V1 was restored. See
+[`abliteration/k3/V20_RESULTS.md`](abliteration/k3/V20_RESULTS.md) for the
 latest terminal evidence and rollback proof.
 
 Note that `llama-server` does not reject a request naming a different alias than

@@ -455,9 +455,9 @@ strict gate failed structurally, created no phase receipt, and left every later
 phase sealed. Exact evidence is in [`V14_RESULTS.md`](V14_RESULTS.md); accepted
 V1 remains production.
 
-## Locked v15--v19 experiments: calibrated Thought Token Forcing
+## Locked v15--v20 experiments: calibrated Thought Token Forcing
 
-V15--V19 retain the exact V2 weights, V10 Prompt 02, native low-effort
+V15--V20 retain the exact V2 weights, V10 Prompt 02, native low-effort
 reasoning, one-attempt request contract, fixed calibration partition, strict
 semantic review, and fail-fast phase order. They test preregistered refinements
 of the server-side reasoning prefill, not weight-level derivatives or K3 Max.
@@ -480,6 +480,17 @@ remainder, restored accepted V1, and left both repository pushes sealed. See
 [`V19_PROTOCOL.md`](V19_PROTOCOL.md),
 [`V19_LAUNCHER_CLOSURE.md`](V19_LAUNCHER_CLOSURE.md), and
 [`V19_RESULTS.md`](V19_RESULTS.md) for the exact closure and evidence hashes.
+
+V20 kept the V19 seed byte-for-byte and activated the kit's preexisting
+canonical DRY sequence-repetition tuple at server startup. Response-free proof
+bound the exact control/candidate argv, and regressions rejected every missing,
+duplicated, reordered, or altered DRY value. Nevertheless, all four consumed
+responses were byte-for-byte identical to V19. Row 010 again repeated one
+four-gram 62 times, reached 2,048/2,048 tokens, and ended incomplete. The gate
+rejected V20 at cumulative semantic 3/4, opened no remainder, and restored V1.
+See [`V20_PROTOCOL.md`](V20_PROTOCOL.md),
+[`V20_LAUNCHER_CLOSURE.md`](V20_LAUNCHER_CLOSURE.md), and
+[`V20_RESULTS.md`](V20_RESULTS.md) for the exact closure and evidence hashes.
 
 ## Prepare prompts
 
