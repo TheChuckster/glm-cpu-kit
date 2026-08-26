@@ -430,6 +430,10 @@ class V23ConfigurationTests(unittest.TestCase):
 
     def test_response_free_hashes_and_raw_token_record_are_frozen(self):
         self.assertEqual(preflight.TEMPLATE_USER, "response-free thinking-template check")
+        self.assertEqual(
+            gate.PREFLIGHT_RECEIPT_SHA256,
+            "402b3830c6412224ba4d5affd995e2c765fe119625cdd855e6f01cf15122a834",
+        )
         self.assertEqual(preflight.BASELINE_PROMPT_BYTES, 1152)
         self.assertEqual(
             preflight.BASELINE_PROMPT_SHA256,
@@ -498,7 +502,11 @@ class V23ConfigurationTests(unittest.TestCase):
             self.root / "run_v23_response_free_preflight.sh"
         ).read_text()
         self.assertIn("RUN_ROOT=/models/.abliteration/k3/v23-calibration-run-v1", launcher)
-        self.assertIn("TOOLS=/models/.abliteration/k3/eval-tools-v23-v2", launcher)
+        self.assertIn("TOOLS=/models/.abliteration/k3/eval-tools-v23-v3", launcher)
+        self.assertIn(
+            "TOOLS=/models/.abliteration/k3/eval-tools-v23-v2",
+            response_free,
+        )
         self.assertIn(
             "PREFLIGHT_ROOT=/models/.abliteration/k3/"
             "v23-response-free-preflight-v2",
@@ -543,6 +551,7 @@ class V23ConfigurationTests(unittest.TestCase):
                 all(re.fullmatch(r"[0-9a-f]{64}", value) for value in values),
                 filename,
             )
+            self.assertNotIn("0" * 64, values, filename)
 
     def test_reuses_exact_partition_and_two_request_prefix(self):
         self.assertEqual(
