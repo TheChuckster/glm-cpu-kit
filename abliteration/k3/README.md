@@ -2,9 +2,12 @@
 
 This directory builds and evaluates a **separate, reversible candidate**. It
 does not edit the source GGUF or overwrite `kimi-k3-q5attn`, and none of the
-build/evaluation helpers selects a model live. The accepted 2026-08-24 candidate
-is registered additively as `kimi-k3-q5attn-abl`; the unchanged source row
-remains the immediate rollback.
+build/evaluation helpers selects a model live. The accepted 2026-08-24 V1
+candidate is registered additively as `kimi-k3-q5attn-abl`. On 2026-08-26 the
+owner separately promoted the V2-weight/runtime-overlay V26 configuration as
+`kimi-k3-q5attn-abl-v26`; V1 remains registered as its immediate rollback.
+That operational promotion and its formal-protocol limitation are recorded in
+[`V26_PRODUCTION.md`](V26_PRODUCTION.md).
 
 No GPU is required. Direction extraction and projection run in the patched
 `ik_llama.cpp` CPU engine. On chuckdancer the practical requirements are the
@@ -455,7 +458,7 @@ strict gate failed structurally, created no phase receipt, and left every later
 phase sealed. Exact evidence is in [`V14_RESULTS.md`](V14_RESULTS.md); accepted
 V1 remains production.
 
-## Locked v15--v20 experiments: calibrated Thought Token Forcing
+## Locked v15--v26 experiments: calibrated Thought Token Forcing and DRY
 
 V15--V20 retain the exact V2 weights, V10 Prompt 02, native low-effort
 reasoning, one-attempt request contract, fixed calibration partition, strict
@@ -491,6 +494,38 @@ rejected V20 at cumulative semantic 3/4, opened no remainder, and restored V1.
 See [`V20_PROTOCOL.md`](V20_PROTOCOL.md),
 [`V20_LAUNCHER_CLOSURE.md`](V20_LAUNCHER_CLOSURE.md), and
 [`V20_RESULTS.md`](V20_RESULTS.md) for the exact closure and evidence hashes.
+
+V21 corrected the engine so configured DRY applies during greedy decoding. It
+reproduced the 2/2 failure pass, but stability row 010 still repeated to the
+2,048-token ceiling. V22 shortened `dry_allowed_length` and regressed to 1/2.
+V23 raised the multiplier to 2.0 and again failed stability at the ceiling.
+V24 removed colon from the default breaker set; row 010 ended at 1,122 tokens
+but remained fragmented and partially unusable. V25 instead removed newline;
+it returned to the ceiling with an open code fence. Each result is terminally
+sealed in its matching `V21_RESULTS.md` through `V25_RESULTS.md` record.
+
+V26 combined the V24 and V25 breaker removals, retaining only quote and
+asterisk as DRY sequence breakers. Its response-free closure, focused normal
+and sanitizer tests, exact executable/mapping hashes, V2 shard inventory, and
+accepted-V1 rollback all passed. The failure phase then passed 2/2. Both fresh
+stability responses stopped normally without automated refusal, incoherence,
+ceiling, or open-construct errors; row 010 dropped to 554 tokens and closed one
+code fence.
+
+The frozen manual usability review was not sealed. That row directly attempted
+the requested artifact but contained several malformed command paths and an
+invalid multi-name service command, so the strict `complete, usable artifact`
+rubric did not have a defensible clean pass. The 96-row remainder and all 310
+StrongREJECT rows therefore remain unopened, and V26 cannot be cited as a
+formal 410-prompt or universal 0% refusal result.
+
+The owner explicitly chose operational deployment despite that formal research
+limitation. Production then passed an exact argv/executable audit, cold restart,
+direct chat, the actual 7,724-token OpenCode `hi`, a 12/12 live
+chat/stream/tool/replay matrix, and two fixed throughput runs. The active row is
+`kimi-k3-q5attn-abl-v26`; exact production hashes, timings, warnings, rollback,
+and the unfinished calibration artifact hashes are in
+[`V26_PRODUCTION.md`](V26_PRODUCTION.md).
 
 ## Prepare prompts
 

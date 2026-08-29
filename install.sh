@@ -56,6 +56,11 @@ say "4/7  install model registry + glm-model CLI"
 # without this step a fresh box starts the unit and immediately dies on
 # "cannot read /etc/glm-variants.conf".
 CONF=/etc/glm-variants.conf
+PREFILL_DIR=/usr/local/share/glm-cpu-kit/abliteration/k3
+sudo install -d -m 0755 "$PREFILL_DIR"
+sudo install -m 0644 "$KITDIR/abliteration/k3/v26-reasoning-prefill.txt" \
+  "$PREFILL_DIR/v26-reasoning-prefill.txt"
+echo "  installed hash-bound K3 V26 reasoning prefill"
 if [ -e "$CONF" ] && ! sudo cmp -s "$KITDIR/serving/glm-variants.conf" "$CONF"; then
   # Never clobber a registry the operator has edited - correcting a pre-staged
   # variant's subdir/prefix once its publisher ships is expected, and a silent
@@ -75,7 +80,12 @@ echo "  installed /usr/local/bin/glm-model   (try: glm-model list)"
 MISSING=""
 for eng in $(awk -F'|' '/^[a-z0-9-]+ *\|/ {gsub(/ /,"",$8); if ($8 != "") print $8}' \
              "$KITDIR/serving/glm-variants.conf" | sort -u); do
-    [ -x "$HOME/ik_llama.cpp/$eng/bin/llama-server" ] || MISSING="$MISSING $eng"
+    if [ "${eng#/}" != "$eng" ]; then
+        engine_path="$eng"
+    else
+        engine_path="$HOME/ik_llama.cpp/$eng/bin/llama-server"
+    fi
+    [ -x "$engine_path" ] || MISSING="$MISSING $eng"
 done
 if [ -n "$MISSING" ]; then
     echo "  NOTE: these registry rows need engine trees that do not exist yet:$MISSING"

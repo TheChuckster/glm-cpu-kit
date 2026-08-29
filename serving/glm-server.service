@@ -9,6 +9,13 @@ After=network-online.target
 Type=simple
 User=REPLACE_WITH_YOUR_USER
 
+# ik's legacy LOG() channel opens ./llama.log even though normal server logs go
+# to stderr/journald. Give it an ephemeral, service-owned working directory so
+# startup is warning-free without leaving logs in /, the checkout, or $HOME.
+RuntimeDirectory=glm-server
+RuntimeDirectoryMode=0750
+WorkingDirectory=/run/glm-server
+
 # Which model gets served. GLM_VARIANT lives here and is managed by
 # `glm-model use <variant>`; anything else you add to this file is preserved
 # across switches. The '-' means a missing file is not an error - serve-glm.sh

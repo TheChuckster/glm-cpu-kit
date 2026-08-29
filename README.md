@@ -31,6 +31,7 @@ to be right on the box the kit was written on.
 | `download-model.sh` | fetch GLM-5.2 Q4_K_XL from HF (IPv4, parallel, resumable) | 5 |
 | `gen-api-key.sh` | create `~/.glm-api-key` | 6 |
 | `serve-glm.sh` | the server launcher (NUMA-aware, thinking-off, anti-repetition) | 6 |
+| `test_serve_glm.py` | regression tests for exact, hash-bound reasoning-prefill expansion and fail-closed metadata | 6 |
 | `glm-server.service` | systemd unit (survives reboot, `LimitMEMLOCK=infinity`) | 7 |
 | `glm-variants.conf` | registry of servable models (GLM, Kimi, DeepSeek-V4) with per-model engine + flags | 6a, 6b |
 | `glm-model` | list / download / switch / track which model is served | 6a |
@@ -65,8 +66,9 @@ whether a model is slow or just large.
 
 ```sh
 glm-model list                     # registered, downloaded, live
-glm-model verify kimi-k3-q5attn-abl # local derivative: prove all 19 shards exist
-glm-model use kimi-k3-q5attn-abl    # validated, manually abliterated K3
+glm-model verify kimi-k3-q5attn-abl-v26 # local derivative: prove all 19 shards exist
+glm-model use kimi-k3-q5attn-abl-v26    # active V26 K3 deployment
+glm-model use kimi-k3-q5attn-abl        # immediate accepted-V1 rollback
 glm-model status                   # what is ACTUALLY loaded right now
 glm-model upstream                 # what HF publishes now, and does it fit this box
 ```
@@ -76,9 +78,10 @@ them, so a switch is a full reload of minutes, not a hot swap.
 
 **Registered today:** `base` (GLM-5.2, 440 GB), its Q5-attention and abliterated
 siblings, Kimi K2.6/K2.7, Kimi K3 base/Q5-attention, a validated local K3
-Q5-attention abliteration, and DeepSeek-V4-Flash variants. `chuckdancer`
-currently selects `kimi-k3-q5attn-abl`; the state is persisted by `glm-model`, while a fresh install
-still falls back to `base` until an operator selects and downloads another row.
+Q5-attention abliterations, and DeepSeek-V4-Flash variants. `chuckdancer`
+currently selects `kimi-k3-q5attn-abl-v26`; the state is persisted by
+`glm-model`, while a fresh install still falls back to `base` until an operator
+selects and downloads another row.
 
 **DeepSeek-V4-Flash is the fast one.** 284B total but only ~13B active, with
 experts shipped natively at fp4, so a lossless MXFP4 conversion is ~155 GB —
@@ -118,6 +121,16 @@ peak — normal efficiency, just 2.2x more bytes. Runbook §6c and
 [`porting/k3/`](porting/k3/) have the full account, including the eleven silent
 bugs it took to get there and why attributing the generation speed to that kernel
 was wrong.
+
+The active V26 row keeps V1 registered as a one-command rollback, but serves the
+V2 weights with a hash-bound server reasoning prefill and the combined
+quote/asterisk-only DRY breaker set. On 2026-08-26 its exact live executable,
+argv, and model were checked after a cold restart; direct `hi`, the real
+7,724-token OpenCode path, and the 12-case chat/stream/tool/replay matrix all
+passed. Two fixed benchmark runs measured **43.018 PP tok/s** on average and
+**4.398 TG tok/s** across six forced 128-token samples (median **4.436**; repeat
+run **4.494**). See
+[`abliteration/k3/V26_PRODUCTION.md`](abliteration/k3/V26_PRODUCTION.md).
 
 A deterministic live `hi` regression on 2026-08-23 exposed a termination bug:
 K3 produced the right reply, then repeated `<|close|>message<|sep|>` until all
@@ -217,8 +230,9 @@ from the established abliteration publisher, but that repo has no Q4-class quant
 at all — so it costs a full quantisation step, which on a 745B MoE is likely a
 larger quality hit than the ablation itself.
 
-`kimi-k3-q5attn-abl` is the verified abliterated equivalent to the Q5-attention
-deployment. It was built locally by projecting a refusal direction from the
+`kimi-k3-q5attn-abl` preserves the verified V1 abliterated equivalent to the
+Q5-attention deployment and is now the immediate rollback. It was built locally
+by projecting a refusal direction from the
 published methodology's harmful-minus-harmless activations at layers 56-73,
 then requantizing only the 279 selected attention-output tensors. All 2,294
 non-target tensors—including all 276 routed-expert tensors—remain byte-identical
@@ -231,8 +245,10 @@ long-context, graph reuse, OpenCode greeting, and agentic tool canaries passed.
 The scored production executable is pinned independently by SHA-256
 `a677e4c2decf66acae9eb91bc76ff1054f1cf261d2614f294e5c4f39f9615ab6`;
 the upstream rebase preserved the patch stack exactly according to `range-diff`.
-The published `kimi-k3-abl` Q2 row remains experimental and not downloaded;
-`kimi-k3-q5attn` remains the immediate rollback.
+The published `kimi-k3-abl` Q2 row remains experimental and not downloaded.
+The active `kimi-k3-q5attn-abl-v26` row instead uses the separately verified V2
+weights plus a hash-bound runtime prefill/DRY configuration; it does not replace
+or mutate the V1 row.
 
 Later V2--V9 experiments are retained as private, rejected research artifacts,
 not upgrades. V7 tested the fixed V2 weights with negative runtime activation
@@ -293,6 +309,26 @@ again repeated, reached 2,048/2,048 tokens, and ended incomplete; the remaining
 96 rows stayed sealed and accepted V1 was restored. See
 [`abliteration/k3/V20_RESULTS.md`](abliteration/k3/V20_RESULTS.md) for the
 latest terminal evidence and rollback proof.
+
+V21 fixed a real engine bug by applying configured DRY during greedy decoding,
+but its stability row 010 still repeated to the 2,048-token ceiling. V22's
+shorter DRY trigger regressed the failure phase to 1/2. V23 increased the
+multiplier without solving the stability ceiling. V24 removed colon from the
+default breaker set and shortened row 010 to 1,122 tokens, but left a fragmented,
+partially unusable artifact. V25 removed newline instead; it again reached the
+2,048-token ceiling with an open construct. Their locked result files remain
+terminal research records, not production rows.
+
+V26 combined both breaker removals. Its first four calibration responses had
+zero automated refusals and all stopped normally; row 010 fell to 554 tokens and
+closed its single code block. The owner then explicitly promoted it after the
+cold-restart, OpenCode, live matrix, and throughput checks above. The frozen
+research protocol remains formally incomplete: row 010 has material command and
+path defects under the strict usability rubric, no stability receipt was sealed,
+and the remaining 96 canonical plus 310 StrongREJECT rows were never opened.
+Operational promotion therefore must not be reported as a universal or
+410-prompt 0% refusal result. Exact status and hashes are in
+[`abliteration/k3/V26_PRODUCTION.md`](abliteration/k3/V26_PRODUCTION.md).
 
 Note that `llama-server` does not reject a request naming a different alias than
 the loaded model: asking for `glm-5.2-abliterated` while `base` is live returns

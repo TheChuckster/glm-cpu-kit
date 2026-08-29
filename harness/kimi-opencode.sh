@@ -17,10 +17,10 @@
 #   GLM-5.2      67s,  chained Glob then Read, correct answer
 #   Kimi K3      234s, chained Glob then Read, correct answer
 #
-# K3 is slower than DS4, but it is the quality-first local choice. The manually
-# projected `kimi-k3-q5attn-abl` deployment measured 42.868 tok/s on a fresh
-# 897-token prompt and 4.471 tok/s generation (mean of three forced 128-token
-# samples, 2026-08-24), effectively unchanged from the Q5attn source.
+# K3 is slower than DS4, but it is the quality-first local choice. Active V26
+# measured 43.018 tok/s on the fixed 897-token prompt (two-run mean) and 4.398
+# tok/s generation across six forced 128-token samples; the repeat run averaged
+# 4.494 tok/s (2026-08-26), effectively unchanged from the prior deployment.
 # OpenCode's system prompt plus tool definitions is large, so
 #   EXPECT ROUGHLY
 #   THREE TO FOUR MINUTES FOR THE FIRST REPLY of a fresh session.
@@ -45,15 +45,17 @@
 #   output limit of 8000 is fine; hand-rolled curl calls are where this bites.
 #
 # K3 must be the resident model - only one is, and they are 155-800 GB mlocked:
-#   ssh $GLM_SERVER_HOST 'sudo glm-model use kimi-k3-q5attn-abl'
+#   ssh $GLM_SERVER_HOST 'sudo glm-model use kimi-k3-q5attn-abl-v26'
 #   ssh $GLM_SERVER_HOST 'glm-model status'             # confirm before trusting it
 # (GLM_SERVER_HOST defaults to chuckdancer)
 set -euo pipefail
 
 BASE="${OPENCODE_BASE_URL:-http://127.0.0.1:4000/v1}"
 MODEL="${KIMI_OPENCODE_MODEL:-local/kimi-k3}"
-KIMI_VARIANT="${KIMI_VARIANT:-kimi-k3-q5attn-abl}"
+KIMI_VARIANT="${KIMI_VARIANT:-kimi-k3-q5attn-abl-v26}"
 CFG_HOME="${GLM_OPENCODE_XDG:-$HOME/.glm-opencode-config}"
+KIMI_READY_TIMEOUT="${KIMI_READY_TIMEOUT:-1800}"
+KIMI_READY_POLL="${KIMI_READY_POLL:-5}"
 
 OPENCODE="${OPENCODE_BIN:-/usr/bin/opencode}"
 [ -x "$OPENCODE" ] || { echo "opencode CLI not found at $OPENCODE" >&2; exit 1; }
@@ -81,38 +83,89 @@ KIMI_SKIP_VARIANT_CHECK="${KIMI_SKIP_VARIANT_CHECK:-0}"
   echo "KIMI_SKIP_VARIANT_CHECK must be 0 or 1" >&2
   exit 1
 }
+[[ "$KIMI_READY_TIMEOUT" =~ ^[0-9]+$ ]] || {
+  echo "KIMI_READY_TIMEOUT must be a non-negative integer" >&2
+  exit 1
+}
+[[ "$KIMI_READY_POLL" =~ ^[1-9][0-9]*$ ]] || {
+  echo "KIMI_READY_POLL must be a positive integer" >&2
+  exit 1
+}
 
 if [ "$KIMI_SKIP_VARIANT_CHECK" = 0 ]; then
-  if ! STATUS=$(ssh -F "$GLM_SSH_CONFIG" -o BatchMode=yes -o ConnectTimeout=4 "$GLM_HOST" \
-      'glm-model status 2>/dev/null' 2>/dev/null); then
-    echo "ERROR: cannot verify the resident model on $GLM_HOST; refusing an ambiguous launch." >&2
-    echo "       Fix SSH, or explicitly set KIMI_SKIP_VARIANT_CHECK=1." >&2
-    exit 1
-  fi
-  SELECTED=$(printf '%s\n' "$STATUS" | sed -n 's/^selected variant *: \([^ ]*\).*/\1/p')
-  SERVED=$(printf '%s\n' "$STATUS" | sed -n 's/^serving alias *: //p')
-  [ -n "$SELECTED" ] && [ -n "$SERVED" ] || {
-    echo "ERROR: could not parse glm-model status from $GLM_HOST; refusing an ambiguous launch." >&2
-    exit 1
-  }
-  # Several K3 variants deliberately share alias `kimi-k3`, so the alias alone
-  # cannot distinguish the Q5-attention build from the lower-quality base quant.
-  if [ "$SELECTED" != "$KIMI_VARIANT" ]; then
-    echo "ERROR: $GLM_HOST selected '$SELECTED', not '$KIMI_VARIANT'." >&2
-    echo "       Switch with: ssh -F $GLM_SSH_CONFIG $GLM_HOST 'sudo glm-model use $KIMI_VARIANT'" >&2
-    exit 1
-  fi
-  if [ "$SERVED" != "$MODEL_ID" ]; then
-    echo "ERROR: $GLM_HOST is serving alias '$SERVED', not '$MODEL_ID'." >&2
-    echo "       Requests would be answered by the wrong model; refusing to launch." >&2
-    exit 1
-  fi
+  READY_STARTED=$SECONDS
+  READY_NOTICE=0
+  while :; do
+    if ! STATUS=$(ssh -F "$GLM_SSH_CONFIG" -o BatchMode=yes -o ConnectTimeout=4 "$GLM_HOST" \
+        'glm-model status 2>/dev/null' 2>/dev/null); then
+      echo "ERROR: cannot verify the resident model on $GLM_HOST; refusing an ambiguous launch." >&2
+      echo "       Fix SSH, or explicitly set KIMI_SKIP_VARIANT_CHECK=1." >&2
+      exit 1
+    fi
+    SELECTED=$(printf '%s\n' "$STATUS" | sed -n 's/^selected variant *: \([^ ]*\).*/\1/p')
+    SERVICE_STATE=$(printf '%s\n' "$STATUS" | sed -n 's/^service *: //p')
+    HEALTH=$(printf '%s\n' "$STATUS" | sed -n 's/^health *: //p')
+    SERVED=$(printf '%s\n' "$STATUS" | sed -n 's/^serving alias *: //p')
+
+    if [ -z "$SELECTED" ]; then
+      echo "ERROR: could not parse the selected variant from glm-model status on $GLM_HOST." >&2
+      printf '%s\n' "$STATUS" | sed 's/^/       /' >&2
+      exit 1
+    fi
+    # Several K3 variants deliberately share alias `kimi-k3`, so the alias alone
+    # cannot distinguish the Q5-attention build from the lower-quality base quant.
+    if [ "$SELECTED" != "$KIMI_VARIANT" ]; then
+      echo "ERROR: $GLM_HOST selected '$SELECTED', not '$KIMI_VARIANT'." >&2
+      echo "       Switch with: ssh -F $GLM_SSH_CONFIG $GLM_HOST 'sudo glm-model use $KIMI_VARIANT'" >&2
+      exit 1
+    fi
+    if [ -n "$SERVED" ]; then
+      if [ "$SERVED" != "$MODEL_ID" ]; then
+        echo "ERROR: $GLM_HOST is serving alias '$SERVED', not '$MODEL_ID'." >&2
+        echo "       Requests would be answered by the wrong model; refusing to launch." >&2
+        exit 1
+      fi
+      break
+    fi
+
+    # While a large model is loading, glm-model intentionally prints the
+    # selected variant but cannot print a serving alias until /health and
+    # /v1/models respond. That is a readiness state, not malformed output.
+    if [ "$SERVICE_STATE" != active ] && [ "$SERVICE_STATE" != activating ]; then
+      echo "ERROR: $GLM_HOST selected '$KIMI_VARIANT', but glm-server is '$SERVICE_STATE'." >&2
+      printf '%s\n' "$STATUS" | sed 's/^/       /' >&2
+      exit 1
+    fi
+    if [ -n "$HEALTH" ] && [[ "$HEALTH" != "not responding"* ]]; then
+      echo "ERROR: $GLM_HOST is healthy but its serving alias could not be verified." >&2
+      printf '%s\n' "$STATUS" | sed 's/^/       /' >&2
+      exit 1
+    fi
+
+    READY_ELAPSED=$((SECONDS - READY_STARTED))
+    if (( READY_ELAPSED >= KIMI_READY_TIMEOUT )); then
+      echo "ERROR: timed out after ${KIMI_READY_TIMEOUT}s waiting for $KIMI_VARIANT on $GLM_HOST." >&2
+      printf '%s\n' "$STATUS" | sed 's/^/       /' >&2
+      exit 1
+    fi
+    if [ "$READY_NOTICE" = 0 ]; then
+      echo "$KIMI_VARIANT is selected on $GLM_HOST and is still loading; waiting up to ${KIMI_READY_TIMEOUT}s." >&2
+      echo "Watch it: ssh -F $GLM_SSH_CONFIG $GLM_HOST 'sudo journalctl -fu glm-server'" >&2
+      READY_NOTICE=1
+    fi
+    READY_REMAINING=$((KIMI_READY_TIMEOUT - READY_ELAPSED))
+    if (( READY_REMAINING < KIMI_READY_POLL )); then
+      sleep "$READY_REMAINING"
+    else
+      sleep "$KIMI_READY_POLL"
+    fi
+  done
 fi
 
 # Say this out loud every time. A multi-minute silence before the first token is
 # indistinguishable from a hang, and treating it as one is the single most
 # likely way to conclude - wrongly - that this script is broken.
-echo "kimi-k3: ~42.9 tok/s prompt processing, ~4.47 tok/s generation. A fresh" >&2
+echo "kimi-k3 V26: ~43.0 tok/s prompt processing, ~4.4 tok/s generation. A fresh" >&2
 echo "         session sends 7K+ tokens of system prompt and tools, so the" >&2
 echo "         FIRST reply usually takes ~3-4 minutes." >&2
 echo "         Quiet prompt evaluation is normal. Watch it:  ssh -F $GLM_SSH_CONFIG $GLM_HOST 'sudo journalctl -fu glm-server'" >&2

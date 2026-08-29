@@ -28,6 +28,7 @@
 #   IK_ROOT     ik_llama.cpp checkout             (default ~/ik_llama.cpp)
 #   IK_LLAMA    full path to a llama-server binary; overrides the registry's
 #               engine field entirely (escape hatch for a one-off engine)
+#   API_KEY_FILE llama-server API-key file        (default ~/.glm-api-key)
 #   THREADS     = PHYSICAL core count            (auto-detected via lscpu; nproc would
 #               report double on an SMT part and 128 threads measures 0.43 tok/s against
 #               31.5 at 64. Decode saturates ~32 regardless, so this is a prefill knob)
@@ -42,6 +43,7 @@ set -e
 VARIANTS="${VARIANTS:-/etc/glm-variants.conf}"
 GLM_VARIANT="${GLM_VARIANT:-base}"
 IK_ROOT="${IK_ROOT:-$HOME/ik_llama.cpp}"
+API_KEY_FILE="${API_KEY_FILE:-$HOME/.glm-api-key}"
 # nproc counts SMT siblings, so on a 64-core part it says 128 - and 128 is not
 # merely suboptimal here, it is catastrophic: DeepSeek-V4 measures 0.43 tok/s at
 # 128 threads against 31.5 at 64. Decode saturates around 32 threads on every
@@ -133,11 +135,96 @@ fi
 # embedded space; appended LAST below so a variant can override any default.
 # The registry is root-owned and read by a root-installed unit, so this is the
 # same trust boundary as the unit file.
+#
+# `--kit-reasoning-prefill-file PATH` is a serve-glm pseudo-option: replace it
+# with the engine's `--reasoning-prefill TEXT` after reading exactly one line.
+# It must be paired with `--kit-reasoning-prefill-sha256 HEX`, which is consumed
+# here as well. This keeps long prefills out of the pipe-delimited registry while
+# failing closed if the installed artifact differs from the evaluated bytes.
 VARIANT_ARGS=()
 [ -n "${VARIANT_OPTS:-}" ] && eval "VARIANT_ARGS=($VARIANT_OPTS)"
 
+_expand_kit_variant_args() {
+    local arg path="" expected="" observed text
+    local index=0
+    local -a expanded=()
+
+    while [ "$index" -lt "${#VARIANT_ARGS[@]}" ]; do
+        arg="${VARIANT_ARGS[$index]}"
+        case "$arg" in
+            --kit-reasoning-prefill-file)
+                [ -z "$path" ] || {
+                    echo "duplicate --kit-reasoning-prefill-file in variant '$GLM_VARIANT'" >&2
+                    exit 1
+                }
+                index=$((index + 1))
+                [ "$index" -lt "${#VARIANT_ARGS[@]}" ] || {
+                    echo "--kit-reasoning-prefill-file requires a path" >&2
+                    exit 1
+                }
+                path="${VARIANT_ARGS[$index]}"
+                [ -r "$path" ] || {
+                    echo "reasoning prefill is unreadable: $path" >&2
+                    exit 1
+                }
+                [ "$(wc -l < "$path")" -eq 1 ] || {
+                    echo "reasoning prefill must contain exactly one newline-terminated line: $path" >&2
+                    exit 1
+                }
+                IFS= read -r text < "$path"
+                [ -n "$text" ] || {
+                    echo "reasoning prefill is empty: $path" >&2
+                    exit 1
+                }
+                expanded+=(--reasoning-prefill "$text")
+                ;;
+            --kit-reasoning-prefill-sha256)
+                [ -z "$expected" ] || {
+                    echo "duplicate --kit-reasoning-prefill-sha256 in variant '$GLM_VARIANT'" >&2
+                    exit 1
+                }
+                index=$((index + 1))
+                [ "$index" -lt "${#VARIANT_ARGS[@]}" ] || {
+                    echo "--kit-reasoning-prefill-sha256 requires a digest" >&2
+                    exit 1
+                }
+                expected="${VARIANT_ARGS[$index]}"
+                ;;
+            *)
+                expanded+=("$arg")
+                ;;
+        esac
+        index=$((index + 1))
+    done
+
+    if [ -n "$path" ] || [ -n "$expected" ]; then
+        [ -n "$path" ] && [ -n "$expected" ] || {
+            echo "reasoning-prefill file and SHA-256 pseudo-options must be paired" >&2
+            exit 1
+        }
+        case "$expected" in
+            *[!0-9a-fA-F]*|'')
+                echo "invalid reasoning-prefill SHA-256 for variant '$GLM_VARIANT'" >&2
+                exit 1
+                ;;
+        esac
+        [ "${#expected}" -eq 64 ] || {
+            echo "invalid reasoning-prefill SHA-256 length for variant '$GLM_VARIANT'" >&2
+            exit 1
+        }
+        observed=$(sha256sum "$path" | awk '{print $1}')
+        [ "$observed" = "${expected,,}" ] || {
+            echo "reasoning-prefill SHA-256 mismatch: $path" >&2
+            exit 1
+        }
+    fi
+
+    VARIANT_ARGS=("${expanded[@]}")
+}
+_expand_kit_variant_args
+
 [ -x "$IK" ]    || { echo "llama-server not found at $IK (engine='${ENGINE:-build}', build it - runbook §5)"; exit 1; }
-[ -f "$HOME/.glm-api-key" ] || { echo "no ~/.glm-api-key - run gen-api-key.sh"; exit 1; }
+[ -f "$API_KEY_FILE" ] || { echo "no API key at $API_KEY_FILE - run gen-api-key.sh"; exit 1; }
 # --mlock pins the whole model in RAM, which is right when it fits and fatal when
 # it does not: the unit sets LimitMEMLOCK=infinity, so the kernel will happily try
 # and then OOM. Compared against MemTotal rather than MemAvailable because a
@@ -194,7 +281,7 @@ exec "$IK" \
     --jinja \
     --repeat-penalty 1.1 --repeat-last-n 256 \
     --metrics \
-    --api-key-file "$HOME/.glm-api-key" \
+    --api-key-file "$API_KEY_FILE" \
     "${VARIANT_ARGS[@]}"
 
 # NOTE: llama-server does not reject requests whose `model` field names a

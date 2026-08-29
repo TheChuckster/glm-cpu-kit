@@ -256,7 +256,7 @@ That silent no-op is the trap: pass GLM's flag to Kimi and nothing errors, you j
 output that breaks the harness. Before `opts` existed these flags were hardcoded in `serve-glm.sh`,
 so every model got GLM's.
 
-### Kimi K3: production deployment (updated 2026-08-23)
+### Kimi K3: production deployment (updated 2026-08-26)
 
 K3 is a ~2.8T MoE — 896 routed experts, 16 active + 2 shared, 93 layers, and a
 hybrid of 69 KDA recurrent layers and 24 MLA layers. It is now the
@@ -264,17 +264,18 @@ quality-first model on `chuckdancer`:
 
 | component | deployed value |
 |---|---|
-| variant | `kimi-k3-q5attn` (19 local shards, about 788 GiB on disk) |
-| source quant | unsloth `UD-Q2_K_XL`, with non-expert tensors requantized to Q5_K |
+| variant | `kimi-k3-q5attn-abl-v26` (19 local V2 shards, about 788 GiB on disk) |
+| source quant | local K3 V2 derivative: Q2 experts with Q5_K non-expert tensors |
 | API alias | `kimi-k3` |
-| engine | `TheChuckster/ik_llama.cpp:kimi-k3` at `4d1f09d3` |
+| engine | isolated `TheChuckster/ik_llama.cpp` V26 tree at `78bdb309` |
 | upstream base | ik `main` at `8337e4cd` |
-| live throughput | **42.715 PP tok/s**, **4.491 TG tok/s** |
-| serving gate | coherence/reasoning/tools 5/5/streaming/replay/degeneration all pass |
+| live throughput | **43.018 PP tok/s** mean; **4.398 TG tok/s** six-sample mean (**4.494** repeat run) |
+| serving gate | cold restart, real OpenCode, chat/tools/streaming/replay 12/12 |
 
-The throughput line is a live-server measurement, not a second model load: one
-fresh 897-token prompt and three forced 128-token generations at 4.489, 4.493,
-and 4.492 tok/s. Run `serving/benchmark-live.sh` to repeat the same sample.
+The throughput line is a live-server measurement, not a second model load: two
+fresh 897-token prompts and six forced 128-token generations. The second
+three-seed run averaged 4.494 tok/s, within 0.5% of the earlier V1 reference.
+Run `serving/benchmark-live.sh` to repeat the same sample.
 
 Upstream ik still has no `kimi-k3` architecture, so the port remains in
 [`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp/tree/kimi-k3).
@@ -307,6 +308,14 @@ prompt. A real `kimi-opencode.sh run hi` then evaluated 7,313 prompt tokens at
 exited in 183 seconds. An intentionally disconnected long request was cancelled
 server-side and released the slot about one second after the client went away.
 
+V26 repeated the exact regression on the active production path. A direct `hi`
+returned clean content with normal `stop` in 19.99 seconds. The real OpenCode
+request evaluated 7,724 prompt tokens at 42.07 tok/s, generated 53 tokens at
+4.49 tok/s, returned a greeting, and exited. The post-restart live matrix passed
+12/12, including complete reasoning/tool-call history replay. Exact hashes and
+timings are in
+[`abliteration/k3/V26_PRODUCTION.md`](abliteration/k3/V26_PRODUCTION.md).
+
 The rebuilt tree passes the full build, ten focused parser/Jinja/delta-net tests,
 the numerical K3 composition, delta-net, and fixture oracles, and an ASan/UBSan
 run of the expanded 49-assertion message-stop regression. A live post-deploy
@@ -325,19 +334,25 @@ Two serving rules remain model-specific:
 
 #### Abliterated/uncensored K3 assessment
 
-There is no proven drop-in uncensored sibling at the current Q5-attention
-quality level:
+V26 is the owner-selected local uncensored configuration. It is additive and
+keeps both the source Q5-attention model and accepted V1 available:
 
 | candidate | footprint/evidence | decision |
 |---|---|---|
-| current `kimi-k3-q5attn` | PPL **1.3253 +/- 0.031**, full serving gate | **keep live** |
+| active `kimi-k3-q5attn-abl-v26` | V2 weights plus hash-bound reasoning prefill/DRY; cold restart, OpenCode, 12/12 live matrix | **owner-selected production** |
+| rollback `kimi-k3-q5attn-abl` | V1 PPL **1.7533 +/- 0.0184**, complete 200-response paired audit and serving gate | **immediate rollback** |
+| source `kimi-k3-q5attn` | PPL **1.3253 +/- 0.031**, full serving gate | quality/reference rollback |
 | [GrEarl abliterated Q2](https://huggingface.co/GrEarl/Kimi-K3-Abliterated-Q2_K-GGUF) | 929 GB; card says WIP/unverified and recommends not downloading yet | do not deploy |
 | [Blackfrost abliterated Q2](https://huggingface.co/Blackfrost-AI/KIMI-K3-Q2_K-GGUF-ABLITERATED) | 1009 GB; only ~124 GB RAM headroom, no capability/PPL result | registry-only experiment |
 | [Ryanchen uncensored IQ1](https://huggingface.co/Ryanchen911/Kimi-K3-Uncensored-GGUF) | 539.7 GiB; refusal tests pass, but reported PPL **1.9323 +/- 0.0473** | uncensored, not quality-equivalent |
 
-That is why the service was **not** switched to an abliterated row. A candidate
-must at minimum match perplexity within error and pass the same 5-run tool,
-streaming, replay, and degeneration gate before replacing the current model.
+The V26 switch is an explicit owner override of the stricter research gate, not
+evidence that every preregistered benchmark passed. Its first four calibration
+responses had no automated refusal and normal termination, but one stability
+artifact had material command/path defects under the strict usability rubric.
+No stability receipt was sealed, and the remaining 96 canonical plus 310
+StrongREJECT rows remain unopened. Do not turn the operational promotion into a
+universal or 410-prompt 0% refusal claim.
 
 The derivation and numerical fixtures remain in `porting/k3/`; they are now a
 regression suite and implementation record rather than a future porting plan.
@@ -635,10 +650,12 @@ since 2026-08-07 it is the default `build` tree for every model on the box —
 GLM and DS4 both pass the gate on it. Full derivation, every dead end, and the implementation record are in
 [`porting/k3/GRAPH-BUILDER-SPEC.md`](porting/k3/GRAPH-BUILDER-SPEC.md).
 
-**Current production result:** `kimi-k3-q5attn` has wikitext perplexity
-**1.3253 +/- 0.031**. The 2026-08-23 post-deploy benchmark measured **42.715 tok/s
-prompt processing** and **4.491 tok/s generation**. The earlier 39/3.7 figures
-below are kept as the port's historical baseline.
+**Current production result:** `kimi-k3-q5attn-abl-v26` uses the separately
+verified V2 weights and exact V26 runtime overlay. Its 2026-08-26 post-deploy
+benchmark measured **43.018 tok/s prompt processing** across two runs and
+**4.398 tok/s generation** across six forced samples; the repeat run averaged
+**4.494 tok/s**. The source `kimi-k3-q5attn` PPL remains **1.3253 +/- 0.031**,
+and the earlier 39/3.7 figures below remain the port's historical baseline.
 
 ### The speed, and a wrong explanation worth keeping
 
@@ -1236,7 +1253,8 @@ exactly like a parser failure and is not one; the model simply never got to the
 answer. The production row uses `thinking_effort=low` and a 1024-token reasoning
 budget to bound this behavior. For a deliberately hard/max-effort request,
 raise both the reasoning and output budgets and remember that 1500 generated
-tokens at the current 4.491 tok/s baseline still means minutes of wall clock.
+tokens at the current roughly 4.4 tok/s baseline still means minutes of wall
+clock.
 
 ### Why the original 3.7 tok/s baseline was memory-bound
 
@@ -1551,10 +1569,10 @@ OS-level.
 
 | You want | Do this |
 |---|---|
-| Max local reasoning quality, patient use | `glm-model use kimi-k3-q5attn`; measured 42.715 PP / 4.491 TG tok/s. |
+| Max local reasoning quality, patient use | `glm-model use kimi-k3-q5attn-abl-v26`; measured 43.018 PP / 4.398 six-sample TG tok/s (4.494 repeat run). |
 | Faster generation | Fewer-active model: `glm-model use kimi-k2.7-code` (~32B active vs GLM's ~40B), or Qwen3-Coder-Next (3B active, ~5-10x). |
 | Coding specifically | `kimi-k2.7-code` (unsloth UD-Q4_K_XL, 584 GB). Genuine 4-bit, fits with ~550 GB spare. |
-| Uncensored Kimi K3 | Keep the base Q5-attention model for now; current abliterated candidates are unverified or materially worse in perplexity. See 6a. |
+| Uncensored Kimi K3 | `glm-model use kimi-k3-q5attn-abl-v26`; operationally verified, but not a completed 410-prompt 0% refusal result. V1 rollback: `kimi-k3-q5attn-abl`. See 6a. |
 | Fast first-token on big context | Add a GPU for attention/KV offload (`-ngl 99 -ot exps=CPU`), or keep context small. |
 | Serve many users | Wrong tool: CPU aggregate throughput is low. Use GPUs. |
 | Don't time out on huge prompts | Raise client timeout to 30-60 min; but really, keep context lean. |
