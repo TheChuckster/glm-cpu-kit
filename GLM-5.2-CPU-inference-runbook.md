@@ -1,8 +1,8 @@
 # Frontier MoE CPU Inference Runbook
 
-A step-by-step guide to running GLM-5.2, Kimi K3, and DeepSeek-V4-Flash on CPU
+A step-by-step guide to running GLM-5.2/5.3, Kimi K3, and DeepSeek-V4-Flash on CPU
 on a large-memory EPYC box. It began with GLM-5.2 and now records the shared
-engine, registry, validation, and harness work used by all three families.
+engine, registry, validation, and harness work used by all four model paths.
 
 Target machine for this guide: Google Cloud, 2x EPYC 9B45 (96 cores per socket, 192 cores across
 2 sockets), 768 MiB L3, 1.4 TiB RAM, running Ubuntu 24.04 LTS.
@@ -46,7 +46,9 @@ NUMA): TG around 18-25 tok/s, PP a few hundred tok/s at short context, roughly 2
 
 1. Create the instance (2x 9B45, 1.4 TiB). Ubuntu 24.04 LTS boot disk (at least 50 GB).
 2. Attach fast storage for the model. The Q4 model is ~440 GB; you want NVMe, not a slow disk.
-   - Preferred: Local SSD (NVMe), attach several and RAID0 them, or a large Hyperdisk Extreme.
+   - A single sufficiently large NVMe, linear/contiguous storage, RAID0, RAID1,
+     or a large Hyperdisk Extreme all work. RAID0 only improves population/load
+     throughput and is not an inference requirement.
    - You need at least 500 GB of fast storage (1 TB if you'll also keep a Q8 copy).
 3. SSH in. Everything below runs as a sudo-capable user.
 
@@ -56,7 +58,13 @@ sudo apt-get -y install build-essential cmake git python3 python3-pip \
     numactl unzip curl jq linux-tools-common linux-tools-$(uname -r) htop
 ```
 
-### Set up the model storage (example: 4x Local SSD, RAID0, xfs at /models)
+### Set up the model storage (RAID0 example, not a requirement)
+
+Inference only requires a reliable filesystem with enough capacity. RAID0
+improves initial load throughput but is not required: linear/contiguous storage,
+a single sufficiently large NVMe device, or RAID1 all work. Once `--mlock` has
+populated RAM, token generation is governed by memory bandwidth, not disk RAID
+level. The commands below are one high-throughput example, not a mandate.
 ```bash
 # find the local NVMe devices (adjust names to your machine)
 lsblk -d -o NAME,SIZE,MODEL | grep -i nvme
@@ -124,12 +132,17 @@ kernels that gave us about 7x the prompt-processing throughput of mainline `llam
 
 ```bash
 cd ~
-git clone --depth 1 https://github.com/ikawrakow/ik_llama.cpp
+git clone --depth 1 --branch main https://github.com/TheChuckster/ik_llama.cpp
 cd ik_llama.cpp
 # GGML_NATIVE=ON => -march=native => compiler emits AVX-512/VNNI/BF16 for this CPU.
 cmake -B build -DGGML_NATIVE=ON -DGGML_CUDA=OFF -DLLAMA_CURL=OFF
 cmake --build build --config Release -j "$(nproc)"
 ```
+
+TheChuckster fork tracks `ikawrakow/ik_llama.cpp` as upstream and adds the Kimi
+K3 graph/parser/quantization stack plus model-template compatibility such as the
+GLM-5.3 numeric-Jinja fix. Upstream alone can serve the GLM/DS4 architectures,
+but it cannot load the registered K3 production rows.
 Verify VNNI actually got compiled in (should be non-zero):
 ```bash
 objdump -d build/ggml/src/libggml.so | grep -c vpdpbusd   # AVX-512 VNNI int8 dot-product
@@ -182,7 +195,7 @@ by the registry, and refuses to mark a variant ready until every shard's size ma
 
 ---
 
-## 6a. Other models: Kimi, and how to judge whether one fits
+## 6a. Other models: GLM-5.3, Kimi, and how to judge whether one fits
 
 The registry (`serving/glm-variants.conf`) is not GLM-only. Anything ik_llama.cpp can load and that
 fits in RAM can be a variant; field 9 (`opts`) carries the flags that model needs, and field 8
@@ -190,11 +203,12 @@ fits in RAM can be a variant; field 9 (`opts`) carries the flags that model need
 than the one already working, and repointing the global engine to gain one model re-rolls the dice
 on every other model on the box).
 
-**Registered and runnable today:**
+**Registered today:**
 
 | variant | quant | size | notes |
 |---|---|---|---|
 | `base` | unsloth UD-Q4_K_XL | 440 GB | GLM-5.2, the reference |
+| `glm53-q4xl` | unsloth UD-Q4_K_XL | 467.3 GB | GLM-5.3; pinned revision and 11-shard SHA-256 manifest; stored on `/home/chuck/models` because `/models` is nearly full |
 | `kimi-k2.7-code` | unsloth UD-Q4_K_XL | 584 GB | current Kimi coder |
 | `kimi-k2.6` | ubergarm Q4_X, 4.549 bpw | 584 GB | built to match Moonshot's official int4; ubergarm targets ik specifically |
 
@@ -206,11 +220,31 @@ parameter count, and check it against RAM *before* downloading half a terabyte:
 
 ```bash
 glm-model upstream            # every registered variant: what HF publishes now, and does it fit
+glm-model upstream glm53-q4xl # pinned GLM-5.3 release: 11 shards / 467.3 GB
 glm-model upstream kimi-k3    # just one
 ```
 
 That command exists because a registry row is a *guess* about what a publisher will name their
 files. It prints what is really in the repo, so you can correct `subdir`/`prefix` before fetching.
+
+### GLM-5.3: same graph, stricter template compatibility
+
+GLM-5.3 remains `glm-dsa`, so it does not need a new graph builder: 79 layers,
+6,144 embedding width, 256 routed experts with 8 active, and three leading
+dense layers. The selected `UD-Q4_K_XL` is 467,289,116,837 bytes (435.20 GiB)
+across 11 shards. Its registry row pins the GGUF repository commit and
+`serving/manifests/glm53-q4xl.sha256` binds every shard, because a moving
+release-day repository is too weak a source of truth for a half-terabyte model.
+
+The official template uses standard-Jinja numeric dot access such as
+`m.content.0.type`. TheChuckster fork commit `246e671e` adds that missing
+runtime operation; both official and embedded templates pass ordinary and tool
+histories on that build. The row uses `reasoning_effort=max`,
+`clear_thinking=true`, and `--reasoning-format deepseek`. Its 131K-context cold
+load and every serving gate passed; measured production throughput is 164.963
+PP tok/s and 10.954 TG tok/s across nine forced samples. Full compatibility,
+test, storage, and rollout evidence is in
+[`GLM-5.3-INTEGRATION.md`](GLM-5.3-INTEGRATION.md).
 
 ### Known ik + Kimi issue: multi-turn tool calls can 400 silently
 
@@ -247,7 +281,9 @@ is fine.
 
 §10 explains why reasoning blocks must be off for agentic harnesses. There is no single flag:
 
-- **GLM** — its template takes a kwarg: `--chat-template-kwargs '{"enable_thinking": false}'`
+- **GLM-5.2** — its template takes a kwarg: `--chat-template-kwargs '{"enable_thinking": false}'`
+- **GLM-5.3** — keep reasoning enabled and select `low`, `high`, or `max` with
+  `reasoning_effort`; the local quality-first row uses `max`.
 - **Kimi K2.x** — its template has **no such variable at all**; use `--reasoning off`.
 - **Kimi K3** — always reasons. Route it with `--reasoning-format deepseek` and set
   `thinking_effort` through chat-template kwargs; do not try to turn it off.
@@ -1469,10 +1505,17 @@ sometimes gives higher TG: `llama-bench ... -t 96,128,160,192`. Keep the peak.
 
 ## 10. Making it usable from a coding harness
 
-Pick the right harness. GLM-5.2 speaks OpenAI-compatible. Prefer a harness that talks OpenAI
+Pick the right harness. GLM-5.2 and GLM-5.3 speak OpenAI-compatible. Prefer a harness that talks OpenAI
 directly to the server:
 
 - opencode: point it straight at `http://<server>:8080/v1`, model `glm-5.2`. No translation layer.
+- local GLM-5.3: `glm53-opencode.sh`; it refuses to launch unless the
+  selected registry row and remote `/v1/models` alias prove GLM-5.3 is resident,
+  then independently checks the workstation's direct endpoint. Its inline
+  provider options override stale configs that still point at LiteLLM.
+- Together GLM-5.3: `glm53-opencode-together.sh`; it selects
+  `zai-org/GLM-5.3` with `max` reasoning by default. Use
+  `GLM53_REASONING_EFFORT=high` or `low` when latency/cost matters more.
 - Claude Code speaks Anthropic `/v1/messages`, so it needs a translator (litellm). We hit real
   bugs there: litellm routing to the OpenAI Responses API (`ResponseCompletedEvent` gives a broken
   stream), `count_tokens` 404s, and worst of all, multiple stale litellm instances on one port
@@ -1570,6 +1613,8 @@ OS-level.
 | You want | Do this |
 |---|---|
 | Max local reasoning quality, patient use | `glm-model use kimi-k3-q5attn-abl-v26`; measured 43.018 PP / 4.398 six-sample TG tok/s (4.494 repeat run). |
+| GLM-5.3 in Together cloud now | `glm53-opencode-together.sh`; flagship `zai-org/GLM-5.3`, max reasoning by default. |
+| GLM-5.3 locally | `glm-model use glm53-q4xl`, then `glm53-opencode.sh`; full load/agent/cancel gate passed, with 164.963 PP and 10.954 nine-sample TG tok/s. Restore Kimi V26 afterward if it should remain the default. |
 | Faster generation | Fewer-active model: `glm-model use kimi-k2.7-code` (~32B active vs GLM's ~40B), or Qwen3-Coder-Next (3B active, ~5-10x). |
 | Coding specifically | `kimi-k2.7-code` (unsloth UD-Q4_K_XL, 584 GB). Genuine 4-bit, fits with ~550 GB spare. |
 | Uncensored Kimi K3 | `glm-model use kimi-k3-q5attn-abl-v26`; operationally verified, but not a completed 410-prompt 0% refusal result. V1 rollback: `kimi-k3-q5attn-abl`. See 6a. |
@@ -1581,7 +1626,7 @@ OS-level.
 
 ## Build order (summary)
 
-1. Provision and RAID0 NVMe into `/models`, install deps.
+1. Provision enough local model storage (single, linear, RAID0, or RAID1), install deps.
 2. `numactl --hardware`, understand your NUMA nodes.
 3. Build ik_llama.cpp with `GGML_NATIVE=ON`; verify VNNI via `objdump`.
 4. Download GLM-5.2 Q4_K_XL (IPv4, parallel) — or `glm-model download <variant>`.

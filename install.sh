@@ -6,7 +6,8 @@
 #   ./install.sh              # deps + build ik + api key + install service
 #   ./install.sh --download   # also download the ~440 GB model (long - use tmux)
 #
-# DO THIS FIRST (runbook §1): fast storage mounted at /models (RAID0 NVMe), Ubuntu 24.04.
+# DO THIS FIRST (runbook §1): enough reliable local storage, Ubuntu 24.04.
+# RAID0 is optional; a linear/contiguous filesystem or RAID1 is also valid.
 # NOT automated on purpose: NUMA/thread tuning - benchmark it (runbook §7).
 # =============================================================================
 set -euo pipefail
@@ -21,19 +22,20 @@ sudo apt-get -y install build-essential cmake git python3 python3-pip numactl un
 echo "  ok"
 
 say "2/7  build ik_llama.cpp (native AVX-512/VNNI)"
-# Clones the FORK, not ikawrakow/ik_llama.cpp. Branch `kimi-k3` is upstream main
-# plus additive commits for the kimi-k3 architecture, which upstream does not
-# have and declined to add (ik #2203). That used to matter only for the K3 rows,
-# which pinned their own build tree; since every registry row now serves off this
-# one `build`, cloning upstream here would produce an engine that cannot load K3
-# at all while the registry cheerfully points K3 at it.
+# Clones the FORK, not ikawrakow/ik_llama.cpp. Branch `main` is current ik main
+# plus the additive kimi-k3 and abliteration stack, which upstream does not
+# have and declined to add (ik #2203). Most rows use the shared `build`; some
+# production/release rows deliberately pin an isolated, already-validated
+# binary. Cloning upstream would make the shared build unable to load K3.
 #
 # GLM and DeepSeek-V4 are unaffected by the K3 commits and both pass the full
 # validation gate on this branch - that is what made converging the trees safe.
-# Validated 2026-08-23 at fork tip 4d1f09d3 on upstream base 8337e4cd; the
-# branch remains the source of truth, so fresh installs follow later fixes too.
+# Rebased 2026-08-28 onto ik 15dddc60; GLM-5.3 template compatibility is at
+# 246e671e. The branch remains the source of truth, so fresh installs follow
+# later fixes too. Production rows may still pin older, separately validated
+# binaries until their own regression gates are deliberately rerun.
 IK_REPO="${IK_REPO:-https://github.com/TheChuckster/ik_llama.cpp}"
-IK_BRANCH="${IK_BRANCH:-kimi-k3}"
+IK_BRANCH="${IK_BRANCH:-main}"
 if [ ! -x "$HOME/ik_llama.cpp/build/bin/llama-server" ]; then
   [ -d "$HOME/ik_llama.cpp" ] || git clone --depth 1 -b "$IK_BRANCH" "$IK_REPO" "$HOME/ik_llama.cpp"
   cd "$HOME/ik_llama.cpp"
@@ -57,10 +59,14 @@ say "4/7  install model registry + glm-model CLI"
 # "cannot read /etc/glm-variants.conf".
 CONF=/etc/glm-variants.conf
 PREFILL_DIR=/usr/local/share/glm-cpu-kit/abliteration/k3
+MANIFEST_DIR=/usr/local/share/glm-cpu-kit/manifests
 sudo install -d -m 0755 "$PREFILL_DIR"
 sudo install -m 0644 "$KITDIR/abliteration/k3/v26-reasoning-prefill.txt" \
   "$PREFILL_DIR/v26-reasoning-prefill.txt"
 echo "  installed hash-bound K3 V26 reasoning prefill"
+sudo install -d -m 0755 "$MANIFEST_DIR"
+sudo install -m 0644 "$KITDIR"/serving/manifests/*.sha256 "$MANIFEST_DIR/"
+echo "  installed model shard manifests"
 if [ -e "$CONF" ] && ! sudo cmp -s "$KITDIR/serving/glm-variants.conf" "$CONF"; then
   # Never clobber a registry the operator has edited - correcting a pre-staged
   # variant's subdir/prefix once its publisher ships is expected, and a silent
@@ -93,8 +99,8 @@ if [ -n "$MISSING" ]; then
     echo "        script built. A pinned tree is deliberate - a new architecture gets"
     echo "        its own so bringing it up cannot disturb a working model. Build with:"
     echo "          cmake -B <tree> -DGGML_NATIVE=ON && cmake --build <tree> -j"
-    echo "        As shipped NO row pins an engine, so seeing this means you added one."
-    echo "        Converge it back onto build once it is proven - a pinned tree does not"
+    echo "        Some shipped production/release rows intentionally pin an engine."
+    echo "        Converge a temporary bring-up pin once it is proven - a pinned tree does not"
     echo "        move when you rebase, and that is how one silently went three weeks"
     echo "        stale here, missing the fix for its own model's tool calls."
 fi

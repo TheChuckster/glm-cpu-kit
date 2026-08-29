@@ -3,9 +3,9 @@
 #
 #   glm-model list                 what is registered, downloaded, and live
 #   glm-model status               active variant + server readiness
-#   glm-model download <variant>   fetch shards (resumable), verify sizes
+#   glm-model download <variant>   fetch shards (resumable), verify sizes/hashes
 #   glm-model use <variant>        switch and restart, waiting for readiness
-#   glm-model verify <variant>     re-check on-disk sizes against HuggingFace
+#   glm-model verify <variant>     re-check sizes and any pinned shard manifest
 #   glm-model upstream [variant]   ask HuggingFace what each repo actually
 #                                  publishes now, and whether it fits this box
 #
@@ -20,6 +20,7 @@ CONF="${GLM_VARIANTS_CONF:-/etc/glm-variants.conf}"
 STATE="${GLM_STATE_FILE:-/etc/default/glm-server}"
 SERVICE="${GLM_SERVICE:-glm-server.service}"
 PORT="${GLM_PORT:-8080}"
+MANIFEST_DIR="${GLM_MANIFEST_DIR:-/usr/local/share/glm-cpu-kit/manifests}"
 # How long to wait for a switched-to model to become servable. A 460 GB model
 # read off NVMe and mlocked takes minutes; too short a wait would report a
 # healthy switch as a failure.
@@ -64,6 +65,18 @@ load_variant() {
     # drop it and V_ENGINE would absorb the rest of the line.
     # shellcheck disable=SC2034
     IFS='|' read -r V_NAME V_REPO V_SUBDIR V_PREFIX V_SHARDS V_ALIAS V_DIR V_ENGINE V_OPTS <<<"$row"
+
+    # A Hugging Face repo may be pinned as owner/name@revision. Release-day
+    # quant repos can move while files are still being uploaded; resolving both
+    # metadata and weights through one commit keeps a huge download internally
+    # consistent. Existing rows continue to resolve `main`.
+    V_REPO_SPEC="$V_REPO"
+    V_REVISION=main
+    if [[ "$V_REPO" != local:* && "$V_REPO" == *@* ]]; then
+        V_REVISION="${V_REPO##*@}"
+        V_REPO="${V_REPO%@*}"
+        [ -n "$V_REPO" ] && [ -n "$V_REVISION" ] || die "invalid pinned repo '$V_REPO_SPEC'"
+    fi
 }
 
 is_local_variant() {
@@ -167,7 +180,7 @@ remote_sizes() {
     is_local_variant && return 0
     local path="$V_SUBDIR"
     curl -4 -sfL --max-time 60 \
-        "https://huggingface.co/api/models/$V_REPO/tree/main/${path}" 2>/dev/null \
+        "https://huggingface.co/api/models/$V_REPO/tree/$V_REVISION/${path}" 2>/dev/null \
     | python3 -c '
 import sys, json
 try:
@@ -211,7 +224,7 @@ cmd_list() {
         fi
         [ "$name" = "$act" ] && state="$state *live"
         printf '%-16s %-10s %-12s %-10s %-24s %s\n' \
-            "$V_NAME" "$state" "${size:--}" "${V_ENGINE:-build}" "$V_ALIAS" "$V_REPO"
+            "$V_NAME" "$state" "${size:--}" "${V_ENGINE:-build}" "$V_ALIAS" "$V_REPO_SPEC"
     done
     echo
     echo "* = selected in $STATE (see 'glm-model status' for whether it is actually serving)"
@@ -263,7 +276,7 @@ files. Run 'glm-model upstream $V_NAME' to see what is really in the repo."
 
     local avail
     avail=$(df -BG --output=avail "$V_DIR" 2>/dev/null | tail -1 | tr -dc '0-9')
-    echo "downloading $V_NAME from $V_REPO ($n shards) into $V_DIR"
+    echo "downloading $V_NAME from $V_REPO_SPEC ($n shards) into $V_DIR"
     echo "free space: ${avail:-?} GB"
 
     # IPv4 forced: HF over IPv6 stalls on some networks. Resumable and retrying
@@ -271,7 +284,7 @@ files. Run 'glm-model upstream $V_NAME' to see what is really in the repo."
     shard_names "$n" \
     | xargs -P4 -I{} curl -4 -fL -C - --retry 1000 --retry-delay 10 --retry-all-errors \
         --progress-bar -o "$V_DIR/{}" \
-        "https://huggingface.co/$V_REPO/resolve/main/${V_SUBDIR:+$V_SUBDIR/}{}"
+        "https://huggingface.co/$V_REPO/resolve/$V_REVISION/${V_SUBDIR:+$V_SUBDIR/}{}"
 
     echo
     rm -f "$(complete_marker)"
@@ -324,6 +337,25 @@ Run 'glm-model upstream $V_NAME' to see what the repo actually contains."
         fi
         return 1
     fi
+
+    # Optional for legacy rows, mandatory for revision-pinned rows. Size checks
+    # catch interrupted transfers; the manifest additionally binds every shard
+    # to the LFS object advertised by the pinned Hugging Face revision. A pin
+    # without its manifest is a deployment error, not permission to silently
+    # fall back to size-only verification.
+    local manifest="$MANIFEST_DIR/$V_NAME.sha256"
+    if [ "$V_REPO_SPEC" != "$V_REPO" ] && [ ! -r "$manifest" ]; then
+        rm -f "$(complete_marker)"
+        die "$V_NAME: pinned repository requires readable manifest $manifest"
+    fi
+    if [ -r "$manifest" ]; then
+        echo "checking SHA-256 manifest: $manifest"
+        (cd "$V_DIR" && sha256sum --strict -c "$manifest") || {
+            rm -f "$(complete_marker)"
+            die "$V_NAME: SHA-256 manifest verification failed"
+        }
+    fi
+
     # Writing the marker here rather than only in cmd_download means a variant
     # fetched by other means - or one downloaded before this check existed -
     # can be blessed with `glm-model verify <name>` instead of re-fetching
@@ -337,7 +369,7 @@ Run 'glm-model upstream $V_NAME' to see what the repo actually contains."
 # registry guessed they would call it.
 repo_quants() {
     curl -4 -sfL --max-time 90 \
-        "https://huggingface.co/api/models/$1/tree/main?recursive=1" 2>/dev/null \
+        "https://huggingface.co/api/models/$1/tree/$2?recursive=1" 2>/dev/null \
     | python3 -c '
 import sys, json, re, collections
 try:
@@ -377,7 +409,7 @@ cmd_upstream() {
     local name
     for name in $names; do
         load_variant "$name"
-        printf '%s  ->  %s/%s\n' "$V_NAME" "$V_REPO" "${V_SUBDIR:-.}"
+        printf '%s  ->  %s/%s\n' "$V_NAME" "$V_REPO_SPEC" "${V_SUBDIR:-.}"
 
         if is_local_variant; then
             echo "    local-only derivative; no HuggingFace upstream to query"
@@ -385,7 +417,7 @@ cmd_upstream() {
             continue
         fi
 
-        local quants; quants=$(repo_quants "$V_REPO")
+        local quants; quants=$(repo_quants "$V_REPO" "$V_REVISION")
         if [ -z "$quants" ]; then
             echo "    repo publishes no .gguf files yet (or is unreachable)"
             echo

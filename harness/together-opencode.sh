@@ -3,6 +3,7 @@
 #
 # Prefer the small model-specific wrappers:
 #   ./kimi-opencode-together.sh       # Kimi K3, max reasoning (default)
+#   ./glm53-opencode-together.sh      # GLM-5.3, max reasoning
 #   ./qwen38-opencode-together.sh     # Qwen3.8 2.4T, xhigh reasoning
 #   ./ds4-pro-opencode-together.sh    # DeepSeek V4 Pro 0813, max reasoning
 #
@@ -34,6 +35,11 @@ case "$MODEL" in
     DEFAULT_OUTPUT_TOKEN_MAX=131072
     MODEL_NOTE="DeepSeek V4 Pro 0813 (\$1.32/M input, \$0.13/M cached, \$3.96/M output)"
     ;;
+  zai-org/GLM-5.3)
+    DEFAULT_VARIANT=max
+    DEFAULT_OUTPUT_TOKEN_MAX=131072
+    MODEL_NOTE="GLM-5.3 (\$1.40/M input, \$0.26/M cached, \$4.40/M output)"
+    ;;
   zai-org/GLM-5.2)
     DEFAULT_VARIANT=max
     DEFAULT_OUTPUT_TOKEN_MAX=131072
@@ -63,6 +69,7 @@ case "$MODEL:$VARIANT" in
   moonshotai/Kimi-K3:low|moonshotai/Kimi-K3:high|moonshotai/Kimi-K3:max|\
   Qwen/Qwen3.8-2.4T-A95B:low|Qwen/Qwen3.8-2.4T-A95B:medium|Qwen/Qwen3.8-2.4T-A95B:xhigh|\
   deepseek-ai/DeepSeek-V4-Pro-0813:low|deepseek-ai/DeepSeek-V4-Pro-0813:high|deepseek-ai/DeepSeek-V4-Pro-0813:max|\
+  zai-org/GLM-5.3:low|zai-org/GLM-5.3:high|zai-org/GLM-5.3:max|\
   zai-org/GLM-5.2:high|zai-org/GLM-5.2:max|*:)
     ;;
   *)

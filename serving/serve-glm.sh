@@ -1,5 +1,5 @@
 #!/bin/bash
-# CPU inference server - ik_llama.cpp fused-MoE, NUMA-aware. Serves GLM-5.2,
+# CPU inference server - ik_llama.cpp fused-MoE, NUMA-aware. Serves GLM-5.2/5.3,
 # Kimi K2.x/K3 or DeepSeek-V4-Flash depending on the selected variant.
 # See ../GLM-5.2-CPU-inference-runbook.md  §3 (NUMA), §5 (build), §6 (this script).
 #
@@ -10,10 +10,10 @@
 # with rather than failing to start.
 #
 # The registry also supplies per-model serving flags (field 9, `opts`), because
-# the right flags are not the same across model families - GLM turns thinking
-# off with a chat-template kwarg, Kimi with --reasoning off, DeepSeek-V4 with
-# --reasoning-format deepseek. Those are appended LAST, so a variant can
-# override any default set below.
+# the right flags are not the same across model families - GLM-5.2 turns
+# thinking off with a chat-template kwarg, GLM-5.3 selects a reasoning-effort
+# tier, Kimi K2 uses --reasoning off, and K3/DeepSeek-V4 route separated
+# reasoning. Those are appended LAST, so a variant can override any default.
 #
 # It also supplies which ENGINE serves a variant (field 8). Architectures land
 # in ik_llama.cpp continuously, so the commit that can serve a new model is
@@ -65,7 +65,7 @@ _numa_nodes() {
     n=$(numactl --hardware 2>/dev/null | awk '/^available:/{print $2}')
     [ "${n:-0}" -gt 0 ] 2>/dev/null && echo "$n" || echo 1
 }
-if [ -z "${NUMA_POLICY+set}" ] || [ -z "$NUMA_POLICY" ]; then
+if [ -z "${NUMA_POLICY+set}" ]; then
     if [ "$(_numa_nodes)" -gt 1 ]; then NUMA_POLICY=distribute; else NUMA_POLICY=""; fi
 fi
 ALIAS="glm-5.2"

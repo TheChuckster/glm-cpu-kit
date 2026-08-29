@@ -10,6 +10,42 @@
         "chunkTimeout": 300000
       },
       "models": {
+        "zai-org/GLM-5.3": {
+          "name": "GLM-5.3",
+          "family": "glm",
+          "reasoning": true,
+          "temperature": true,
+          "tool_call": true,
+          "attachment": false,
+          "interleaved": {
+            "field": "reasoning_content"
+          },
+          "cost": {
+            "input": 1.4,
+            "output": 4.4,
+            "cache_read": 0.26
+          },
+          "limit": {
+            "context": 1048575,
+            "output": 131072
+          },
+          "modalities": {
+            "input": ["text"],
+            "output": ["text"]
+          },
+          "status": "active",
+          "variants": {
+            "low": {
+              "reasoningEffort": "low"
+            },
+            "high": {
+              "reasoningEffort": "high"
+            },
+            "max": {
+              "reasoningEffort": "max"
+            }
+          }
+        },
         "Qwen/Qwen3.8-2.4T-A95B": {
           "name": "Qwen3.8 2.4T A95B",
           "family": "qwen3.8",

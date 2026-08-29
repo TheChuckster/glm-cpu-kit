@@ -41,6 +41,9 @@ name|repo|subdir|prefix|shards|alias|dir|engine|opts
 
 - `shards` — a count, or `1` for a single unsharded `<prefix>.gguf` (several
   publishers do not shard files under ~200 GB), or `?` to resolve from HF.
+- `repo` — normally `owner/name`; use `owner/name@revision` when the exact set
+  of release files must stay immutable. Metadata and downloads then resolve
+  through the same commit instead of whatever `main` becomes later.
 - `engine` — build tree under `~/ik_llama.cpp`. **Empty means `build`**, which is
   what GLM and Kimi K2 use. A new architecture gets its own tree; see step 4.
 - `opts` — appended last, so it overrides any default in `serve-glm.sh`. This is
@@ -48,6 +51,13 @@ name|repo|subdir|prefix|shards|alias|dir|engine|opts
 
 Then `glm-model download <name>` (resumable, byte-exact size verification) and
 `glm-model verify <name>`.
+
+For a release-day or production-pinned model, also add
+`serving/manifests/<name>.sha256` in standard `sha256sum -c` format. `install.sh`
+copies manifests to `/usr/local/share/glm-cpu-kit/manifests`; both `download`
+and `verify` fail closed if a manifest does not match, and revision-pinned rows
+also fail if their manifest is missing. GLM-5.3 is the worked example: its repo
+revision and all 11 GGUF object hashes are pinned.
 
 ## 3. Prove it loads and answers, on a spare port
 

@@ -26,6 +26,13 @@
       "output": 8000
      }
     },
+    "glm-5.3": {
+     "name": "GLM-5.3 (UD-Q4_K_XL, CPU, max reasoning)",
+     "limit": {
+      "context": 60000,
+      "output": 32768
+     }
+    },
     "kimi-k2.7-code": {
      "name": "Kimi K2.7-Code (Q4, CPU)",
      "limit": {

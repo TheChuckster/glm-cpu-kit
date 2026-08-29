@@ -1,6 +1,6 @@
 # Frontier MoE CPU Inference Kit
 
-Scripts and configs for running Kimi K3, GLM-5.2, and DeepSeek-V4-Flash on CPU,
+Scripts and configs for running Kimi K3, GLM-5.2/5.3, and DeepSeek-V4-Flash on CPU,
 taken from the working `chuckdancer` deployment. The repository began as the
 GLM-5.2 kit; its registry, launcher, validation gate, and harnesses are now
 model-family aware.
@@ -31,10 +31,12 @@ to be right on the box the kit was written on.
 | `download-model.sh` | fetch GLM-5.2 Q4_K_XL from HF (IPv4, parallel, resumable) | 5 |
 | `gen-api-key.sh` | create `~/.glm-api-key` | 6 |
 | `serve-glm.sh` | the server launcher (NUMA-aware, thinking-off, anti-repetition) | 6 |
-| `test_serve_glm.py` | regression tests for exact, hash-bound reasoning-prefill expansion and fail-closed metadata | 6 |
+| `test_serve_glm.py` | regression tests for exact, hash-bound reasoning-prefill expansion, fail-closed metadata, and explicit/automatic NUMA selection | 6 |
 | `glm-server.service` | systemd unit (survives reboot, `LimitMEMLOCK=infinity`) | 7 |
 | `glm-variants.conf` | registry of servable models (GLM, Kimi, DeepSeek-V4) with per-model engine + flags | 6a, 6b |
 | `glm-model` | list / download / switch / track which model is served | 6a |
+| `manifests/` | optional per-variant SHA-256 manifests; GLM-5.3 is bound to all 11 pinned shards | 6a |
+| `test_glm53_registry.py` | pinned-revision, exact-row, and manifest pass/fail regression tests | 6a |
 | `validate-model.sh` | hard gate for load, coherence, termination, reasoning separation, tools, streaming, replay, and long-prompt degeneration — on a spare port | 6b |
 | `smoke-k3-live.py` | bounded K3 regression matrix against an already-loaded direct endpoint, with exact served-model identity | 6c |
 | `benchmark-live.sh` | measure PP/TG against the already-loaded model without allocating a second copy | 8 |
@@ -66,6 +68,8 @@ whether a model is slow or just large.
 
 ```sh
 glm-model list                     # registered, downloaded, live
+glm-model upstream glm53-q4xl      # pinned GLM-5.3 Q4: 11 shards / 467.3 GB
+glm-model download glm53-q4xl      # resumable + size/SHA-256 verification
 glm-model verify kimi-k3-q5attn-abl-v26 # local derivative: prove all 19 shards exist
 glm-model use kimi-k3-q5attn-abl-v26    # active V26 K3 deployment
 glm-model use kimi-k3-q5attn-abl        # immediate accepted-V1 rollback
@@ -76,12 +80,26 @@ glm-model upstream                 # what HF publishes now, and does it fit this
 Only one variant is resident at a time — they are 155–800 GB and `--mlock` pins
 them, so a switch is a full reload of minutes, not a hot swap.
 
-**Registered today:** `base` (GLM-5.2, 440 GB), its Q5-attention and abliterated
-siblings, Kimi K2.6/K2.7, Kimi K3 base/Q5-attention, a validated local K3
+**Registered today:** `base` (GLM-5.2, 440 GB), `glm53-q4xl` (GLM-5.3,
+467.3 GB), the GLM-5.2 Q5-attention and abliterated siblings, Kimi K2.6/K2.7,
+Kimi K3 base/Q5-attention, validated local K3
 Q5-attention abliterations, and DeepSeek-V4-Flash variants. `chuckdancer`
 currently selects `kimi-k3-q5attn-abl-v26`; the state is persisted by
 `glm-model`, while a fresh install still falls back to `base` until an operator
 selects and downloads another row.
+
+**GLM-5.3 is integrated locally and on Together AI.** The local row uses
+Unsloth `UD-Q4_K_XL`, pins the release-day GGUF revision plus all 11 shard
+hashes, and serves max reasoning through a versioned fork build that supports
+the official template's numeric Jinja indexing. The `/models` array is nearly
+full, so the row uses `/home/chuck/models` on the host's NVMe RAID1 instead;
+that filesystem began with 718 GB free and still has 282 GiB free after the
+verified download, with no deletion or array change. The local load, full agent
+gate, real OpenCode tool/replay, cancellation recovery, and nine-sample
+benchmark all pass. The cloud endpoint is also live and
+`glm53-opencode-together.sh` passed a real OpenCode response. Full engine,
+template, storage, and deployment evidence is in
+[`GLM-5.3-INTEGRATION.md`](GLM-5.3-INTEGRATION.md).
 
 **DeepSeek-V4-Flash is the fast one.** 284B total but only ~13B active, with
 experts shipped natively at fp4, so a lossless MXFP4 conversion is ~155 GB —
@@ -92,10 +110,12 @@ validation that let its once-separate engine tree converge onto the shared build
 **Kimi K3 is the quality-first local deployment, on a forked engine.** Upstream
 ik_llama.cpp has no `kimi-k3`
 architecture and ikawrakow declined to add one ([ik #2203](https://github.com/ikawrakow/ik_llama.cpp/issues/2203)),
-so the port lives on [`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp)
-branches `main` and `kimi-k3`. On 2026-08-24 the complete 48-commit stack was
-rebased onto upstream `ad26e68b`, reconciled with Firedancer's `kimi-k3` and
-`main-patches` branches, and published at `41c443ba` on both fork branches. Its
+so the port lives on [`TheChuckster/ik_llama.cpp`](https://github.com/TheChuckster/ik_llama.cpp).
+On 2026-08-28 the complete 60-commit stack was rebased onto upstream
+`15dddc60`; the applicable Firedancer `kimi-k3`/`main-patches` changes were
+confirmed already present, and GLM-5.3 Jinja compatibility was added at
+`246e671e`. The production V26 row remains pinned to its separately validated
+older binary until its complete live gate is deliberately repeated. The fork's
 production fix in `b7cf5a4a` stops at K3's first complete message trailer instead of letting
 a missing EOG turn a finished answer into an output-limit loop; the follow-up
 commit `7e7bdb3d` exercises every partial stop prefix, canonical and missing closers,
@@ -339,9 +359,11 @@ the selected variant, and is the only reliable check.
 | Script | Backend | Speed | Use for |
 |---|---|---|---|
 | `glm-opencode.sh` + `opencode.json` | LOCAL CPU server (direct) | ~12-32 tok/s | **private** / sensitive / audit — **this is the working agent setup** |
+| `glm53-opencode.sh` | LOCAL, GLM-5.3 Q4/max | 164.963 PP / 10.954 TG tok/s (9-sample TG mean) | fully gated fail-closed direct path (variant + remote alias + reachable endpoint); weights use the host's NVMe-backed home filesystem |
 | `ds4-opencode.sh` | LOCAL, DeepSeek-V4-Flash via litellm | ~28.6 tok/s | **fastest local agent** — prefer this for real work |
 | `kimi-opencode.sh` | LOCAL, Kimi K3 Q5-attention | ~4.49 tok/s | **quality-first local reasoning**; slow prefill on a fresh agent session |
 | `kimi-opencode-together.sh` | Together AI, Kimi K3 | provider speed | K3 with `max` reasoning by default; `KIMI_REASONING_EFFORT=high` to reduce cost/latency |
+| `glm53-opencode-together.sh` | Together AI, GLM-5.3 | provider speed | GLM-5.3 with `max` by default; live OpenCode smoke passed |
 | `qwen38-opencode-together.sh` | Together AI, Qwen3.8 2.4T A95B | provider speed | closest current open-weight reasoning peer; `xhigh` by default |
 | `ds4-pro-opencode-together.sh` | Together AI, DeepSeek V4 Pro 0813 | provider speed | lower-cost 1M-context agent alternate; `max` by default |
 | `together-opencode.sh` + `together-opencode.json` | Together AI, selectable | provider speed | shared native-OpenCode router; K3/max is the fallback model |
@@ -353,14 +375,20 @@ the selected variant, and is the only reliable check.
 but your prompts/code go to the provider. Keep sensitive or audit work on the local box; use cloud for
 everyday speed. **All cloud scripts read the API key from env or a key file - never hardcoded, never in this repo.**
 
-The frontier Together wrappers intentionally keep K3/max as the default. The
-[Qwen3.8 open-weight model card](https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B)
-puts it essentially level with [K3](https://www.together.ai/blog/kimi-k3-guide)
+The frontier Together wrappers keep K3/max as the shared fallback, with a
+dedicated GLM-5.3/max wrapper for the new endpoint. GLM-5.3 is the direct new
+K3 peer rather than an automatic across-the-board replacement: [Z.AI reports](https://huggingface.co/zai-org/GLM-5.3)
+near-ties on Terminal Bench 2.1 (88.2 vs 88.3) and DeepSWE (66.9 vs 67.5),
+while GLM-5.3 leads substantially on Terminal Bench 3.0 (28.3 vs 17.4). Those
+are vendor results, so the kit keeps both routes and measures the local quant
+independently.
+The [Qwen3.8 open-weight model card](https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B)
+also puts it essentially level with [K3](https://www.together.ai/blog/kimi-k3-guide)
 on HLE and close on GPQA, but not ahead of K3 across the broader coding/agent
 suite; [DeepSeek V4 Pro](https://www.together.ai/models/deepseek-v4-pro-0813)
 is a cost/routing alternative rather than an overall K3 replacement. The shared
 launcher validates each model's actual effort names
-(`xhigh` for Qwen, `max` for K3/DeepSeek), applies the same setting in both the
+(`xhigh` for Qwen, `max` for GLM/K3/DeepSeek), applies the same setting in both the
 TUI and `run` modes, and raises OpenCode's otherwise-too-small per-step output
 cap. New catalog entries are additive, so older OpenCode snapshots can use the
 new endpoints without replacing native provider behavior.
@@ -400,23 +428,24 @@ always safe: louder, never hotter.
 
 ## Setup order
 
-Fastest path: mount fast storage at `/models`, then run `./install.sh`. It does deps, builds
+Fastest path: make enough reliable local storage available (a single device,
+linear/contiguous storage, RAID0, or RAID1 all work), then run `./install.sh`. The
+default rows use `/models`; a registry row may use any explicit path with enough
+capacity. The installer handles deps and builds
 ik_llama.cpp (verifying VNNI), generates the API key, installs the model registry and the
 `glm-model` CLI, and installs the systemd service.
 
-It builds **only** the default `build` tree. Every registry row now uses it —
-the per-variant `engine` field is still there and still supported, but no row
-pins it, because all three model families validate on one commit. If you pin a
-row at a separate tree while porting an architecture, `install.sh` lists which
-trees are missing rather than letting `glm-model use` fail with a missing-binary
-error. The default tree must be built from
+It builds **only** the default `build` tree. The production K3 V1/V26 and new
+GLM-5.3 rows deliberately pin separately validated binaries; other rows use the
+shared build. `install.sh` lists which pinned trees are missing rather than
+letting a later switch fail with a missing executable. The default tree must be built from
 [the fork](https://github.com/TheChuckster/ik_llama.cpp), since upstream ik has no
 `kimi-k3` architecture. Add
 `--download` to also pull the ~440 GB model. Then benchmark NUMA and thread counts and set up
 the harness.
 
 Or do it by hand:
-1. Provision and RAID0 NVMe into `/models`, install deps (runbook section 1).
+1. Provision enough local model storage; RAID0 is optional (runbook section 1).
 2. `numactl --hardware`, understand your NUMA nodes (section 3).
 3. Build ik_llama.cpp with `GGML_NATIVE=ON`; verify VNNI via objdump (sections 4 and 5).
 4. `serving/download-model.sh`.

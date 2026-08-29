@@ -110,6 +110,52 @@ class ServeGlmPrefillTests(unittest.TestCase):
             self.assertIn("file and SHA-256 pseudo-options must be paired", completed.stderr)
             self.assertFalse(capture.exists())
 
+    def test_explicit_empty_numa_policy_stays_disabled(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            env, capture, _, _, _, _ = self.fixture(root)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            numactl = fake_bin / "numactl"
+            numactl.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\n' 'available: 2 nodes (0-1)'\n",
+                encoding="utf-8",
+            )
+            numactl.chmod(0o755)
+            env["PATH"] = f"{fake_bin}:{env['PATH']}"
+            env["NUMA_POLICY"] = ""
+
+            subprocess.run(
+                [SCRIPT], env=env, text=True, capture_output=True, check=True
+            )
+            argv = json.loads(capture.read_text())
+
+            self.assertNotIn("--numa", argv)
+
+    def test_unset_numa_policy_auto_detects_multiple_nodes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            env, capture, _, _, _, _ = self.fixture(root)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            numactl = fake_bin / "numactl"
+            numactl.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\n' 'available: 2 nodes (0-1)'\n",
+                encoding="utf-8",
+            )
+            numactl.chmod(0o755)
+            env["PATH"] = f"{fake_bin}:{env['PATH']}"
+            env.pop("NUMA_POLICY")
+
+            subprocess.run(
+                [SCRIPT], env=env, text=True, capture_output=True, check=True
+            )
+            argv = json.loads(capture.read_text())
+
+            self.assertEqual(argv[argv.index("--numa") + 1], "distribute")
+
 
 if __name__ == "__main__":
     unittest.main()
